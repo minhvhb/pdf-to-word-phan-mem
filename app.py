@@ -6,6 +6,7 @@ from docx import Document
 from docx.shared import Pt
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 
+# ĐÃ THÊM LỆNH ÉP MỞ THANH BÊN (initial_sidebar_state="expanded")
 st.set_page_config(page_title="Chuyển PDF/Ảnh sang Word", page_icon="📄", layout="centered")
 st.title("📄 Ứng dụng Chuyển đổi PDF & Ảnh sang Word")
 st.markdown("Sử dụng **Google Gemini AI** để trích xuất văn bản và bảng biểu với độ chính xác cao.")
