@@ -7,7 +7,8 @@ from docx.shared import Pt
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 
 # ĐÃ THÊM LỆNH ÉP MỞ THANH BÊN (initial_sidebar_state="expanded")
-st.set_page_config(page_title="Chuyển PDF/Ảnh sang Word", page_icon="📄", layout="centered")
+st.set_page_config(page_title="Chuyển PDF/Ảnh sang Word", page_icon="📄", layout="centered", initial_sidebar_state="expanded")
+
 st.title("📄 Ứng dụng Chuyển đổi PDF & Ảnh sang Word")
 st.markdown("Sử dụng **Google Gemini AI** để trích xuất văn bản và bảng biểu với độ chính xác cao.")
 
@@ -16,15 +17,13 @@ api_key_input = st.sidebar.text_input("Nhập Google Gemini API Key của bạn:
 
 st.sidebar.info("💡 Mẹo: Lấy API Key miễn phí tại [Google AI Studio](https://aistudio.google.com/).")
 
-# BẮT ĐẦU PHẦN CẢNH BÁO CHỮ ĐỎ
 st.sidebar.error("""
 :red[**⚠️ NGUYÊN TẮC SỬ DỤNG:**]
 
 :red[- **Bảo mật:** KHÔNG tải lên tài liệu MẬT, TỐI MẬT, dữ liệu tài chính chưa công khai và thông tin nhạy cảm của khách hàng.]
 
-:red[- **Tối ưu:** Chỉ tải file PDF  **dưới 30 trang/lần** để file Word không bị lỗi định dạng.]
+:red[- **Tối ưu:** Chỉ tải file PDF **dưới 30 trang/lần** để file Word không bị lỗi định dạng.]
 """)
-# KẾT THÚC PHẦN CẢNH BÁO
 
 uploaded_file = st.file_uploader("Tải lên file ảnh (JPG, PNG) hoặc PDF:", type=["jpg", "jpeg", "png", "pdf"])
 
@@ -50,17 +49,13 @@ if uploaded_file is not None:
                     
                     prompt = """
                     Bạn là một hệ thống OCR và số hóa tài liệu hành chính cấp cao. Nhiệm vụ của bạn là bóc tách toàn bộ nội dung từ ảnh/PDF sang định dạng văn bản thô (Clean Text/Markdown) để chuyển vào file Word.
+
                     YÊU CẦU KỶ LUẬT THÉP (BẮT BUỘC TUÂN THỦ):
-                    1. Trích xuất nguyên bản: Giữ nguyên 100% nội dung chữ, tuyệt đối không tóm tắt, không diễn giải, không thêm thắt. Nếu có lỗi chính tả trong bản gốc, hãy giữ nguyên.
-                    2. Cấu trúc & Thứ tự đọc: Nhận diện đúng luồng văn bản (ví dụ: đọc hết cột trái rồi mới sang cột phải). Phân định rõ ràng các cấp độ tiêu đề bằng cú pháp Markdown (Sử dụng # cho H1, ## cho H2, ### cho H3).
-                    3. Xử lý Bảng biểu tuyệt đối: Thể hiện bảng bằng cú pháp Markdown chuẩn xác. Phải đối chiếu để không bỏ sót bất kỳ dòng hay cột nào. Nếu ô trong bản gốc bị trống, bắt buộc phải để trống ô tương ứng trong Markdown.
-                    4. Loại bỏ "Rác" định dạng: Tự động nhận diện và BỎ QUA các chi tiết không thuộc nội dung chính như: số thứ tự trang, tiêu đề đầu trang/chân trang (header/footer) lặp lại, hình mờ (watermark), hoặc dấu mộc đỏ/chữ ký tay.
-                    5. Toán học & Ký tự: Giữ nguyên các ký tự đặc biệt. Với công thức khoa học phức tạp, sử dụng cú pháp LaTeX chuẩn. Đảm bảo các đoạn văn không bị ngắt dòng vô lý giữa câu.
-                    6. ĐỘ CHÍNH XÁC TUYỆT ĐỐI (Cực kỳ quan trọng): Sao chép chính xác 100% từng từ, từng chữ của bản gốc. Nếu bản gốc sai chính tả, BẮT BUỘC phải giữ nguyên lỗi sai đó (Ví dụ: "lao uộng" phải giữ là "lao uộng"). Tuyệt đối không tự ý sửa lỗi từ vựng, ngữ pháp hay thay đổi từ đồng nghĩa.
-                    7. KHÔNG ĐIỀN CHỖ TRỐNG: Nếu bản gốc có khoảng trắng chờ điền (Ví dụ: "ngày ... tháng ... năm"), bắt buộc phải để trống hoặc dùng dấu ba chấm (...), tuyệt đối không tự ý bịa ngày tháng, tên người hay bất kỳ dữ liệu nào để điền vào.
-                    8. XỬ LÝ CHỮ KÝ & CON DẤU: Bỏ qua các hình ảnh con dấu đỏ hoặc hình mờ. Tại vị trí có chữ ký tay, hãy ghi chú là: [Đã ký].
-                    9. ĐỊNH DẠNG VÀ CẤU TRÚC: Giữ nguyên cấu trúc các cấp tiêu đề (dùng #, ##, ###). Trình bày bảng biểu bằng cú pháp Markdown. 
-                    10. LỌC NHIỄU: Không chèn thêm các đường kẻ ngang (---) phân cách trang. Tự động bỏ qua số trang hoặc tiêu đề đầu/chân trang bị lặp lại (header/footer).
+                    1. ĐỘ CHÍNH XÁC TUYỆT ĐỐI: Sao chép chính xác 100% từng từ, từng chữ của bản gốc. Nếu bản gốc sai chính tả, BẮT BUỘC phải giữ nguyên lỗi sai đó. Tuyệt đối không tự ý sửa lỗi từ vựng, ngữ pháp hay thay đổi từ đồng nghĩa.
+                    2. KHÔNG ĐIỀN CHỖ TRỐNG: Nếu bản gốc có khoảng trắng chờ điền (Ví dụ: "ngày ... tháng ... năm"), bắt buộc phải để trống hoặc dùng dấu ba chấm (...), tuyệt đối không tự ý bịa ngày tháng, tên người hay bất kỳ dữ liệu nào để điền vào.
+                    3. XỬ LÝ CHỮ KÝ & CON DẤU: Bỏ qua các hình ảnh con dấu đỏ hoặc hình mờ. Tại vị trí có chữ ký tay, hãy ghi chú là: [Đã ký].
+                    4. ĐỊNH DẠNG VÀ CẤU TRÚC: Giữ nguyên cấu trúc các cấp tiêu đề (dùng #, ##, ###). Trình bày bảng biểu bằng cú pháp Markdown chuẩn. 
+                    5. LỌC NHIỄU: Không chèn thêm các đường kẻ ngang (---) phân cách. Tự động bỏ qua số trang hoặc tiêu đề đầu/chân trang bị lặp lại (header/footer).
                     """
 
                     response = client.models.generate_content(
