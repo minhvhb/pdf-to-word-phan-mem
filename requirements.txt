@@ -2,3 +2,6 @@ streamlit
 google-genai
 python-docx
 pillow
+python-docx
+beautifulsoup4
+markdown2
