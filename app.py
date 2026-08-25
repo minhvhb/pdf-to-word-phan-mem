@@ -18,8 +18,8 @@ st.sidebar.info("💡 Mẹo: Lấy API Key miễn phí tại [Google AI Studio](
 # BẮT ĐẦU PHẦN CẢNH BÁO RÚT GỌN (CHỐNG TRÀN MÀN HÌNH)
 st.sidebar.warning("""
 **⚠️ NGUYÊN TẮC SỬ DỤNG:**
-- **Bảo mật:** KHÔNG tải lên tài liệu MẬT, TỐI MẬT, dữ liệu tài chính/khách hàng nhạy cảm.
-- **Tối ưu:** Chỉ tải lên **dưới 30 trang/lần** để file Word không bị lỗi định dạng.
+- **Bảo mật:** KHÔNG tải lên tài liệu MẬT, TỐI MẬT, dữ liệu tài chính chưa công khai và thông tin nhạy cảm của khách hàng.
+- **Tối ưu:** Chỉ tải file PDF  **dưới 30 trang/lần** để file Word không bị lỗi định dạng.
 """)
 # KẾT THÚC PHẦN CẢNH BÁO
 
