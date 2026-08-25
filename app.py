@@ -15,6 +15,16 @@ api_key_input = st.sidebar.text_input("Nhập Google Gemini API Key của bạn:
 st.sidebar.markdown("---")
 st.sidebar.info("💡 Mẹo: Lấy API Key miễn phí tại [Google AI Studio](https://aistudio.google.com/).")
 
+# BẮT ĐẦU PHẦN GHI CHÚ CẢNH BÁO
+st.sidebar.markdown("---")
+st.sidebar.warning("""
+**⚠️ Các nguyên tắc khi sử dụng phần mềm chuyển đổi:**
+
+- **Về an toàn thông tin:** Khuyến cáo không sử dụng hệ thống để xử lý các tài liệu mang tính chất "MẬT", "TỐI MẬT", dữ liệu tài chính chưa công khai và thông tin nhạy cảm của khách hàng.
+- **Về tối ưu xử lý:** Để đảm bảo chất lượng file Word đầu ra không bị lỗi định dạng, người dùng vui lòng chỉ tải lên các file PDF/Ảnh có độ dài dưới 30 trang cho mỗi lần thao tác.
+""")
+# KẾT THÚC PHẦN GHI CHÚ CẢNH BÁO
+
 uploaded_file = st.file_uploader("Tải lên file ảnh (JPG, PNG) hoặc PDF:", type=["jpg", "jpeg", "png", "pdf"])
 
 if uploaded_file is not None:
@@ -37,7 +47,6 @@ if uploaded_file is not None:
 
                     mime_type = "application/pdf" if uploaded_file.name.endswith(".pdf") else "image/jpeg"
                     
-                    # PROMPT TỐI THƯỢNG (Kỷ luật thép)
                     prompt = """
                     Bạn là một hệ thống OCR và số hóa tài liệu hành chính cấp cao. Nhiệm vụ của bạn là bóc tách toàn bộ nội dung từ ảnh/PDF sang định dạng văn bản thô (Clean Text/Markdown) để chuyển vào file Word.
                     YÊU CẦU KỶ LUẬT THÉP (BẮT BUỘC TUÂN THỦ):
@@ -59,10 +68,8 @@ if uploaded_file is not None:
                         contents=[types.Part.from_bytes(data=file_bytes, mime_type=mime_type), prompt]
                     )
                     
-                    # KHỞI TẠO FILE WORD
                     doc = Document()
                     
-                    # CÀI ĐẶT FONT CHỮ CHUẨN TIMES NEW ROMAN, SIZE 12
                     style = doc.styles['Normal']
                     font = style.font
                     font.name = 'Times New Roman'
@@ -70,16 +77,12 @@ if uploaded_file is not None:
                     
                     doc.add_heading('Kết quả trích xuất từ AI', level=1)
                     
-                    # XỬ LÝ VÀ ĐỊNH DẠNG TỪNG DÒNG
                     for line in response.text.split('\n'):
-                        # Bỏ qua các dòng gạch ngang phân cách của AI
                         if line.strip().startswith('---'):
                             continue
                             
-                        # Xử lý tiêu đề
                         if line.strip().startswith('#'):
                             doc.add_heading(line.replace('#', '').strip(), level=2)
-                        # Xử lý đoạn văn thường và căn đều 2 bên
                         else:
                             p = doc.add_paragraph(line)
                             p.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
