@@ -59,6 +59,8 @@ if uploaded_file is not None:
                     doc.add_heading('Kết quả trích xuất từ AI', level=1)
                     
                     for line in response.text.split('\n'):
+                        if line.strip().startswith('---'):
+                            continue
                         if line.strip().startswith('#'):
                             doc.add_heading(line.replace('#', '').strip(), level=2)
                         else:
