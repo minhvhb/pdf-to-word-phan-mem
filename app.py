@@ -48,18 +48,69 @@ if uploaded_file is not None:
                     mime_type = "application/pdf" if uploaded_file.name.endswith(".pdf") else "image/jpeg"
                     
                     prompt = """
-                    Bạn là một hệ thống OCR và số hóa tài liệu hành chính cấp cao. Nhiệm vụ của bạn là bóc tách toàn bộ nội dung từ ảnh/PDF sang định dạng văn bản thô (Clean Text/Markdown) để chuyển vào file Word.
+                    Bạn là một hệ thống OCR cao cấp chuyên trích xuất và khôi phục định dạng tài liệu. Nhiệm vụ của bạn là đọc toàn bộ nội dung từ file PDF/Hình ảnh được cung cấp và tái tạo lại thành văn bản định dạng Markdown/HTML với mục tiêu GIỮ NGUYÊN 100% CẤU TRÚC VÀ ĐỊNH DẠNG BAN ĐẦU.
 
-                    YÊU CẦU KỶ LUẬT THÉP (BẮT BUỘC TUÂN THỦ):
-                    1. ĐỘ CHÍNH XÁC TUYỆT ĐỐI: Sao chép chính xác 100% từng từ, từng chữ của bản gốc. Nếu bản gốc sai chính tả, BẮT BUỘC phải giữ nguyên lỗi sai đó. Tuyệt đối không tự ý sửa lỗi từ vựng, ngữ pháp hay thay đổi từ đồng nghĩa.
-                    2. KHÔNG ĐIỀN CHỖ TRỐNG: Nếu bản gốc có khoảng trắng chờ điền (Ví dụ: "ngày ... tháng ... năm"), bắt buộc phải để trống hoặc dùng dấu ba chấm (...), tuyệt đối không tự ý bịa ngày tháng, tên người hay bất kỳ dữ liệu nào để điền vào.
-                    3. XỬ LÝ CHỮ KÝ & CON DẤU: Bỏ qua các hình ảnh con dấu đỏ hoặc hình mờ. Tại vị trí có chữ ký tay, hãy ghi chú là: [Đã ký].
-                    4. ĐỊNH DẠNG VÀ CẤU TRÚC: Giữ nguyên cấu trúc các cấp tiêu đề (dùng #, ##, ###). Trình bày bảng biểu bằng cú pháp Markdown chuẩn. 
-                    5. LỌC NHIỄU: Không chèn thêm các đường kẻ ngang (---) phân cách. Tự động bỏ qua số trang hoặc tiêu đề đầu/chân trang bị lặp lại (header/footer).
+                    Hãy tuân thủ nghiêm ngặt các quy tắc sau:
+                    
+                    1. NGUYÊN TẮC BẢO TOÀN NỘI DUNG:
+                       - Trích xuất chính xác 100% ký tự, số liệu, dấu tiếng Việt và ký tự đặc biệt.
+                       - KHÔNG tự ý sửa lỗi chính tả, KHÔNG tóm tắt, KHÔNG thêm/bớt từ ngữ.
+                       - Giữ nguyên cả phần tiêu đề trang (Header), chân trang (Footer), số trang và ghi chú (Footnotes).           
+                    2. CẤU TRÚC & HỆ THỐNG TIÊU ĐỀ:
+                       - Sử dụng thẻ Markdown (#, ##, ###, ####) tương ứng chính xác với kích thước và cấp độ phân cấp của Tiêu đề trong file gốc.
+                       - Giữ nguyên sự phân đoạn văn bản, ngắt dòng và thứ tự trước/sau.     
+                    3. ĐỊNH DẠNG VĂN BẢN CHI TIẾT:
+                       - In đậm: Sử dụng **văn bản**
+                       - In nghiêng: Sử dụng *văn bản*
+                       - Gạch chân: Sử dụng <u>văn bản</u>
+                       - Danh sách: Giữ nguyên các thụt lùi đầu dòng (indentation) đối với danh sách dạng đầu dòng (-) hoặc dạng số (1., a., i.).
+                    4. XỬ LÝ BẢNG BIỂU (TỐI QUAN TRỌNG):
+                       - Chuyển toàn bộ bảng biểu sang dạng Markdown Table chuẩn (| Cột 1 | Cột 2 |).
+                       - Với các bảng phức tạp có ô gộp (Merged Cells/Span): BẮT BUỘC sử dụng thẻ HTML Table (`<table>`, `<tr>`, `<td colspan="...">`, `<td rowspan="...">`) để đảm bảo không lệch cột khi dựng lại file Word.
+                       - Giữ nguyên toàn bộ số liệu và căn lề trong từng ô của bảng.
+                    5. PHẦN TỬ ĐỒ HỌA & HÌNH ẢNH:
+                       - Tại vị trí có hình ảnh, sơ đồ hoặc logo, chèn ký hiệu thay thế theo định dạng: [HÌNH ẢNH: Mô tả ngắn nội dung hình ảnh/sơ đồ].
+                    6. ĐẦU RA (OUTPUT REQUIREMENT):
+                       - Chỉ xuất ra duy nhất mã văn bản (Markdown/HTML). KHÔNG kèm lời chào, KHÔNG giải thích, KHÔNG viết bất kỳ câu dẫn dắt nào ở đầu hoặc cuối phản hồi.
+                                           [VAI TRÒ & MỤC TIÊU]							
+                    Bạn là một chuyên gia OCR (Chuyển đổi ký tự quang học) và Tái tạo Cấu trúc Tài liệu cấp cao.							
+                    Nhiệm vụ của bạn là đọc hình ảnh/tài liệu PDF được gửi kèm và trích xuất TOÀN BỘ nội dung sang định dạng Markdown chuẩn xác 100% so với bản gốc, sẵn sàng để chuyển đổi trực tiếp sang file Microsoft Word (.docx).							
+                    							
+                    [QUY TẮC NỘI DUNG - KHÔNG ĐƯỢC VI PHẠM]							
+                    1. NGUYÊN VĂN 100%: Trích xuất chính xác từng từ, từng câu, số liệu, ký tự đặc biệt, dấu câu và tiếng Việt (kể cả dấu thanh). KHÔNG tự ý tóm tắt, KHÔNG bỏ sót văn bản, KHÔNG thêm lời giải thích hay hội thoại.							
+                    2. CHÍNH TẢ: Giữ đúng các lỗi chính tả nếu đó là văn bản gốc, trừ khi ký tự bị nhòe/mờ thì hãy khôi phục dựa trên ngữ cảnh chuẩn xác nhất.							
+                    							
+                    [CẤU TRÚC VÀ ĐỊNH DẠNG HÌNH THỨC]							
+                    Hãy tái tạo cấu trúc trực quan của trang bằng các quy tắc Markdown sau:							
+                    							
+                    1. TIÊU ĐỀ (HEADINGS):							
+                    - Phân cấp tiêu đề rõ ràng dựa theo kích thước chữ và độ đậm: `#` cho Tiêu đề chính (H1), `##` cho Tiêu đề phụ (H2), `###` cho Tiêu đề nhỏ (H3).							
+                    2. ĐỊNH DẠNG VĂN BẢN (TEXT FORMATTING):							
+                    - In đậm: Dùng `**văn bản**` cho chữ in đậm.							
+                    - In nghiêng: Dùng `*văn bản*` cho chữ in nghiêng.							
+                    - Gạch chân: Dùng `<u>văn bản</u>` cho chữ gạch chân.							
+                    - Chữ gạch ngang: Dùng `~~văn bản~~`.							
+                    3. DANH SÁCH (LISTS):							
+                    - Giữ nguyên thụt lùi đầu dòng và thứ tự danh sách (dùng `-` cho danh sách không thứ tự, `1.`, `2.` cho danh sách có thứ tự).							
+                    - Bảo toàn đúng các cấp độ danh sách lùi vào trong (nested lists).							
+                    							
+                    [XỬ LÝ BẢNG BIỂU VÀ PHẦN TỬ ĐẶC BIỆT]							
+                    1. BẢNG BIỂU (TABLES):							
+                    - Chuyển toàn bộ bảng biểu sang dạng Markdown Table (`| Header 1 | Header 2 |`).							
+                    - Giữ đúng cấu trúc hàng và cột. Đối với các ô bị hợp nhất (merge cells), hãy lặp lại nội dung hoặc dùng định dạng HTML Table (`<table>`) nếu bảng quá phức tạp để đảm bảo khi sang Word không bị tràn/lệch cột.							
+                    2. HÌNH ẢNH / SƠ ĐỒ / CHỮ KÝ:							
+                    - Nếu có hình ảnh, biểu đồ hoặc con dấu, hãy đặt một thẻ thay thế theo vị trí tương ứng: `[HÌNH ẢNH: Mô tả ngắn về ảnh]` hoặc `[CON DẤU: Mô tả con dấu]`.							
+                    3. CÔNG THỨC TOÁN HỌC / HÓA HỌC:							
+                    - Đặt các công thức nằm trong định dạng LaTeX chuẩn: `$công_thức$` (cho inline) hoặc `$$công_thức$$` (cho dạng khối).							
+                    4. NGẮT TRANG (PAGE BREAKS):							
+                    - Nếu tài liệu có nhiều trang, hãy phân tách giữa các trang bằng đường gạch ngang `---`.							
+                    							
+                    [ĐẦU RA YÊU CẦU]							
+                    Chỉ trả về DUY NHẤT mã Markdown đã được định dạng. Không viết bất kỳ câu mở đầu ("Đây là kết quả..."), không viết lời kết.							
                     """
 
                     response = client.models.generate_content(
-                        model='gemini-3.6-flash',
+                        model='gemini-3.7-flash',
                         contents=[types.Part.from_bytes(data=file_bytes, mime_type=mime_type), prompt]
                     )
                     
