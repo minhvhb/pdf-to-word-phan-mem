@@ -147,7 +147,7 @@ st.title("📄 Ứng dụng Chuyển đổi PDF & Ảnh sang Word")
 st.markdown("Sử dụng **Google Gemini AI** để trích xuất văn bản và bảng biểu với độ chính xác cao.")
 
 st.sidebar.header("⚙️ Cấu hình")
-api_key_input = st.sidebar.text_input("Nhập Google Gemini API Key của bạn:", type="password")
+api_key_input = st.sidebar.text_input("Nhập Google Gemini API Key của bạn:", type="password", key="api_key_sidebar")
 
 st.sidebar.info("💡 Mẹo: Lấy API Key miễn phí tại [Google AI Studio](https://aistudio.google.com/).")
 
