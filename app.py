@@ -12,18 +12,16 @@ st.markdown("Sử dụng **Google Gemini AI** để trích xuất văn bản và
 
 st.sidebar.header("⚙️ Cấu hình")
 api_key_input = st.sidebar.text_input("Nhập Google Gemini API Key của bạn:", type="password")
-st.sidebar.markdown("---")
+
 st.sidebar.info("💡 Mẹo: Lấy API Key miễn phí tại [Google AI Studio](https://aistudio.google.com/).")
 
-# BẮT ĐẦU PHẦN GHI CHÚ CẢNH BÁO
-st.sidebar.markdown("---")
+# BẮT ĐẦU PHẦN CẢNH BÁO RÚT GỌN (CHỐNG TRÀN MÀN HÌNH)
 st.sidebar.warning("""
-**⚠️ Các nguyên tắc khi sử dụng phần mềm chuyển đổi:**
-
-- **Về an toàn thông tin:** Khuyến cáo không sử dụng hệ thống để xử lý các tài liệu mang tính chất "MẬT", "TỐI MẬT", dữ liệu tài chính chưa công khai và thông tin nhạy cảm của khách hàng.
-- **Về tối ưu xử lý:** Để đảm bảo chất lượng file Word đầu ra không bị lỗi định dạng, người dùng vui lòng chỉ tải lên các file PDF/Ảnh có độ dài dưới 30 trang cho mỗi lần thao tác.
+**⚠️ NGUYÊN TẮC SỬ DỤNG:**
+- **Bảo mật:** KHÔNG tải lên tài liệu MẬT, TỐI MẬT, dữ liệu tài chính/khách hàng nhạy cảm.
+- **Tối ưu:** Chỉ tải lên **dưới 30 trang/lần** để file Word không bị lỗi định dạng.
 """)
-# KẾT THÚC PHẦN GHI CHÚ CẢNH BÁO
+# KẾT THÚC PHẦN CẢNH BÁO
 
 uploaded_file = st.file_uploader("Tải lên file ảnh (JPG, PNG) hoặc PDF:", type=["jpg", "jpeg", "png", "pdf"])
 
@@ -60,7 +58,6 @@ if uploaded_file is not None:
                     8. XỬ LÝ CHỮ KÝ & CON DẤU: Bỏ qua các hình ảnh con dấu đỏ hoặc hình mờ. Tại vị trí có chữ ký tay, hãy ghi chú là: [Đã ký].
                     9. ĐỊNH DẠNG VÀ CẤU TRÚC: Giữ nguyên cấu trúc các cấp tiêu đề (dùng #, ##, ###). Trình bày bảng biểu bằng cú pháp Markdown. 
                     10. LỌC NHIỄU: Không chèn thêm các đường kẻ ngang (---) phân cách trang. Tự động bỏ qua số trang hoặc tiêu đề đầu/chân trang bị lặp lại (header/footer).
-
                     """
 
                     response = client.models.generate_content(
