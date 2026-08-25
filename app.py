@@ -3,6 +3,8 @@ import os
 from google import genai
 from google.genai import types
 from docx import Document
+from docx.shared import Pt
+from docx.enum.text import WD_ALIGN_PARAGRAPH
 
 st.set_page_config(page_title="Chuyển PDF/Ảnh sang Word", page_icon="📄", layout="centered")
 st.title("📄 Ứng dụng Chuyển đổi PDF & Ảnh sang Word")
@@ -22,7 +24,7 @@ if uploaded_file is not None:
         if not api_key_input:
             st.error("⚠️ Vui lòng nhập API Key ở thanh menu bên trái trước khi chuyển đổi!")
         else:
-            with st.spinner("🤖 AI đang phân tích tài liệu và tạo file Word, vui lòng đợi..."):
+            with st.spinner("🤖 AI đang phân tích và định dạng file Word chuẩn hành chính, vui lòng đợi..."):
                 try:
                     temp_input_path = f"temp_{uploaded_file.name}"
                     with open(temp_input_path, "wb") as f:
@@ -35,6 +37,7 @@ if uploaded_file is not None:
 
                     mime_type = "application/pdf" if uploaded_file.name.endswith(".pdf") else "image/jpeg"
                     
+                    # PROMPT TỐI THƯỢNG (Kỷ luật thép)
                     prompt = """
                     Bạn là một hệ thống OCR và số hóa tài liệu hành chính cấp cao. Nhiệm vụ của bạn là bóc tách toàn bộ nội dung từ ảnh/PDF sang định dạng văn bản thô (Clean Text/Markdown) để chuyển vào file Word.
                     YÊU CẦU KỶ LUẬT THÉP (BẮT BUỘC TUÂN THỦ):
@@ -48,6 +51,7 @@ if uploaded_file is not None:
                     8. XỬ LÝ CHỮ KÝ & CON DẤU: Bỏ qua các hình ảnh con dấu đỏ hoặc hình mờ. Tại vị trí có chữ ký tay, hãy ghi chú là: [Đã ký].
                     9. ĐỊNH DẠNG VÀ CẤU TRÚC: Giữ nguyên cấu trúc các cấp tiêu đề (dùng #, ##, ###). Trình bày bảng biểu bằng cú pháp Markdown. 
                     10. LỌC NHIỄU: Không chèn thêm các đường kẻ ngang (---) phân cách trang. Tự động bỏ qua số trang hoặc tiêu đề đầu/chân trang bị lặp lại (header/footer).
+
                     """
 
                     response = client.models.generate_content(
@@ -55,21 +59,35 @@ if uploaded_file is not None:
                         contents=[types.Part.from_bytes(data=file_bytes, mime_type=mime_type), prompt]
                     )
                     
+                    # KHỞI TẠO FILE WORD
                     doc = Document()
+                    
+                    # CÀI ĐẶT FONT CHỮ CHUẨN TIMES NEW ROMAN, SIZE 12
+                    style = doc.styles['Normal']
+                    font = style.font
+                    font.name = 'Times New Roman'
+                    font.size = Pt(12)
+                    
                     doc.add_heading('Kết quả trích xuất từ AI', level=1)
                     
+                    # XỬ LÝ VÀ ĐỊNH DẠNG TỪNG DÒNG
                     for line in response.text.split('\n'):
+                        # Bỏ qua các dòng gạch ngang phân cách của AI
                         if line.strip().startswith('---'):
                             continue
+                            
+                        # Xử lý tiêu đề
                         if line.strip().startswith('#'):
                             doc.add_heading(line.replace('#', '').strip(), level=2)
+                        # Xử lý đoạn văn thường và căn đều 2 bên
                         else:
-                            doc.add_paragraph(line)
+                            p = doc.add_paragraph(line)
+                            p.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
 
                     output_docx_path = "ket_qua.docx"
                     doc.save(output_docx_path)
 
-                    st.success("🎉 Chuyển đổi thành công!")
+                    st.success("🎉 Chuyển đổi và định dạng chuẩn thành công!")
 
                     with open(output_docx_path, "rb") as file_download:
                         st.download_button(
