@@ -109,11 +109,16 @@ if uploaded_file is not None:
                     Chỉ trả về DUY NHẤT mã Markdown đã được định dạng. Không viết bất kỳ câu mở đầu ("Đây là kết quả..."), không viết lời kết.							
                     """
 
+                    # Gọi API Gemini 3.7 lấy kết quả
                     response = client.models.generate_content(
-                        model='gemini-3.6-flash',
+                        model='gemini-3.7-flash',
                         contents=[types.Part.from_bytes(data=file_bytes, mime_type=mime_type), prompt]
                     )
                     
+                    # Chuyển đổi mã Markdown/HTML thu được thành file Word thực sự
+                    output_docx_path = "ket_qua.docx"
+                    markdown_to_docx(response.text, output_docx_path)
+                    st.success("🎉 Đã tạo bảng và định dạng Word chuẩn thành công!")
                     doc = Document()
                     
                     style = doc.styles['Normal']
