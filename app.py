@@ -36,12 +36,18 @@ if uploaded_file is not None:
                     mime_type = "application/pdf" if uploaded_file.name.endswith(".pdf") else "image/jpeg"
                     
                     prompt = """
-                    Bạn là một chuyên gia số hóa tài liệu và chế bản điện tử. Nhiệm vụ của bạn là đọc hiểu hình ảnh/PDF được cung cấp và trích xuất toàn bộ nội dung sang văn bản Markdown sạch (Clean Markdown) để tối ưu hóa việc xuất ra định dạng Word.Hãy tuân thủ nghiêm ngặt 5 quy tắc sau:
+                    Bạn là một hệ thống OCR và số hóa tài liệu hành chính cấp cao. Nhiệm vụ của bạn là bóc tách toàn bộ nội dung từ ảnh/PDF sang định dạng văn bản thô (Clean Text/Markdown) để chuyển vào file Word.
+                    YÊU CẦU KỶ LUẬT THÉP (BẮT BUỘC TUÂN THỦ):
                     1. Trích xuất nguyên bản: Giữ nguyên 100% nội dung chữ, tuyệt đối không tóm tắt, không diễn giải, không thêm thắt. Nếu có lỗi chính tả trong bản gốc, hãy giữ nguyên.
                     2. Cấu trúc & Thứ tự đọc: Nhận diện đúng luồng văn bản (ví dụ: đọc hết cột trái rồi mới sang cột phải). Phân định rõ ràng các cấp độ tiêu đề bằng cú pháp Markdown (Sử dụng # cho H1, ## cho H2, ### cho H3).
                     3. Xử lý Bảng biểu tuyệt đối: Thể hiện bảng bằng cú pháp Markdown chuẩn xác. Phải đối chiếu để không bỏ sót bất kỳ dòng hay cột nào. Nếu ô trong bản gốc bị trống, bắt buộc phải để trống ô tương ứng trong Markdown.
                     4. Loại bỏ "Rác" định dạng: Tự động nhận diện và BỎ QUA các chi tiết không thuộc nội dung chính như: số thứ tự trang, tiêu đề đầu trang/chân trang (header/footer) lặp lại, hình mờ (watermark), hoặc dấu mộc đỏ/chữ ký tay.
                     5. Toán học & Ký tự: Giữ nguyên các ký tự đặc biệt. Với công thức khoa học phức tạp, sử dụng cú pháp LaTeX chuẩn. Đảm bảo các đoạn văn không bị ngắt dòng vô lý giữa câu.
+                    6. ĐỘ CHÍNH XÁC TUYỆT ĐỐI (Cực kỳ quan trọng): Sao chép chính xác 100% từng từ, từng chữ của bản gốc. Nếu bản gốc sai chính tả, BẮT BUỘC phải giữ nguyên lỗi sai đó (Ví dụ: "lao uộng" phải giữ là "lao uộng"). Tuyệt đối không tự ý sửa lỗi từ vựng, ngữ pháp hay thay đổi từ đồng nghĩa.
+                    7. KHÔNG ĐIỀN CHỖ TRỐNG: Nếu bản gốc có khoảng trắng chờ điền (Ví dụ: "ngày ... tháng ... năm"), bắt buộc phải để trống hoặc dùng dấu ba chấm (...), tuyệt đối không tự ý bịa ngày tháng, tên người hay bất kỳ dữ liệu nào để điền vào.
+                    8. XỬ LÝ CHỮ KÝ & CON DẤU: Bỏ qua các hình ảnh con dấu đỏ hoặc hình mờ. Tại vị trí có chữ ký tay, hãy ghi chú là: [Đã ký].
+                    9. ĐỊNH DẠNG VÀ CẤU TRÚC: Giữ nguyên cấu trúc các cấp tiêu đề (dùng #, ##, ###). Trình bày bảng biểu bằng cú pháp Markdown. 
+                    10. LỌC NHIỄU: Không chèn thêm các đường kẻ ngang (---) phân cách trang. Tự động bỏ qua số trang hoặc tiêu đề đầu/chân trang bị lặp lại (header/footer).
                     """
 
                     response = client.models.generate_content(
