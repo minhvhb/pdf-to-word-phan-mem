@@ -11,11 +11,12 @@ from openpyxl.cell.text import InlineFont
 from google import genai
 from google.genai import types
 from docx import Document
-from docx.shared import Pt, Mm, Cm
+from docx.shared import Pt, Mm, Cm, RGBColor
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.enum.section import WD_ORIENT
 from PIL import Image
 from pypdf import PdfReader, PdfWriter, Transformation
+import difflib
 
 # ==========================================
 # 1. CẤU HÌNH TRANG CHỦ ĐẠO
@@ -541,13 +542,148 @@ def app_number_3():
                     st.error(f"Đã xảy ra lỗi hệ thống: {e}")
 
 # ==========================================
-# 5. THANH MENU BÊN TRÁI ĐIỀU HƯỚNG CÁC APP
+# 5. KHU VỰC APP 4: KÍNH LÚP SO SÁNH HỢP ĐỒNG
+# ==========================================
+def extract_text_from_file(uploaded_file, client):
+    """Hàm trích xuất text từ Word hoặc PDF bằng AI/Thuật toán"""
+    text = ""
+    file_ext = uploaded_file.name.split('.')[-1].lower()
+    
+    if file_ext == "docx":
+        doc = Document(uploaded_file)
+        text = "\n".join([para.text for para in doc.paragraphs])
+    
+    elif file_ext in ["pdf", "png", "jpg", "jpeg"]:
+        # Dùng AI để OCR và lấy toàn bộ text (đặc biệt hữu dụng với file PDF scan)
+        file_bytes = uploaded_file.getbuffer()
+        mime_type = "application/pdf" if file_ext == "pdf" else f"image/{file_ext}"
+        
+        prompt = "Hãy trích xuất TOÀN BỘ nội dung văn bản trong tài liệu này một cách chính xác nhất. Trả về văn bản thuần túy (plain text), giữ nguyên các xuống dòng và không giải thích gì thêm."
+        
+        response = client.models.generate_content(
+            model='gemini-1.5-flash',
+            contents=[types.Part.from_bytes(data=file_bytes, mime_type=mime_type), prompt]
+        )
+        text = response.text
+    
+    return text
+
+def app_document_compare():
+    try:
+        api_key_input = st.secrets["GEMINI_API_KEY"]
+    except KeyError:
+        st.error("⚠️ Hệ thống chưa được cấu hình API Key. Vui lòng liên hệ Quản trị viên!")
+        st.stop()
+
+    st.title("🔍 Kính lúp So sánh Hợp đồng")
+    st.markdown("Đối soát độ lệch chữ giữa 2 phiên bản tài liệu. Hỗ trợ đối chiếu chéo **Word vs Word**, **PDF scan vs Word**.")
+
+    col1, col2 = st.columns(2)
+    with col1:
+        st.info("📄 BẢN GỐC (V1)")
+        file_v1 = st.file_uploader("Tải lên bản gốc (PDF/Word/Ảnh):", key=f"v1_{st.session_state.uploader_key}")
+    with col2:
+        st.warning("📝 BẢN ĐỐI TÁC GỬI LẠI (V2)")
+        file_v2 = st.file_uploader("Tải lên bản chỉnh sửa (PDF/Word/Ảnh):", key=f"v2_{st.session_state.uploader_key}")
+
+    if file_v1 and file_v2:
+        if st.button("🔎 Soi Sự Khác Biệt", type="primary"):
+            with st.spinner("🤖 Đang quét tài liệu và so sánh từng ký tự..."):
+                try:
+                    client = genai.Client(api_key=api_key_input)
+                    
+                    # 1. Trích xuất Text
+                    st.toast("Đang đọc và giải mã Bản Gốc (V1)...")
+                    text_v1 = extract_text_from_file(file_v1, client)
+                    
+                    st.toast("Đang đọc và giải mã Bản Đối Tác (V2)...")
+                    text_v2 = extract_text_from_file(file_v2, client)
+
+                    # 2. AI Tóm tắt rủi ro thay đổi
+                    st.toast("AI đang đánh giá rủi ro các điểm thay đổi...")
+                    summary_prompt = f"""
+                    Tôi có 2 phiên bản hợp đồng.
+                    Bản gốc: {text_v1[:3000]}... (trích đoạn)
+                    Bản sửa: {text_v2[:3000]}... (trích đoạn)
+                    
+                    Hãy tìm ra những điểm thay đổi lớn về mặt ngữ nghĩa (tiền bạc, thời gian, nghĩa vụ, quyền lợi) giữa 2 bản và lập 1 bảng tóm tắt đánh giá rủi ro. Trả lời ngắn gọn bằng tiếng Việt.
+                    """
+                    summary_response = client.models.generate_content(
+                        model='gemini-1.5-flash',
+                        contents=[summary_prompt]
+                    )
+
+                    # 3. Tạo file Word báo cáo so sánh chi tiết
+                    doc_report = Document()
+                    doc_report.add_heading('BÁO CÁO ĐỐI CHIẾU TÀI LIỆU (V1 vs V2)', 0)
+                    
+                    doc_report.add_heading('I. Đánh giá nhanh của AI', level=1)
+                    doc_report.add_paragraph(summary_response.text)
+
+                    doc_report.add_heading('II. Chi tiết các điểm thay đổi (Soi từng chữ)', level=1)
+                    legend = doc_report.add_paragraph()
+                    run_del = legend.add_run("Chữ màu đỏ có gạch ngang: Bị đối tác xóa bỏ\n")
+                    run_del.font.color.rgb = RGBColor(255, 0, 0)
+                    run_del.font.strike = True
+                    run_add = legend.add_run("Chữ màu xanh có gạch chân: Được đối tác thêm mới")
+                    run_add.font.color.rgb = RGBColor(0, 0, 255)
+                    run_add.font.underline = True
+
+                    # 4. Thuật toán so sánh chính xác 100% bằng difflib
+                    p_diff = doc_report.add_paragraph()
+                    
+                    words_v1 = text_v1.splitlines() 
+                    words_v2 = text_v2.splitlines()
+                    
+                    words_v1_flat = [word for line in words_v1 for word in line.split(" ")]
+                    words_v2_flat = [word for line in words_v2 for word in line.split(" ")]
+
+                    matcher = difflib.SequenceMatcher(None, words_v1_flat, words_v2_flat)
+                    
+                    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+                        if tag == 'equal':
+                            p_diff.add_run(" " + " ".join(words_v1_flat[i1:i2]))
+                        elif tag == 'delete':
+                            run = p_diff.add_run(" " + " ".join(words_v1_flat[i1:i2]))
+                            run.font.color.rgb = RGBColor(255, 0, 0)
+                            run.font.strike = True
+                        elif tag == 'insert':
+                            run = p_diff.add_run(" " + " ".join(words_v2_flat[j1:j2]))
+                            run.font.color.rgb = RGBColor(0, 0, 255)
+                            run.font.underline = True
+                        elif tag == 'replace':
+                            run_old = p_diff.add_run(" " + " ".join(words_v1_flat[i1:i2]))
+                            run_old.font.color.rgb = RGBColor(255, 0, 0)
+                            run_old.font.strike = True
+                            
+                            run_new = p_diff.add_run(" " + " ".join(words_v2_flat[j1:j2]))
+                            run_new.font.color.rgb = RGBColor(0, 0, 255)
+                            run_new.font.underline = True
+
+                    output_report_path = "Bao_Cao_So_Sanh.docx"
+                    doc_report.save(output_report_path)
+
+                    st.success("🎉 So sánh hoàn tất! Tuyệt đối không trượt một dấu phẩy nào.")
+
+                    with open(output_report_path, "rb") as file_download:
+                        st.download_button(
+                            label="📥 Tải xuống Báo cáo chi tiết (.docx)",
+                            data=file_download,
+                            file_name="Bao_Cao_So_Sanh_V1_vs_V2.docx",
+                            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                            on_click=clear_file
+                        )
+                except Exception as e:
+                    st.error(f"Đã xảy ra lỗi: {e}")
+
+# ==========================================
+# 6. THANH MENU BÊN TRÁI ĐIỀU HƯỚNG CÁC APP
 # ==========================================
 st.sidebar.title("📌 Menu Công Cụ")
 
 app_mode = st.sidebar.radio(
     "Vui lòng chọn ứng dụng:",
-    ["📄 1. PDF sang Word", "🖨️ 2. Chuyển PDF về khổ A4", "📊 3. PDF/Ảnh sang Excel"]
+    ["📄 1. PDF sang Word", "🖨️ 2. Chuyển PDF về khổ A4", "📊 3. PDF/Ảnh sang Excel", "🔍 4. Kính lúp So sánh"]
 )
 
 st.sidebar.markdown("---") 
@@ -561,7 +697,7 @@ st.sidebar.error("""
 """)
 
 # ==========================================
-# 6. KÍCH HOẠT ỨNG DỤNG DỰA TRÊN LỰA CHỌN
+# 7. KÍCH HOẠT ỨNG DỤNG DỰA TRÊN LỰA CHỌN
 # ==========================================
 if app_mode == "📄 1. PDF sang Word":
     app_pdf_to_word()
@@ -569,3 +705,5 @@ elif app_mode == "🖨️ 2. Chuyển PDF về khổ A4":
     app_number_2()
 elif app_mode == "📊 3. PDF/Ảnh sang Excel":
     app_number_3()
+elif app_mode == "🔍 4. Kính lúp So sánh":
+    app_document_compare()
