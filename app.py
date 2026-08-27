@@ -229,7 +229,8 @@ def app_number_2():
     uploaded_pdf = st.file_uploader("Tải lên bản vẽ PDF cần xử lý:", type=["pdf"], key=f"app2_{st.session_state.uploader_key}")
 
     if uploaded_pdf is not None:
-        st.success(f"Đã tải lên file: **{uploaded_file.name}**")
+        # ĐÃ SỬA LỖI NAME ERROR Ở DÒNG DƯỚI ĐÂY
+        st.success(f"Đã tải lên file: **{uploaded_pdf.name}**")
         
         if st.button("📏 Bắt đầu Ép khổ A4", type="primary"):
             with st.spinner("Đang tính toán tỷ lệ và đóng khung A4..."):
