@@ -6,6 +6,8 @@ from io import BytesIO
 import json
 import openpyxl
 from openpyxl.styles import Font, Alignment, Border, Side
+from openpyxl.cell.rich_text import CellRichText, TextBlock
+from openpyxl.cell.text import InlineFont
 from google import genai
 from google.genai import types
 from docx import Document
@@ -304,6 +306,28 @@ def app_number_2():
 # ==========================================
 # 4. KHU VỰC APP 3: BÓC TÁCH ĐẦY ĐỦ VÀ SẠCH SẼ SANG EXCEL
 # ==========================================
+def parse_rich_text(text_val, font_name="Times New Roman", size=12):
+    """Hàm hỗ trợ xử lý In đậm một phần chữ trong ô Excel dựa vào ký hiệu **"""
+    text_str = str(text_val) if text_val is not None else ""
+    parts = re.split(r'\*\*(.*?)\*\*', text_str)
+
+    # Nếu không có dấu in đậm, trả về text bình thường
+    if len(parts) == 1:
+        return text_str 
+
+    # Nếu có dấu in đậm, ghép các đoạn TextBlock lại với nhau
+    rt = CellRichText()
+    font_normal = InlineFont(rFont=font_name, sz=size)
+    font_bold = InlineFont(rFont=font_name, sz=size, b=True)
+
+    for i, p in enumerate(parts):
+        if not p: continue
+        if i % 2 == 1: # Chữ nằm giữa cặp ** -> In đậm
+            rt.append(TextBlock(font=font_bold, text=p))
+        else: # Chữ nằm ngoài cặp ** -> In thường
+            rt.append(TextBlock(font=font_normal, text=p))
+    return rt
+
 def app_number_3():
     try:
         api_key_input = st.secrets["GEMINI_API_KEY"]
@@ -312,7 +336,7 @@ def app_number_3():
         st.stop()
 
     st.title("📊 Bóc tách PDF/Ảnh sang Excel (Giữ Định Dạng)")
-    st.markdown("Trích xuất và tự động định dạng In đậm, Canh giữa, Kẻ bảng giống hệt bản PDF gốc.")
+    st.markdown("Trích xuất và tự động định dạng In đậm 1 phần, Canh giữa, Kẻ bảng giống hệt bản PDF gốc.")
 
     uploaded_excel_file = st.file_uploader("Tải lên tài liệu (Ảnh hoặc PDF):", type=["jpg", "jpeg", "png", "pdf"], key=f"app3_{st.session_state.uploader_key}")
 
@@ -331,24 +355,27 @@ def app_number_3():
                         file_bytes = f.read()
                     mime_type = "application/pdf" if uploaded_excel_file.name.endswith(".pdf") else "image/jpeg"
                     
-                    # PROMPT JSON: Ép AI trả về chuẩn cấu trúc lập trình, không rác markdown
+                    # PROMPT JSON: Ép AI trả về JSON và QUAN TRỌNG NHẤT LÀ GIỮ LẠI KÝ HIỆU **
                     prompt = """
-                    Bạn là một chuyên gia số hóa tài liệu. Hãy đọc kỹ tài liệu và trả về kết quả DUY NHẤT dưới dạng chuỗi JSON hợp lệ. Không trả lời thêm bất kỳ câu nào khác. Không dùng markdown ```json.
+                    Bạn là một chuyên gia số hóa tài liệu. Hãy đọc kỹ tài liệu và trả về kết quả DUY NHẤT dưới dạng chuỗi JSON hợp lệ. Không trả lời thêm.
+                    
+                    LƯU Ý QUAN TRỌNG VỀ ĐỊNH DẠNG:
+                    Hãy phân tích và BỌC CÁC CHỮ ĐƯỢC IN ĐẬM trong bản gốc bằng dấu sao kép (**). 
+                    Ví dụ: "- **Thời gian:** 9 giờ ngày 15 tháng 7 năm 2026"
+                    
                     Cấu trúc JSON BẮT BUỘC:
                     {
-                      "title": "Dòng tiêu đề lớn nhất trên cùng (ví dụ: DANH SÁCH THÀNH VIÊN...)",
+                      "title": "Dòng tiêu đề trên cùng",
                       "info_lines": [
-                        "Dòng thông tin 1 (ví dụ: - Thời gian: 9 giờ...)",
-                        "Dòng thông tin 2",
-                        "Dòng thông tin 3"
+                        "Dòng thông tin 1",
+                        "Dòng thông tin 2"
                       ],
-                      "headers": ["Cột 1", "Cột 2", "Cột 3", "Cột 4", "Cột 5"],
+                      "headers": ["Cột 1", "Cột 2", "Cột 3"],
                       "rows": [
-                        ["Dữ liệu 1", "Dữ liệu 2", "Dữ liệu 3", "Dữ liệu 4", "Dữ liệu 5"],
-                        ["Dữ liệu 1", "Dữ liệu 2", "Dữ liệu 3", "Dữ liệu 4", "Dữ liệu 5"]
+                        ["Dữ liệu 1", "Dữ liệu 2", "Dữ liệu 3"],
+                        ["Dữ liệu 1", "Dữ liệu 2", "Dữ liệu 3"]
                       ]
                     }
-                    LƯU Ý: Tuyệt đối không dùng ký hiệu in đậm (**) bên trong dữ liệu JSON.
                     """
 
                     response = client.models.generate_content(
@@ -386,41 +413,54 @@ def app_number_3():
                     current_row = 1
                     total_cols = len(data.get("headers", [1,2,3,4,5]))
 
-                    # 1. Vẽ Tiêu Đề Chính (In đậm, Canh giữa, Gộp ô)
+                    # 1. Vẽ Tiêu Đề Chính (In đậm hoàn toàn, Canh giữa, Gộp ô)
                     title = data.get("title", "")
                     if title:
-                        cell = ws.cell(row=current_row, column=1, value=title.upper())
+                        clean_title = str(title).replace('**', '').upper()
+                        cell = ws.cell(row=current_row, column=1, value=clean_title)
                         cell.font = font_title
                         cell.alignment = align_center
                         ws.merge_cells(start_row=current_row, start_column=1, end_row=current_row, end_column=total_cols)
                         current_row += 1
 
-                    # 2. Vẽ Các dòng thông tin chung (Thời gian, Chủ trì...)
+                    # 2. Vẽ Các dòng thông tin chung (Xử lý Rich Text để in đậm 1 phần)
                     for info in data.get("info_lines", []):
-                        cell = ws.cell(row=current_row, column=1, value=info)
-                        cell.font = font_normal
+                        cell = ws.cell(row=current_row, column=1)
+                        rich_val = parse_rich_text(info)
+                        
+                        cell.value = rich_val
+                        if isinstance(rich_val, str): # Nếu không có rich text thì áp font mặc định
+                            cell.font = font_normal
+                            
                         cell.alignment = align_left
                         ws.merge_cells(start_row=current_row, start_column=1, end_row=current_row, end_column=total_cols)
                         current_row += 1
 
                     current_row += 1 # Cách 1 dòng cho thoáng
 
-                    # 3. Vẽ Tiêu đề cột của bảng (In đậm, Canh giữa, Kẻ viền)
+                    # 3. Vẽ Tiêu đề cột của bảng (In đậm hoàn toàn, Canh giữa, Kẻ viền)
                     headers = data.get("headers", [])
                     for col_idx, header in enumerate(headers, 1):
-                        cell = ws.cell(row=current_row, column=col_idx, value=header)
+                        clean_header = str(header).replace('**', '')
+                        cell = ws.cell(row=current_row, column=col_idx, value=clean_header)
                         cell.font = font_bold
                         cell.alignment = align_center
                         cell.border = thin_border
                     current_row += 1
 
-                    # 4. Vẽ Dữ liệu hàng (Căn lề chuẩn, Kẻ viền)
+                    # 4. Vẽ Dữ liệu hàng (Xử lý Rich Text nếu có, Kẻ viền)
                     for row_data in data.get("rows", []):
                         for col_idx, val in enumerate(row_data, 1):
-                            cell = ws.cell(row=current_row, column=col_idx, value=val)
-                            cell.font = font_normal
+                            cell = ws.cell(row=current_row, column=col_idx)
+                            rich_val = parse_rich_text(val)
+                            
+                            cell.value = rich_val
+                            if isinstance(rich_val, str):
+                                cell.font = font_normal
+                                
                             cell.border = thin_border
-                            # Căn giữa cho cột STT và Ký tên, Căn trái cho các cột còn lại
+                            
+                            # Căn giữa cho cột STT (1) và Ký tên (cuối), Căn trái cho cột còn lại
                             if col_idx == 1 or col_idx == total_cols:
                                 cell.alignment = align_center
                             else:
