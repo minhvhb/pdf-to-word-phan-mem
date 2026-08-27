@@ -36,8 +36,20 @@ def clear_file():
     st.session_state.uploader_key += 1
 
 # ==========================================
-# 2. KHU VỰC APP 1: CHUYỂN PDF SANG WORD (ĐÃ FIX BẢNG)
+# 2. KHU VỰC APP 1: CHUYỂN PDF SANG WORD (ĐÃ FIX LỖI FORMAT)
 # ==========================================
+def parse_and_add_runs(paragraph, text):
+    """Hàm phân tích In đậm (**) và In nghiêng (*) để ghi vào Word"""
+    parts = re.split(r'\*\*(.*?)\*\*', text)
+    for i, part in enumerate(parts):
+        is_bold = (i % 2 == 1)
+        sub_parts = re.split(r'\*(.*?)\*', part)
+        for j, sub_part in enumerate(sub_parts):
+            if sub_part:
+                run = paragraph.add_run(sub_part)
+                run.bold = is_bold
+                run.italic = (j % 2 == 1)
+
 def app_pdf_to_word():
     try:
         api_key_input = st.secrets["GEMINI_API_KEY"]
@@ -46,7 +58,7 @@ def app_pdf_to_word():
         st.stop()
 
     st.title("📄 Ứng dụng Chuyển đổi PDF & Ảnh sang Word")
-    st.markdown("Sử dụng **Google Gemini AI** để trích xuất văn bản và bảng biểu với độ chính xác cao.")
+    st.markdown("Sử dụng **Google Gemini AI** để trích xuất văn bản và bảng biểu chuẩn Form Hành chính.")
 
     uploaded_file = st.file_uploader("Tải lên file ảnh (JPG, PNG) hoặc PDF:", type=["jpg", "jpeg", "png", "pdf"], key=f"app1_{st.session_state.uploader_key}")
 
@@ -54,7 +66,7 @@ def app_pdf_to_word():
         st.success(f"Đã tải lên file: **{uploaded_file.name}**")
         
         if st.button("🚀 Bắt đầu Chuyển đổi", type="primary"):
-            with st.spinner("🤖 AI đang phân tích và dựng lại khung bảng, vui lòng đợi..."):
+            with st.spinner("🤖 AI đang phân tích lề và định dạng chữ, vui lòng đợi..."):
                 try:
                     temp_input_path = f"temp_{uploaded_file.name}"
                     with open(temp_input_path, "wb") as f:
@@ -66,24 +78,28 @@ def app_pdf_to_word():
                     mime_type = "application/pdf" if uploaded_file.name.endswith(".pdf") else "image/jpeg"
                     
                     prompt = """
-                    NHIỆM VỤ OCR - BẮT BUỘC TUÂN THỦ NGHIÊM NGẶT THEO THỨ TỰ SAU:
+                    NHIỆM VỤ OCR - BẮT BUỘC TUÂN THỦ NGHIÊM NGẶT THEO THỨ TỰ SAU ĐỂ KHÔNG LỖI FORMAT:
 
                     1. CHIỀU TRANG GIẤY:
-                       - Phân tích bức ảnh. Nếu bề ngang rộng hơn bề dọc -> DÒNG ĐẦU TIÊN LÀ: [ORIENTATION: LANDSCAPE]. 
-                       - Ngược lại -> DÒNG ĐẦU TIÊN LÀ: [ORIENTATION: PORTRAIT].
+                       - Nếu ngang rộng hơn dọc -> DÒNG ĐẦU TIÊN LÀ: [ORIENTATION: LANDSCAPE]
+                       - Ngược lại -> DÒNG ĐẦU TIÊN LÀ: [ORIENTATION: PORTRAIT]
 
-                    2. CANH LỀ ĐOẠN VĂN:
-                       - Tiêu đề, Tên cơ quan, Quốc hiệu (Cộng hòa xã hội...) hoặc chữ canh giữa -> BẮT BUỘC ghi [CENTER] ở đầu mỗi dòng.
-                       - Chữ nằm lệch góc phải (Ký tên, Ngày tháng năm...) -> BẮT BUỘC ghi [RIGHT] ở đầu mỗi dòng.
-                       - Chữ canh trái bình thường thì để nguyên.
+                    2. CANH LỀ ĐOẠN VĂN (RẤT QUAN TRỌNG):
+                       - BẮT BUỘC ghi [CENTER] ở đầu MỌI dòng cần canh giữa (VD: Quốc hiệu, Tiêu đề, Tên cơ quan ban ngành).
+                       - BẮT BUỘC ghi [RIGHT] ở đầu MỌI dòng nằm lệch phải (VD: Ngày tháng năm, Người ký...).
+                       - Nếu có 2 cụm chữ song song ở trên cùng (VD: Trái là Tên cơ quan, Phải là Quốc hiệu), hãy liệt kê lần lượt từ trên xuống và gắn [CENTER] cho TẤT CẢ các dòng đó.
+                       - (KHÔNG dùng lệnh [CENTER] hay [RIGHT] vào bên trong nội dung bảng biểu).
 
-                    3. ĐỊNH DẠNG CHỮ: Chữ nào in đậm trong bản gốc, phải bọc bằng dấu sao kép (Ví dụ: **THÔNG BÁO**).
+                    3. ĐỊNH DẠNG CHỮ: 
+                       - Chữ in đậm -> bọc trong ** (VD: **THÔNG BÁO**). 
+                       - Chữ in nghiêng -> bọc trong * (VD: *Nơi nhận:*).
 
-                    4. BẢNG BIỂU (RẤT QUAN TRỌNG): 
+                    4. BẢNG BIỂU (QUAN TRỌNG NHẤT): 
                        - Vẽ bảng bằng Markdown chuẩn (|...|).
-                       - MẸO XỬ LÝ TIÊU ĐỀ NHÓM: Nếu trong bảng có các dòng "Tiêu đề phụ/Phân loại" nằm ngang (Ví dụ: "I. Nhà máy Thuốc lá..."), bạn PHẢI để nội dung đó vào CỘT ĐẦU TIÊN và để TRỐNG tất cả các cột còn lại (Ví dụ: | **I. Nhà máy Thuốc lá...** | | | | | | ). Code sẽ tự động gộp ô (merge cells) cho dòng này.
-                    
-                    5. TUYỆT ĐỐI KHÔNG dùng HTML, không bịa dấu ba chấm. Chữ ký tay thay bằng [Đã ký].
+                       - TRONG Ô BẢNG: Nếu cần xuống dòng (VD: giữa "Tên nhà máy" và "Địa chỉ"), BẮT BUỘC chèn thẻ `<br>` (Ví dụ: `I. Nhà máy A<br>Địa chỉ: ...`). TUYỆT ĐỐI KHÔNG tự nhấn Enter xuống dòng trong cùng 1 ô Markdown.
+                       - GỘP Ô (MERGE CELLS): Với các dòng tiêu đề phân loại trải dài toàn bảng (như "I. Nhà máy Thuốc lá..."), hãy đặt toàn bộ nội dung vào CỘT ĐẦU TIÊN, các cột còn lại để trống (Ví dụ: | **I. Nhà máy...** | | | | | ). Code sẽ tự động gộp ô.
+
+                    5. TUYỆT ĐỐI KHÔNG dùng HTML (ngoại trừ <br>), không bịa dấu ba chấm. Chữ ký tay thay bằng [Đã ký].
                     """
 
                     response = client.models.generate_content(
@@ -133,48 +149,36 @@ def app_pdf_to_word():
                         for row_idx, row_data in enumerate(buffer):
                             row_cells = current_table.rows[row_idx].cells
                             
-                            # Nhận diện dòng cần Gộp Ô (Merge Cells)
                             is_group_header = False
                             if num_cols > 1:
-                                if len(row_data) == 1 and row_data[0].strip() != '':
-                                    is_group_header = True
-                                elif len(row_data) > 1 and row_data[0].strip() != '' and all(c.strip() == '' for c in row_data[1:]):
+                                if len(row_data) > 0 and row_data[0].strip() != '' and all(c.strip() == '' for c in row_data[1:]):
                                     is_group_header = True
                                     
                             if is_group_header:
-                                # Tiến hành gộp toàn bộ cột trong hàng này
                                 main_cell = row_cells[0]
                                 main_cell.merge(row_cells[-1])
                                 main_cell.text = ""
-                                p = main_cell.paragraphs[0]
-                                p.alignment = WD_ALIGN_PARAGRAPH.LEFT
-                                parts = re.split(r'\*\*(.*?)\*\*', row_data[0])
-                                for i, part in enumerate(parts):
-                                    if part:
-                                        run = p.add_run(part)
-                                        if i % 2 == 1:
-                                            run.bold = True
+                                cell_lines = row_data[0].split('<br>')
+                                for idx, c_line in enumerate(cell_lines):
+                                    p = main_cell.paragraphs[0] if idx == 0 else main_cell.add_paragraph()
+                                    p.alignment = WD_ALIGN_PARAGRAPH.LEFT
+                                    parse_and_add_runs(p, c_line.strip())
                             else:
-                                # Đổ dữ liệu vào các cột bình thường
                                 for col_idx, cell_data in enumerate(row_data):
                                     if col_idx < len(row_cells):
                                         cell = row_cells[col_idx]
-                                        cell.text = "" 
-                                        p = cell.paragraphs[0]
-                                        p.alignment = WD_ALIGN_PARAGRAPH.CENTER if row_idx == 0 else WD_ALIGN_PARAGRAPH.LEFT
-                                        parts = re.split(r'\*\*(.*?)\*\*', cell_data)
-                                        for i, part in enumerate(parts):
-                                            if part:
-                                                run = p.add_run(part)
-                                                if i % 2 == 1:
-                                                    run.bold = True
+                                        cell.text = ""
+                                        cell_lines = cell_data.split('<br>')
+                                        for idx, c_line in enumerate(cell_lines):
+                                            p = cell.paragraphs[0] if idx == 0 else cell.add_paragraph()
+                                            p.alignment = WD_ALIGN_PARAGRAPH.CENTER if row_idx == 0 else WD_ALIGN_PARAGRAPH.LEFT
+                                            parse_and_add_runs(p, c_line.strip())
                     # ------------------------------------------------
 
                     table_buffer = []
 
                     for line in response_text.split('\n'):
-                        clean_line = re.sub(r'<[^>]+>', '', line)
-                        line_stripped = clean_line.strip()
+                        line_stripped = line.strip()
 
                         if not line_stripped or line_stripped.startswith("```"):
                             continue
@@ -187,7 +191,6 @@ def app_pdf_to_word():
                             cells_data = [cell.strip() for cell in line_stripped.split('|')][1:-1]
                             table_buffer.append(cells_data)
                         else:
-                            # Nếu gặp chữ thường, kiểm tra xem có bảng nào đang chờ in không
                             if table_buffer:
                                 if all(cell == '' for cell in table_buffer[0]):
                                     table_buffer.pop(0)
@@ -201,23 +204,16 @@ def app_pdf_to_word():
                             
                             if line_stripped.startswith('[CENTER]'):
                                 align = WD_ALIGN_PARAGRAPH.CENTER
-                                line_stripped = line_stripped.replace('[CENTER]', '').strip()
+                                line_stripped = line_stripped.replace('[CENTER]', '', 1).strip()
                             elif line_stripped.startswith('[RIGHT]'):
                                 align = WD_ALIGN_PARAGRAPH.RIGHT
-                                line_stripped = line_stripped.replace('[RIGHT]', '').strip()
+                                line_stripped = line_stripped.replace('[RIGHT]', '', 1).strip()
                             
                             if line_stripped:
                                 p = doc.add_paragraph()
                                 p.alignment = align
-                                
-                                parts = re.split(r'\*\*(.*?)\*\*', line_stripped)
-                                for i, part in enumerate(parts):
-                                    if part:
-                                        run = p.add_run(part)
-                                        if i % 2 == 1:
-                                            run.bold = True
+                                parse_and_add_runs(p, line_stripped)
 
-                    # Xử lý bảng cuối cùng nếu tài liệu kết thúc bằng bảng
                     if table_buffer:
                         if all(cell == '' for cell in table_buffer[0]):
                             table_buffer.pop(0)
@@ -226,7 +222,7 @@ def app_pdf_to_word():
                     output_docx_path = "ket_qua.docx"
                     doc.save(output_docx_path)
 
-                    st.success("🎉 Chuyển đổi thành công! Bảng biểu đã được tối ưu Gộp Ô (Merge Cells).")
+                    st.success("🎉 Chuyển đổi thành công! Bảng biểu và Căn lề đã được tối ưu hoàn toàn.")
 
                     with open(output_docx_path, "rb") as file_download:
                         st.download_button(
@@ -320,7 +316,6 @@ def app_number_2():
 # 4. KHU VỰC APP 3: BÓC TÁCH ĐẦY ĐỦ VÀ SẠCH SẼ SANG EXCEL
 # ==========================================
 def parse_rich_text(text_val, font_name="Times New Roman", size=12):
-    """Hàm hỗ trợ xử lý In đậm một phần chữ trong ô Excel dựa vào ký hiệu **"""
     text_str = str(text_val) if text_val is not None else ""
     parts = re.split(r'\*\*(.*?)\*\*', text_str)
 
