@@ -314,7 +314,7 @@ st.sidebar.title("📌 Menu Công Cụ")
 
 app_mode = st.sidebar.radio(
     "Vui lòng chọn ứng dụng:",
-    ["📄 1. PDF sang Word", "🖨️ 2. Ép PDF về khổ A4"]
+    ["📄 1. PDF sang Word", "🖨️ 2. Chuyển PDF về khổ A4"]
 )
 
 st.sidebar.markdown("---") 
@@ -332,5 +332,5 @@ st.sidebar.error("""
 # ==========================================
 if app_mode == "📄 1. PDF sang Word":
     app_pdf_to_word()
-elif app_mode == "🖨️ 2. Ép PDF về khổ A4":
+elif app_mode == "🖨️ 2. Chuyển PDF về khổ A4":
     app_number_2()
