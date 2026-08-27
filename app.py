@@ -215,11 +215,7 @@ def app_pdf_to_word():
                             is_next_table_header = True
                             continue
 
-                        # --------------------------------------------------
-                        # BỘ LỌC THÉP: DỌN SẠCH CÁC KÝ TỰ LẠ (:-: VÀ ---)
-                        # --------------------------------------------------
                         if line_stripped.startswith('|') and line_stripped.endswith('|'):
-                            # Nếu dòng chỉ chứa ký tự phân cách bảng của Markdown (|, -, :, khoảng trắng) thì vứt bỏ
                             if re.match(r'^[\s\|\-:]+$', line_stripped):
                                 continue
                             
@@ -542,7 +538,7 @@ def app_number_3():
                     st.error(f"Đã xảy ra lỗi hệ thống: {e}")
 
 # ==========================================
-# 5. KHU VỰC APP 4: KÍNH LÚP SO SÁNH HỢP ĐỒNG
+# 5. KHU VỰC APP 4: KÍNH LÚP SO SÁNH HỢP ĐỒNG (BẢN CHUẨN)
 # ==========================================
 def extract_text_from_file(uploaded_file, client):
     """Hàm trích xuất text từ Word hoặc PDF bằng AI/Thuật toán"""
@@ -554,14 +550,13 @@ def extract_text_from_file(uploaded_file, client):
         text = "\n".join([para.text for para in doc.paragraphs])
     
     elif file_ext in ["pdf", "png", "jpg", "jpeg"]:
-        # Dùng AI để OCR và lấy toàn bộ text (đặc biệt hữu dụng với file PDF scan)
         file_bytes = uploaded_file.getbuffer()
         mime_type = "application/pdf" if file_ext == "pdf" else f"image/{file_ext}"
         
         prompt = "Hãy trích xuất TOÀN BỘ nội dung văn bản trong tài liệu này một cách chính xác nhất. Trả về văn bản thuần túy (plain text), giữ nguyên các xuống dòng và không giải thích gì thêm."
         
         response = client.models.generate_content(
-            model='gemini-3.6-flash', # Đổi dòng này
+            model='gemini-3.6-flash',
             contents=[types.Part.from_bytes(data=file_bytes, mime_type=mime_type), prompt]
         )
         text = response.text
@@ -592,35 +587,98 @@ def app_document_compare():
                 try:
                     client = genai.Client(api_key=api_key_input)
                     
-                    # 1. Trích xuất Text
                     st.toast("Đang đọc và giải mã Bản Gốc (V1)...")
                     text_v1 = extract_text_from_file(file_v1, client)
                     
                     st.toast("Đang đọc và giải mã Bản Đối Tác (V2)...")
                     text_v2 = extract_text_from_file(file_v2, client)
 
-                    # 2. AI Tóm tắt rủi ro thay đổi
+                    words_v1 = text_v1.splitlines() 
+                    words_v2 = text_v2.splitlines()
+                    
+                    words_v1_flat = [word for line in words_v1 for word in line.split(" ") if word.strip()]
+                    words_v2_flat = [word for line in words_v2 for word in line.split(" ") if word.strip()]
+
+                    matcher = difflib.SequenceMatcher(None, words_v1_flat, words_v2_flat)
+                    
+                    edits = []
+                    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+                        if tag != 'equal':
+                            edits.append({
+                                'tag': tag,
+                                'old': " ".join(words_v1_flat[i1:i2]),
+                                'new': " ".join(words_v2_flat[j1:j2])
+                            })
+                    
+                    total_edits = len(edits)
+
                     st.toast("AI đang đánh giá rủi ro các điểm thay đổi...")
                     summary_prompt = f"""
-                    Tôi có 2 phiên bản hợp đồng.
-                    Bản gốc: {text_v1[:3000]}... (trích đoạn)
-                    Bản sửa: {text_v2[:3000]}... (trích đoạn)
+                    Tôi có 2 phiên bản hợp đồng. Phát hiện tổng cộng {total_edits} lần thay đổi.
+                    Bản gốc: {text_v1[:3000]}... 
+                    Bản sửa: {text_v2[:3000]}...
                     
-                    Hãy tìm ra những điểm thay đổi lớn về mặt ngữ nghĩa (tiền bạc, thời gian, nghĩa vụ, quyền lợi) giữa 2 bản và lập 1 bảng tóm tắt đánh giá rủi ro. Trả lời ngắn gọn bằng tiếng Việt.
+                    Hãy viết một đoạn văn ngắn gọn đánh giá rủi ro pháp lý/ngữ nghĩa của các điểm khác biệt này.
+                    BẮT BUỘC TUÂN THỦ: 
+                    1. TUYỆT ĐỐI KHÔNG dùng ký tự đặc biệt như dấu sao (*), thăng (#), gạch ngang (-), hay bảng biểu (|). 
+                    2. Trả lời bằng văn bản thuần túy (plain text) để đưa trực tiếp vào Word.
                     """
                     summary_response = client.models.generate_content(
-                        model='gemini-3.6-flash', # Đổi dòng này
+                        model='gemini-3.6-flash',
                         contents=[summary_prompt]
                     )
+                    ai_text = summary_response.text.replace('*', '').replace('#', '').replace('`', '').strip()
 
-                    # 3. Tạo file Word báo cáo so sánh chi tiết
                     doc_report = Document()
+                    
+                    style = doc_report.styles['Normal']
+                    font = style.font
+                    font.name = 'Times New Roman'
+                    font.size = Pt(13)
+
                     doc_report.add_heading('BÁO CÁO ĐỐI CHIẾU TÀI LIỆU (V1 vs V2)', 0)
                     
-                    doc_report.add_heading('I. Đánh giá nhanh của AI', level=1)
-                    doc_report.add_paragraph(summary_response.text)
+                    doc_report.add_heading('I. Bảng Tổng kết chi tiết các lần chỉnh sửa', level=1)
+                    p_total = doc_report.add_paragraph()
+                    run_total = p_total.add_run(f"Hệ thống ghi nhận tổng cộng {total_edits} lần chỉnh sửa từ đối tác.")
+                    run_total.bold = True
+                    run_total.font.color.rgb = RGBColor(255, 0, 0)
+                    
+                    if total_edits > 0:
+                        table = doc_report.add_table(rows=1, cols=4)
+                        table.style = 'Table Grid'
+                        hdr_cells = table.rows[0].cells
+                        hdr_cells[0].text = 'STT'
+                        hdr_cells[1].text = 'Thao tác'
+                        hdr_cells[2].text = 'Bản gốc (V1)'
+                        hdr_cells[3].text = 'Đối tác sửa (V2)'
+                        
+                        for cell in hdr_cells:
+                            for p in cell.paragraphs:
+                                for r in p.runs:
+                                    r.bold = True
+                        
+                        for idx, edit in enumerate(edits, 1):
+                            row_cells = table.add_row().cells
+                            row_cells[0].text = str(idx)
+                            
+                            if edit['tag'] == 'delete':
+                                row_cells[1].text = 'Xóa bỏ'
+                                row_cells[2].text = edit['old']
+                                row_cells[3].text = "(Đã xóa)"
+                            elif edit['tag'] == 'insert':
+                                row_cells[1].text = 'Thêm mới'
+                                row_cells[2].text = "(Không có)"
+                                row_cells[3].text = edit['new']
+                            elif edit['tag'] == 'replace':
+                                row_cells[1].text = 'Thay thế'
+                                row_cells[2].text = edit['old']
+                                row_cells[3].text = edit['new']
 
-                    doc_report.add_heading('II. Chi tiết các điểm thay đổi (Soi từng chữ)', level=1)
+                    doc_report.add_heading('II. Nhận định rủi ro tổng quan (AI)', level=1)
+                    doc_report.add_paragraph(ai_text)
+
+                    doc_report.add_heading('III. Chi tiết văn bản (Kính lúp bôi màu)', level=1)
                     legend = doc_report.add_paragraph()
                     run_del = legend.add_run("Chữ màu đỏ có gạch ngang: Bị đối tác xóa bỏ\n")
                     run_del.font.color.rgb = RGBColor(255, 0, 0)
@@ -629,16 +687,7 @@ def app_document_compare():
                     run_add.font.color.rgb = RGBColor(0, 0, 255)
                     run_add.font.underline = True
 
-                    # 4. Thuật toán so sánh chính xác 100% bằng difflib
                     p_diff = doc_report.add_paragraph()
-                    
-                    words_v1 = text_v1.splitlines() 
-                    words_v2 = text_v2.splitlines()
-                    
-                    words_v1_flat = [word for line in words_v1 for word in line.split(" ")]
-                    words_v2_flat = [word for line in words_v2 for word in line.split(" ")]
-
-                    matcher = difflib.SequenceMatcher(None, words_v1_flat, words_v2_flat)
                     
                     for tag, i1, i2, j1, j2 in matcher.get_opcodes():
                         if tag == 'equal':
@@ -663,7 +712,7 @@ def app_document_compare():
                     output_report_path = "Bao_Cao_So_Sanh.docx"
                     doc_report.save(output_report_path)
 
-                    st.success("🎉 So sánh hoàn tất! Tuyệt đối không trượt một dấu phẩy nào.")
+                    st.success("🎉 So sánh hoàn tất! Báo cáo đã được định dạng chuẩn hành chính.")
 
                     with open(output_report_path, "rb") as file_download:
                         st.download_button(
@@ -705,5 +754,5 @@ elif app_mode == "🖨️ 2. Chuyển PDF về khổ A4":
     app_number_2()
 elif app_mode == "📊 3. PDF/Ảnh sang Excel":
     app_number_3()
-elif app_mode == "🔍 4. Kính lúp So sánh":
+elif app_mode == "🔍 4. So sánh Văn bản/Hợp đồng":
     app_document_compare()
