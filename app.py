@@ -48,23 +48,21 @@ if uploaded_file is not None:
                     mime_type = "application/pdf" if uploaded_file.name.endswith(".pdf") else "image/jpeg"
                     
                     prompt = """
-                    Bạn là một hệ thống OCR và số hóa tài liệu hành chính cấp cao. Nhiệm vụ của bạn là bóc tách toàn bộ nội dung từ ảnh/PDF sang định dạng văn bản thô (Clean Text/Markdown) để chuyển vào file Word.
+                    Bạn là một hệ thống OCR và số hóa tài liệu cấp cao. Nhiệm vụ của bạn là bóc tách toàn bộ nội dung từ ảnh/PDF sang định dạng văn bản thô (Clean Text/Markdown) để chuyển vào file Word.
+                    
                     YÊU CẦU KỶ LUẬT THÉP (BẮT BUỘC TUÂN THỦ):
-                    1. Trích xuất nguyên bản: Giữ nguyên 100% nội dung chữ, tuyệt đối không tóm tắt, không diễn giải, không thêm thắt. Nếu có lỗi chính tả trong bản gốc, hãy giữ nguyên.
-                    2. Cấu trúc & Thứ tự đọc: Nhận diện đúng luồng văn bản (ví dụ: đọc hết cột trái rồi mới sang cột phải). Phân định rõ ràng các cấp độ tiêu đề bằng cú pháp Markdown (Sử dụng # cho H1, ## cho H2, ### cho H3).
-                    3. Xử lý Bảng biểu tuyệt đối: Thể hiện bảng bằng cú pháp Markdown chuẩn xác. Phải đối chiếu để không bỏ sót bất kỳ dòng hay cột nào. Nếu ô trong bản gốc bị trống, bắt buộc phải để trống ô tương ứng trong Markdown.
-                    4. Loại bỏ "Rác" định dạng: Tự động nhận diện và BỎ QUA các chi tiết không thuộc nội dung chính như: số thứ tự trang, tiêu đề đầu trang/chân trang (header/footer) lặp lại, hình mờ (watermark), hoặc dấu mộc đỏ/chữ ký tay.
-                    5. Toán học & Ký tự: Giữ nguyên các ký tự đặc biệt. Với công thức khoa học phức tạp, sử dụng cú pháp LaTeX chuẩn. Đảm bảo các đoạn văn không bị ngắt dòng vô lý giữa câu.
-                    6. ĐỘ CHÍNH XÁC TUYỆT ĐỐI (Cực kỳ quan trọng): Sao chép chính xác 100% từng từ, từng chữ của bản gốc. Nếu bản gốc sai chính tả, BẮT BUỘC phải giữ nguyên lỗi sai đó (Ví dụ: "lao uộng" phải giữ là "lao uộng"). Tuyệt đối không tự ý sửa lỗi từ vựng, ngữ pháp hay thay đổi từ đồng nghĩa.
-                    7. KHÔNG ĐIỀN CHỖ TRỐNG: Nếu bản gốc có khoảng trắng chờ điền (Ví dụ: "ngày ... tháng ... năm"), bắt buộc phải để trống hoặc dùng dấu ba chấm (...), tuyệt đối không tự ý bịa ngày tháng, tên người hay bất kỳ dữ liệu nào để điền vào.
-                    8. XỬ LÝ CHỮ KÝ & CON DẤU: Bỏ qua các hình ảnh con dấu đỏ hoặc hình mờ. Tại vị trí có chữ ký tay, hãy ghi chú là: [Đã ký].
-                    9. ĐỊNH DẠNG VÀ CẤU TRÚC: Giữ nguyên cấu trúc các cấp tiêu đề (dùng #, ##, ###). Trình bày bảng biểu bằng cú pháp Markdown. 
-                    10. LỌC NHIỄU: Không chèn thêm các đường kẻ ngang (---) phân cách trang. Tự động bỏ qua số trang hoặc tiêu đề đầu/chân trang bị lặp lại (header/footer).
-                    11. QUÉT SẠCH KHÔNG BỎ SÓT: Phải đọc kỹ từ trên xuống dưới, không được bỏ sót bất kỳ ký tự, con số hay mã vạch nào ở các góc, lề, hoặc đáy trang (Ví dụ: số Serial, mã số phụ ở cuối trang).
-                    12. ĐỘ CHÍNH XÁC TUYỆT ĐỐI: Sao chép chính xác 100% bản gốc. Giữ nguyên các lỗi sai chính tả.
-                    13. KHÔNG TỰ Ý THÊM KÝ TỰ: Nếu bản gốc có khoảng trắng lớn, chỉ dùng phím Space hoặc Tab. TUYỆT ĐỐI KHÔNG tự ý chèn thêm dấu chấm (...), dấu gạch ngang (---) vào khoảng trắng.
-                    14. XỬ LÝ DỮ LIỆU DẠNG CỘT/FORM: Đối với các báo cáo, hóa đơn có dữ liệu kiểu [Khóa | Giá trị] (ví dụ: Total | 506725), hãy trình bày bằng văn bản thường cách nhau bởi dấu 2 chấm hoặc Tab (Ví dụ: Total: 506725). TUYỆT ĐỐI KHÔNG dùng cú pháp bảng Markdown (|...|) cho các dòng ngắn này để tránh lỗi hiển thị trên file Word. 
-                    15. XỬ LÝ CHỮ KÝ: Tại vị trí có chữ ký tay, hãy ghi chú là: [Đã ký]. Bỏ qua con dấu đỏ.
+                    
+                    1. QUÉT SẠCH & CHÍNH XÁC 100%: Quét từ trên xuống dưới, không bỏ sót bất kỳ ký tự, con số, mã vạch nào ở góc/lề (VD: số Serial). Sao chép chính xác nguyên bản, bắt buộc giữ nguyên cả các lỗi sai chính tả của bản gốc.
+                    
+                    2. KHÔNG TỰ BỊA DỮ LIỆU: Nếu bản gốc có khoảng trắng chờ điền, chỉ sử dụng phím Space hoặc Tab. TUYỆT ĐỐI KHÔNG tự ý điền ngày tháng, không chèn thêm dấu ba chấm (...), không thêm nét đứt (---).
+                    
+                    3. XỬ LÝ CHỮ KÝ & RÁC ĐỊNH DẠNG: Tự động bỏ qua số trang/header/footer lặp lại, hình mờ và con dấu đỏ. Tại vị trí có chữ ký tay, chỉ cần ghi chú chữ: [Đã ký].
+                    
+                    4. CẤU TRÚC VĂN BẢN: Nhận diện đúng luồng đọc (VD: đọc hết cột trái rồi mới sang phải). Dùng Markdown để phân cấp tiêu đề (# cho H1, ## cho H2). Tự động nối các câu bị ngắt dòng vô lý lại thành đoạn văn hoàn chỉnh.
+                    
+                    5. BẢNG BIỂU (TABLE): Với các bảng biểu thực sự có viền ô, bắt buộc dùng cú pháp bảng Markdown chuẩn, không bỏ sót dòng/cột. 
+                    
+                    6. BIỂU MẪU / BÁO CÁO (FORM): Với các biểu mẫu/hóa đơn có dữ liệu ngắn kiểu [Khóa | Giá trị] (Ví dụ: Total | 506725), hãy trình bày bằng văn bản thường cách nhau bởi dấu hai chấm (Ví dụ: Total: 506725). Tuyệt đối KHÔNG dùng cú pháp bảng Markdown cho các dòng này để tránh vỡ định dạng Word.
                     """
 
                     response = client.models.generate_content(
