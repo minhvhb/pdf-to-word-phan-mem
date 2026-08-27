@@ -386,7 +386,7 @@ def app_number_3():
         st.success(f"Đã tải lên file: **{uploaded_excel_file.name}**")
         
         if st.button("🚀 Trích xuất ra Excel", type="primary"):
-            with st.spinner("🤖 AI đang đọc cấu trúc và vẽ lại bảng Excel (A4), vui lòng đợi..."):
+            with st.spinner("🤖 Vui lòng đợi..."):
                 try:
                     temp_input_path = f"temp_excel_{uploaded_excel_file.name}"
                     with open(temp_input_path, "wb") as f:
