@@ -232,7 +232,7 @@ def app_number_2():
     if uploaded_pdf is not None:
         st.success(f"Đã tải lên file: **{uploaded_pdf.name}**")
         
-        if st.button("📏 Đúc lại thành A4", type="primary"):
+        if st.button("📏 Chuyển thành A4", type="primary"):
             with st.spinner("Đang truy quét và ghi đè các khung viền ẩn..."):
                 try:
                     from pypdf import PdfReader, PdfWriter, Transformation
