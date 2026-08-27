@@ -36,7 +36,7 @@ def clear_file():
     st.session_state.uploader_key += 1
 
 # ==========================================
-# 2. KHU VỰC APP 1: CHUYỂN PDF SANG WORD
+# 2. KHU VỰC APP 1: CHUYỂN PDF SANG WORD (ĐÃ FIX BẢNG)
 # ==========================================
 def app_pdf_to_word():
     try:
@@ -54,7 +54,7 @@ def app_pdf_to_word():
         st.success(f"Đã tải lên file: **{uploaded_file.name}**")
         
         if st.button("🚀 Bắt đầu Chuyển đổi", type="primary"):
-            with st.spinner("🤖 AI đang phân tích hướng giấy và trích xuất dữ liệu, vui lòng đợi..."):
+            with st.spinner("🤖 AI đang phân tích và dựng lại khung bảng, vui lòng đợi..."):
                 try:
                     temp_input_path = f"temp_{uploaded_file.name}"
                     with open(temp_input_path, "wb") as f:
@@ -68,18 +68,20 @@ def app_pdf_to_word():
                     prompt = """
                     NHIỆM VỤ OCR - BẮT BUỘC TUÂN THỦ NGHIÊM NGẶT THEO THỨ TỰ SAU:
 
-                    1. CHIỀU TRANG GIẤY (ĐIỀU KIỆN TIÊN QUYẾT):
-                       - Phân tích bức ảnh. Nếu bề ngang rộng hơn bề dọc, DÒNG ĐẦU TIÊN CỦA BẠN PHẢI LÀ: [ORIENTATION: LANDSCAPE]. 
-                       - Nếu bề dọc dài hơn bề ngang, DÒNG ĐẦU TIÊN CỦA BẠN PHẢI LÀ: [ORIENTATION: PORTRAIT].
+                    1. CHIỀU TRANG GIẤY:
+                       - Phân tích bức ảnh. Nếu bề ngang rộng hơn bề dọc -> DÒNG ĐẦU TIÊN LÀ: [ORIENTATION: LANDSCAPE]. 
+                       - Ngược lại -> DÒNG ĐẦU TIÊN LÀ: [ORIENTATION: PORTRAIT].
 
                     2. CANH LỀ ĐOẠN VĂN:
-                       - Tiêu đề hoặc chữ canh giữa trang -> ghi [CENTER] ở đầu dòng.
-                       - Chữ nằm lệch góc phải -> ghi [RIGHT] ở đầu dòng.
-                       - (KHÔNG áp dụng lệnh [CENTER] hay [RIGHT] vào bên trong bảng biểu).
+                       - Tiêu đề, Tên cơ quan, Quốc hiệu (Cộng hòa xã hội...) hoặc chữ canh giữa -> BẮT BUỘC ghi [CENTER] ở đầu mỗi dòng.
+                       - Chữ nằm lệch góc phải (Ký tên, Ngày tháng năm...) -> BẮT BUỘC ghi [RIGHT] ở đầu mỗi dòng.
+                       - Chữ canh trái bình thường thì để nguyên.
 
-                    3. ĐỊNH DẠNG CHỮ: Chữ nào in đậm trong bản gốc, phải bọc bằng dấu sao kép (Ví dụ: **DANH SÁCH**).
+                    3. ĐỊNH DẠNG CHỮ: Chữ nào in đậm trong bản gốc, phải bọc bằng dấu sao kép (Ví dụ: **THÔNG BÁO**).
 
-                    4. BẢNG BIỂU: Vẽ bảng bằng cú pháp Markdown chuẩn (|...|).
+                    4. BẢNG BIỂU (RẤT QUAN TRỌNG): 
+                       - Vẽ bảng bằng Markdown chuẩn (|...|).
+                       - MẸO XỬ LÝ TIÊU ĐỀ NHÓM: Nếu trong bảng có các dòng "Tiêu đề phụ/Phân loại" nằm ngang (Ví dụ: "I. Nhà máy Thuốc lá..."), bạn PHẢI để nội dung đó vào CỘT ĐẦU TIÊN và để TRỐNG tất cả các cột còn lại (Ví dụ: | **I. Nhà máy Thuốc lá...** | | | | | | ). Code sẽ tự động gộp ô (merge cells) cho dòng này.
                     
                     5. TUYỆT ĐỐI KHÔNG dùng HTML, không bịa dấu ba chấm. Chữ ký tay thay bằng [Đã ký].
                     """
@@ -121,6 +123,53 @@ def app_pdf_to_word():
                             section.page_width = new_width
                             section.page_height = new_height
                     
+                    # --- HÀM HỖ TRỢ XÂY DỰNG BẢNG DOCX THÔNG MINH ---
+                    def build_docx_table(doc_obj, buffer):
+                        if not buffer: return
+                        num_cols = max(len(row) for row in buffer)
+                        current_table = doc_obj.add_table(rows=len(buffer), cols=num_cols)
+                        current_table.style = 'Table Grid'
+                        
+                        for row_idx, row_data in enumerate(buffer):
+                            row_cells = current_table.rows[row_idx].cells
+                            
+                            # Nhận diện dòng cần Gộp Ô (Merge Cells)
+                            is_group_header = False
+                            if num_cols > 1:
+                                if len(row_data) == 1 and row_data[0].strip() != '':
+                                    is_group_header = True
+                                elif len(row_data) > 1 and row_data[0].strip() != '' and all(c.strip() == '' for c in row_data[1:]):
+                                    is_group_header = True
+                                    
+                            if is_group_header:
+                                # Tiến hành gộp toàn bộ cột trong hàng này
+                                main_cell = row_cells[0]
+                                main_cell.merge(row_cells[-1])
+                                main_cell.text = ""
+                                p = main_cell.paragraphs[0]
+                                p.alignment = WD_ALIGN_PARAGRAPH.LEFT
+                                parts = re.split(r'\*\*(.*?)\*\*', row_data[0])
+                                for i, part in enumerate(parts):
+                                    if part:
+                                        run = p.add_run(part)
+                                        if i % 2 == 1:
+                                            run.bold = True
+                            else:
+                                # Đổ dữ liệu vào các cột bình thường
+                                for col_idx, cell_data in enumerate(row_data):
+                                    if col_idx < len(row_cells):
+                                        cell = row_cells[col_idx]
+                                        cell.text = "" 
+                                        p = cell.paragraphs[0]
+                                        p.alignment = WD_ALIGN_PARAGRAPH.CENTER if row_idx == 0 else WD_ALIGN_PARAGRAPH.LEFT
+                                        parts = re.split(r'\*\*(.*?)\*\*', cell_data)
+                                        for i, part in enumerate(parts):
+                                            if part:
+                                                run = p.add_run(part)
+                                                if i % 2 == 1:
+                                                    run.bold = True
+                    # ------------------------------------------------
+
                     table_buffer = []
 
                     for line in response_text.split('\n'):
@@ -138,31 +187,11 @@ def app_pdf_to_word():
                             cells_data = [cell.strip() for cell in line_stripped.split('|')][1:-1]
                             table_buffer.append(cells_data)
                         else:
+                            # Nếu gặp chữ thường, kiểm tra xem có bảng nào đang chờ in không
                             if table_buffer:
                                 if all(cell == '' for cell in table_buffer[0]):
                                     table_buffer.pop(0)
-                                    
-                                if table_buffer:
-                                    num_cols = max(len(row) for row in table_buffer)
-                                    current_table = doc.add_table(rows=len(table_buffer), cols=num_cols)
-                                    current_table.style = 'Table Grid'
-                                    
-                                    for row_idx, row_data in enumerate(table_buffer):
-                                        row_cells = current_table.rows[row_idx].cells
-                                        for col_idx, cell_data in enumerate(row_data):
-                                            if col_idx < len(row_cells):
-                                                cell = row_cells[col_idx]
-                                                cell.text = "" 
-                                                p = cell.paragraphs[0]
-                                                p.alignment = WD_ALIGN_PARAGRAPH.CENTER if row_idx == 0 else WD_ALIGN_PARAGRAPH.LEFT
-                                                
-                                                parts = re.split(r'\*\*(.*?)\*\*', cell_data)
-                                                for i, part in enumerate(parts):
-                                                    if part:
-                                                        run = p.add_run(part)
-                                                        if i % 2 == 1:
-                                                            run.bold = True
-                                
+                                build_docx_table(doc, table_buffer)
                                 table_buffer = []
                             
                             if line_stripped.startswith('---'):
@@ -188,32 +217,16 @@ def app_pdf_to_word():
                                         if i % 2 == 1:
                                             run.bold = True
 
+                    # Xử lý bảng cuối cùng nếu tài liệu kết thúc bằng bảng
                     if table_buffer:
                         if all(cell == '' for cell in table_buffer[0]):
                             table_buffer.pop(0)
-                        if table_buffer:
-                            num_cols = max(len(row) for row in table_buffer)
-                            current_table = doc.add_table(rows=len(table_buffer), cols=num_cols)
-                            current_table.style = 'Table Grid'
-                            for row_idx, row_data in enumerate(table_buffer):
-                                row_cells = current_table.rows[row_idx].cells
-                                for col_idx, cell_data in enumerate(row_data):
-                                    if col_idx < len(row_cells):
-                                        cell = row_cells[col_idx]
-                                        cell.text = "" 
-                                        p = cell.paragraphs[0]
-                                        p.alignment = WD_ALIGN_PARAGRAPH.CENTER if row_idx == 0 else WD_ALIGN_PARAGRAPH.LEFT
-                                        parts = re.split(r'\*\*(.*?)\*\*', cell_data)
-                                        for i, part in enumerate(parts):
-                                            if part:
-                                                run = p.add_run(part)
-                                                if i % 2 == 1:
-                                                    run.bold = True
+                        build_docx_table(doc, table_buffer)
 
                     output_docx_path = "ket_qua.docx"
                     doc.save(output_docx_path)
 
-                    st.success("🎉 Chuyển đổi và định dạng chuẩn thành công!")
+                    st.success("🎉 Chuyển đổi thành công! Bảng biểu đã được tối ưu Gộp Ô (Merge Cells).")
 
                     with open(output_docx_path, "rb") as file_download:
                         st.download_button(
@@ -311,20 +324,18 @@ def parse_rich_text(text_val, font_name="Times New Roman", size=12):
     text_str = str(text_val) if text_val is not None else ""
     parts = re.split(r'\*\*(.*?)\*\*', text_str)
 
-    # Nếu không có dấu in đậm, trả về text bình thường
     if len(parts) == 1:
         return text_str 
 
-    # Nếu có dấu in đậm, ghép các đoạn TextBlock lại với nhau
     rt = CellRichText()
     font_normal = InlineFont(rFont=font_name, sz=size)
     font_bold = InlineFont(rFont=font_name, sz=size, b=True)
 
     for i, p in enumerate(parts):
         if not p: continue
-        if i % 2 == 1: # Chữ nằm giữa cặp ** -> In đậm
+        if i % 2 == 1: 
             rt.append(TextBlock(font=font_bold, text=p))
-        else: # Chữ nằm ngoài cặp ** -> In thường
+        else: 
             rt.append(TextBlock(font=font_normal, text=p))
     return rt
 
@@ -355,7 +366,6 @@ def app_number_3():
                         file_bytes = f.read()
                     mime_type = "application/pdf" if uploaded_excel_file.name.endswith(".pdf") else "image/jpeg"
                     
-                    # PROMPT JSON: Ép AI trả về JSON và QUAN TRỌNG NHẤT LÀ GIỮ LẠI KÝ HIỆU **
                     prompt = """
                     Bạn là một chuyên gia số hóa tài liệu. Hãy đọc kỹ tài liệu và trả về kết quả DUY NHẤT dưới dạng chuỗi JSON hợp lệ. Không trả lời thêm.
                     
@@ -383,7 +393,6 @@ def app_number_3():
                         contents=[types.Part.from_bytes(data=file_bytes, mime_type=mime_type), prompt]
                     )
                     
-                    # Dọn dẹp chuỗi JSON lỡ bị AI bọc markdown
                     raw_text = response.text.strip()
                     if raw_text.startswith("```json"):
                         raw_text = raw_text[7:]
@@ -395,14 +404,10 @@ def app_number_3():
                     
                     data = json.loads(raw_text)
 
-                    # ===============================================
-                    # BẮT ĐẦU VẼ BẢNG EXCEL BẰNG OPENPYXL
-                    # ===============================================
                     wb = openpyxl.Workbook()
                     ws = wb.active
                     ws.title = "Danh_Sach"
 
-                    # Khởi tạo các công cụ định dạng
                     font_title = Font(name="Times New Roman", size=14, bold=True)
                     font_bold = Font(name="Times New Roman", size=12, bold=True)
                     font_normal = Font(name="Times New Roman", size=12)
@@ -413,7 +418,6 @@ def app_number_3():
                     current_row = 1
                     total_cols = len(data.get("headers", [1,2,3,4,5]))
 
-                    # 1. Vẽ Tiêu Đề Chính (In đậm hoàn toàn, Canh giữa, Gộp ô)
                     title = data.get("title", "")
                     if title:
                         clean_title = str(title).replace('**', '').upper()
@@ -423,22 +427,20 @@ def app_number_3():
                         ws.merge_cells(start_row=current_row, start_column=1, end_row=current_row, end_column=total_cols)
                         current_row += 1
 
-                    # 2. Vẽ Các dòng thông tin chung (Xử lý Rich Text để in đậm 1 phần)
                     for info in data.get("info_lines", []):
                         cell = ws.cell(row=current_row, column=1)
                         rich_val = parse_rich_text(info)
                         
                         cell.value = rich_val
-                        if isinstance(rich_val, str): # Nếu không có rich text thì áp font mặc định
+                        if isinstance(rich_val, str): 
                             cell.font = font_normal
                             
                         cell.alignment = align_left
                         ws.merge_cells(start_row=current_row, start_column=1, end_row=current_row, end_column=total_cols)
                         current_row += 1
 
-                    current_row += 1 # Cách 1 dòng cho thoáng
+                    current_row += 1 
 
-                    # 3. Vẽ Tiêu đề cột của bảng (In đậm hoàn toàn, Canh giữa, Kẻ viền)
                     headers = data.get("headers", [])
                     for col_idx, header in enumerate(headers, 1):
                         clean_header = str(header).replace('**', '')
@@ -448,7 +450,6 @@ def app_number_3():
                         cell.border = thin_border
                     current_row += 1
 
-                    # 4. Vẽ Dữ liệu hàng (Xử lý Rich Text nếu có, Kẻ viền)
                     for row_data in data.get("rows", []):
                         for col_idx, val in enumerate(row_data, 1):
                             cell = ws.cell(row=current_row, column=col_idx)
@@ -460,21 +461,18 @@ def app_number_3():
                                 
                             cell.border = thin_border
                             
-                            # Căn giữa cho cột STT (1) và Ký tên (cuối), Căn trái cho cột còn lại
                             if col_idx == 1 or col_idx == total_cols:
                                 cell.alignment = align_center
                             else:
                                 cell.alignment = align_left
                         current_row += 1
 
-                    # 5. Căn chỉnh độ rộng cột cho đẹp mắt
-                    ws.column_dimensions['A'].width = 8   # STT
-                    ws.column_dimensions['B'].width = 25  # Họ tên
-                    ws.column_dimensions['C'].width = 30  # Đơn vị
-                    ws.column_dimensions['D'].width = 25  # Chức vụ
-                    ws.column_dimensions['E'].width = 15  # Ký tên
+                    ws.column_dimensions['A'].width = 8   
+                    ws.column_dimensions['B'].width = 25  
+                    ws.column_dimensions['C'].width = 30  
+                    ws.column_dimensions['D'].width = 25  
+                    ws.column_dimensions['E'].width = 15  
 
-                    # Lưu ra bộ nhớ ảo
                     output = BytesIO()
                     wb.save(output)
                     processed_data = output.getvalue()
