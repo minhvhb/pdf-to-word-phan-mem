@@ -36,7 +36,7 @@ def clear_file():
     st.session_state.uploader_key += 1
 
 # ==========================================
-# 2. KHU VỰC APP 1: CHUYỂN PDF SANG WORD (ĐÃ FIX LỖI FORMAT)
+# 2. KHU VỰC APP 1: CHUYỂN PDF SANG WORD
 # ==========================================
 def parse_and_add_runs(paragraph, text):
     """Hàm phân tích In đậm (**) và In nghiêng (*) để ghi vào Word"""
@@ -66,7 +66,7 @@ def app_pdf_to_word():
         st.success(f"Đã tải lên file: **{uploaded_file.name}**")
         
         if st.button("🚀 Bắt đầu Chuyển đổi", type="primary"):
-            with st.spinner("🤖 AI đang phân tích lề và định dạng chữ, vui lòng đợi..."):
+            with st.spinner("🤖 AI đang phân tích lề và vẽ lại bảng tàng hình, vui lòng đợi..."):
                 try:
                     temp_input_path = f"temp_{uploaded_file.name}"
                     with open(temp_input_path, "wb") as f:
@@ -77,29 +77,38 @@ def app_pdf_to_word():
                         file_bytes = f.read()
                     mime_type = "application/pdf" if uploaded_file.name.endswith(".pdf") else "image/jpeg"
                     
+                    # PROMPT TỐI ƯU HÓA: DẠY AI CÁCH TẠO BẢNG TÀNG HÌNH CHO QUỐC HIỆU
                     prompt = """
-                    NHIỆM VỤ OCR - BẮT BUỘC TUÂN THỦ NGHIÊM NGẶT THEO THỨ TỰ SAU ĐỂ KHÔNG LỖI FORMAT:
+                    NHIỆM VỤ OCR - BẮT BUỘC TUÂN THỦ NGHIÊM NGẶT CÁC QUY TẮC SAU:
 
                     1. CHIỀU TRANG GIẤY:
                        - Nếu ngang rộng hơn dọc -> DÒNG ĐẦU TIÊN LÀ: [ORIENTATION: LANDSCAPE]
                        - Ngược lại -> DÒNG ĐẦU TIÊN LÀ: [ORIENTATION: PORTRAIT]
 
-                    2. CANH LỀ ĐOẠN VĂN (RẤT QUAN TRỌNG):
-                       - BẮT BUỘC ghi [CENTER] ở đầu MỌI dòng cần canh giữa (VD: Quốc hiệu, Tiêu đề, Tên cơ quan ban ngành).
-                       - BẮT BUỘC ghi [RIGHT] ở đầu MỌI dòng nằm lệch phải (VD: Ngày tháng năm, Người ký...).
-                       - Nếu có 2 cụm chữ song song ở trên cùng (VD: Trái là Tên cơ quan, Phải là Quốc hiệu), hãy liệt kê lần lượt từ trên xuống và gắn [CENTER] cho TẤT CẢ các dòng đó.
-                       - (KHÔNG dùng lệnh [CENTER] hay [RIGHT] vào bên trong nội dung bảng biểu).
+                    2. THỂ THỨC VĂN BẢN HÀNH CHÍNH (QUỐC HIỆU & TÊN CƠ QUAN):
+                       - Phần trên cùng của văn bản hành chính Việt Nam có 2 khối chữ song song (Trái: Tên cơ quan; Phải: Quốc hiệu Cộng hòa xã hội...).
+                       - TUYỆT ĐỐI KHÔNG liệt kê dọc từ trên xuống dưới.
+                       - BẮT BUỘC dùng BẢNG MARKDOWN 2 CỘT để chứa 2 khối này.
+                       - TRƯỚC bảng này, BẮT BUỘC ghi mã [HEADER_TABLE] để hệ thống giấu khung viền.
+                       - Dùng thẻ <br> để xuống dòng.
+                       - VÍ DỤ CHUẨN:
+                       [HEADER_TABLE]
+                       | UBND THÀNH PHỐ...<br>**TỔNG CÔNG TY...**<br>Số: 1029/... | **CỘNG HÒA XÃ HỘI...**<br>**Độc lập – Tự do...**<br>*Thành phố Hồ Chí Minh, ngày...* |
 
-                    3. ĐỊNH DẠNG CHỮ: 
+                    3. CANH LỀ ĐOẠN VĂN (Bên ngoài bảng):
+                       - Ghi [CENTER] ở đầu MỌI dòng cần canh giữa (Tiêu đề chính...).
+                       - Ghi [RIGHT] ở đầu MỌI dòng lệch phải (Nơi nhận, Ký tên...).
+
+                    4. ĐỊNH DẠNG CHỮ: 
                        - Chữ in đậm -> bọc trong ** (VD: **THÔNG BÁO**). 
                        - Chữ in nghiêng -> bọc trong * (VD: *Nơi nhận:*).
 
-                    4. BẢNG BIỂU (QUAN TRỌNG NHẤT): 
-                       - Vẽ bảng bằng Markdown chuẩn (|...|).
-                       - TRONG Ô BẢNG: Nếu cần xuống dòng (VD: giữa "Tên nhà máy" và "Địa chỉ"), BẮT BUỘC chèn thẻ `<br>` (Ví dụ: `I. Nhà máy A<br>Địa chỉ: ...`). TUYỆT ĐỐI KHÔNG tự nhấn Enter xuống dòng trong cùng 1 ô Markdown.
-                       - GỘP Ô (MERGE CELLS): Với các dòng tiêu đề phân loại trải dài toàn bảng (như "I. Nhà máy Thuốc lá..."), hãy đặt toàn bộ nội dung vào CỘT ĐẦU TIÊN, các cột còn lại để trống (Ví dụ: | **I. Nhà máy...** | | | | | ). Code sẽ tự động gộp ô.
+                    5. BẢNG BIỂU THÔNG THƯỜNG (Có khung viền): 
+                       - Vẽ bảng Markdown chuẩn (|...|).
+                       - Dùng `<br>` để xuống dòng trong ô.
+                       - GỘP Ô (MERGE CELLS): Với dòng tiêu đề nhóm (VD: "I. Nhà máy..."), ghi chữ vào Cột 1, các cột còn lại để trống (Ví dụ: | **I. Nhà máy...** | | | | | ).
 
-                    5. TUYỆT ĐỐI KHÔNG dùng HTML (ngoại trừ <br>), không bịa dấu ba chấm. Chữ ký tay thay bằng [Đã ký].
+                    6. KHÔNG dùng mã HTML (ngoại trừ <br>).
                     """
 
                     response = client.models.generate_content(
@@ -140,17 +149,20 @@ def app_pdf_to_word():
                             section.page_height = new_height
                     
                     # --- HÀM HỖ TRỢ XÂY DỰNG BẢNG DOCX THÔNG MINH ---
-                    def build_docx_table(doc_obj, buffer):
+                    def build_docx_table(doc_obj, buffer, is_header_table=False):
                         if not buffer: return
                         num_cols = max(len(row) for row in buffer)
                         current_table = doc_obj.add_table(rows=len(buffer), cols=num_cols)
-                        current_table.style = 'Table Grid'
+                        
+                        # Quyết định xem có vẽ khung viền hay không
+                        if not is_header_table:
+                            current_table.style = 'Table Grid'
                         
                         for row_idx, row_data in enumerate(buffer):
                             row_cells = current_table.rows[row_idx].cells
                             
                             is_group_header = False
-                            if num_cols > 1:
+                            if num_cols > 1 and not is_header_table:
                                 if len(row_data) > 0 and row_data[0].strip() != '' and all(c.strip() == '' for c in row_data[1:]):
                                     is_group_header = True
                                     
@@ -161,6 +173,7 @@ def app_pdf_to_word():
                                 cell_lines = row_data[0].split('<br>')
                                 for idx, c_line in enumerate(cell_lines):
                                     p = main_cell.paragraphs[0] if idx == 0 else main_cell.add_paragraph()
+                                    p.paragraph_format.space_after = Pt(0) # Ép các dòng sát lại nhau
                                     p.alignment = WD_ALIGN_PARAGRAPH.LEFT
                                     parse_and_add_runs(p, c_line.strip())
                             else:
@@ -171,16 +184,29 @@ def app_pdf_to_word():
                                         cell_lines = cell_data.split('<br>')
                                         for idx, c_line in enumerate(cell_lines):
                                             p = cell.paragraphs[0] if idx == 0 else cell.add_paragraph()
-                                            p.alignment = WD_ALIGN_PARAGRAPH.CENTER if row_idx == 0 else WD_ALIGN_PARAGRAPH.LEFT
+                                            p.paragraph_format.space_after = Pt(0) # Ép các dòng sát lại nhau
+                                            
+                                            # Căn giữa mọi thứ trong bảng Header tàng hình
+                                            if is_header_table:
+                                                p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                                            else:
+                                                p.alignment = WD_ALIGN_PARAGRAPH.CENTER if row_idx == 0 else WD_ALIGN_PARAGRAPH.LEFT
+                                                
                                             parse_and_add_runs(p, c_line.strip())
                     # ------------------------------------------------
 
                     table_buffer = []
+                    is_next_table_header = False
 
                     for line in response_text.split('\n'):
                         line_stripped = line.strip()
 
                         if not line_stripped or line_stripped.startswith("```"):
+                            continue
+
+                        # Nhận diện lệnh đặt bảng tàng hình
+                        if line_stripped == '[HEADER_TABLE]':
+                            is_next_table_header = True
                             continue
 
                         if line_stripped.startswith('|') and line_stripped.endswith('|'):
@@ -194,8 +220,9 @@ def app_pdf_to_word():
                             if table_buffer:
                                 if all(cell == '' for cell in table_buffer[0]):
                                     table_buffer.pop(0)
-                                build_docx_table(doc, table_buffer)
+                                build_docx_table(doc, table_buffer, is_header_table=is_next_table_header)
                                 table_buffer = []
+                                is_next_table_header = False # Reset cờ
                             
                             if line_stripped.startswith('---'):
                                 continue
@@ -217,12 +244,12 @@ def app_pdf_to_word():
                     if table_buffer:
                         if all(cell == '' for cell in table_buffer[0]):
                             table_buffer.pop(0)
-                        build_docx_table(doc, table_buffer)
+                        build_docx_table(doc, table_buffer, is_header_table=is_next_table_header)
 
                     output_docx_path = "ket_qua.docx"
                     doc.save(output_docx_path)
 
-                    st.success("🎉 Chuyển đổi thành công! Bảng biểu và Căn lề đã được tối ưu hoàn toàn.")
+                    st.success("🎉 Chuyển đổi thành công! Header Hành chính đã được định dạng chuẩn.")
 
                     with open(output_docx_path, "rb") as file_download:
                         st.download_button(
