@@ -11,7 +11,7 @@ from openpyxl.cell.text import InlineFont
 from google import genai
 from google.genai import types
 from docx import Document
-from docx.shared import Pt
+from docx.shared import Pt, Mm, Cm
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.enum.section import WD_ORIENT
 
@@ -39,16 +39,21 @@ def clear_file():
 # 2. KHU VỰC APP 1: CHUYỂN PDF SANG WORD
 # ==========================================
 def parse_and_add_runs(paragraph, text):
-    """Hàm phân tích In đậm (**) và In nghiêng (*) để ghi vào Word"""
-    parts = re.split(r'\*\*(.*?)\*\*', text)
-    for i, part in enumerate(parts):
+    """Hàm phân tích In đậm (**), In nghiêng (*) và Gạch chân (<u>...</u>)"""
+    parts_bold = re.split(r'\*\*(.*?)\*\*', text)
+    for i, p_bold in enumerate(parts_bold):
         is_bold = (i % 2 == 1)
-        sub_parts = re.split(r'\*(.*?)\*', part)
-        for j, sub_part in enumerate(sub_parts):
-            if sub_part:
-                run = paragraph.add_run(sub_part)
-                run.bold = is_bold
-                run.italic = (j % 2 == 1)
+        parts_italic = re.split(r'\*(.*?)\*', p_bold)
+        for j, p_italic in enumerate(parts_italic):
+            is_italic = (j % 2 == 1)
+            parts_underline = re.split(r'<u>(.*?)</u>', p_italic)
+            for k, p_underline in enumerate(parts_underline):
+                is_underline = (k % 2 == 1)
+                if p_underline:
+                    run = paragraph.add_run(p_underline)
+                    run.bold = is_bold
+                    run.italic = is_italic
+                    run.underline = is_underline
 
 def app_pdf_to_word():
     try:
@@ -77,7 +82,6 @@ def app_pdf_to_word():
                         file_bytes = f.read()
                     mime_type = "application/pdf" if uploaded_file.name.endswith(".pdf") else "image/jpeg"
                     
-                    # PROMPT TỐI ƯU HÓA: DẠY AI CÁCH TẠO BẢNG TÀNG HÌNH CHO QUỐC HIỆU
                     prompt = """
                     NHIỆM VỤ OCR - BẮT BUỘC TUÂN THỦ NGHIÊM NGẶT CÁC QUY TẮC SAU:
 
@@ -86,29 +90,29 @@ def app_pdf_to_word():
                        - Ngược lại -> DÒNG ĐẦU TIÊN LÀ: [ORIENTATION: PORTRAIT]
 
                     2. THỂ THỨC VĂN BẢN HÀNH CHÍNH (QUỐC HIỆU & TÊN CƠ QUAN):
-                       - Phần trên cùng của văn bản hành chính Việt Nam có 2 khối chữ song song (Trái: Tên cơ quan; Phải: Quốc hiệu Cộng hòa xã hội...).
-                       - TUYỆT ĐỐI KHÔNG liệt kê dọc từ trên xuống dưới.
+                       - Phần trên cùng của văn bản hành chính Việt Nam có 2 khối chữ song song.
                        - BẮT BUỘC dùng BẢNG MARKDOWN 2 CỘT để chứa 2 khối này.
-                       - TRƯỚC bảng này, BẮT BUỘC ghi mã [HEADER_TABLE] để hệ thống giấu khung viền.
-                       - Dùng thẻ <br> để xuống dòng.
+                       - TRƯỚC bảng này, BẮT BUỘC ghi mã [HEADER_TABLE] để hệ thống giấu khung viền và canh chỉnh tỷ lệ.
+                       - Dùng thẻ <br> để xuống dòng. 
                        - VÍ DỤ CHUẨN:
                        [HEADER_TABLE]
-                       | UBND THÀNH PHỐ...<br>**TỔNG CÔNG TY...**<br>Số: 1029/... | **CỘNG HÒA XÃ HỘI...**<br>**Độc lập – Tự do...**<br>*Thành phố Hồ Chí Minh, ngày...* |
+                       | UBND THÀNH PHỐ...<br>**TỔNG CÔNG TY...**<br>TNHH MỘT THÀNH VIÊN<br>**<u>(CNS)</u>**<br>Số: 1029/... | **CỘNG HÒA XÃ HỘI...**<br>**<u>Độc lập – Tự do – Hạnh phúc</u>**<br>*Thành phố Hồ Chí Minh, ngày...* |
 
                     3. CANH LỀ ĐOẠN VĂN (Bên ngoài bảng):
                        - Ghi [CENTER] ở đầu MỌI dòng cần canh giữa (Tiêu đề chính...).
                        - Ghi [RIGHT] ở đầu MỌI dòng lệch phải (Nơi nhận, Ký tên...).
 
-                    4. ĐỊNH DẠNG CHỮ: 
+                    4. ĐỊNH DẠNG CHỮ TỪNG PHẦN: 
                        - Chữ in đậm -> bọc trong ** (VD: **THÔNG BÁO**). 
                        - Chữ in nghiêng -> bọc trong * (VD: *Nơi nhận:*).
+                       - Chữ có dòng kẻ/gạch chân bên dưới -> bọc trong <u> và </u> (VD: <u>(CNS)</u>).
 
                     5. BẢNG BIỂU THÔNG THƯỜNG (Có khung viền): 
                        - Vẽ bảng Markdown chuẩn (|...|).
                        - Dùng `<br>` để xuống dòng trong ô.
                        - GỘP Ô (MERGE CELLS): Với dòng tiêu đề nhóm (VD: "I. Nhà máy..."), ghi chữ vào Cột 1, các cột còn lại để trống (Ví dụ: | **I. Nhà máy...** | | | | | ).
 
-                    6. KHÔNG dùng mã HTML (ngoại trừ <br>).
+                    6. KHÔNG dùng mã HTML (ngoại trừ <br> và <u>).
                     """
 
                     response = client.models.generate_content(
@@ -117,14 +121,20 @@ def app_pdf_to_word():
                     )
                     
                     doc = Document()
+                    
+                    # Tối ưu Margins chuẩn Nghị định 30 (Trái 3cm, Phải 2cm, Trên 2cm, Dưới 2cm)
+                    section = doc.sections[0]
+                    section.top_margin = Mm(20)
+                    section.bottom_margin = Mm(20)
+                    section.left_margin = Mm(30)
+                    section.right_margin = Mm(20)
+
                     style = doc.styles['Normal']
                     font = style.font
                     font.name = 'Times New Roman'
-                    font.size = Pt(12)
+                    font.size = Pt(13) # Size chuẩn văn bản
                     
                     response_text = response.text
-
-                    section = doc.sections[0]
                     is_landscape = False
                     
                     if "[ORIENTATION: LANDSCAPE]" in response_text:
@@ -141,12 +151,6 @@ def app_pdf_to_word():
                             section.orientation = WD_ORIENT.LANDSCAPE
                             section.page_width = new_width
                             section.page_height = new_height
-                    else:
-                        if section.page_width > section.page_height:
-                            new_width, new_height = section.page_height, section.page_width
-                            section.orientation = WD_ORIENT.PORTRAIT
-                            section.page_width = new_width
-                            section.page_height = new_height
                     
                     # --- HÀM HỖ TRỢ XÂY DỰNG BẢNG DOCX THÔNG MINH ---
                     def build_docx_table(doc_obj, buffer, is_header_table=False):
@@ -154,13 +158,19 @@ def app_pdf_to_word():
                         num_cols = max(len(row) for row in buffer)
                         current_table = doc_obj.add_table(rows=len(buffer), cols=num_cols)
                         
-                        # Quyết định xem có vẽ khung viền hay không
                         if not is_header_table:
                             current_table.style = 'Table Grid'
+                        else:
+                            current_table.autofit = False
                         
                         for row_idx, row_data in enumerate(buffer):
                             row_cells = current_table.rows[row_idx].cells
                             
+                            # Xử lý tỷ lệ 2 cột chuẩn văn bản hành chính (Left: 40%, Right: 60%)
+                            if is_header_table and num_cols == 2:
+                                row_cells[0].width = Cm(6.0)
+                                row_cells[1].width = Cm(10.0)
+
                             is_group_header = False
                             if num_cols > 1 and not is_header_table:
                                 if len(row_data) > 0 and row_data[0].strip() != '' and all(c.strip() == '' for c in row_data[1:]):
@@ -173,7 +183,7 @@ def app_pdf_to_word():
                                 cell_lines = row_data[0].split('<br>')
                                 for idx, c_line in enumerate(cell_lines):
                                     p = main_cell.paragraphs[0] if idx == 0 else main_cell.add_paragraph()
-                                    p.paragraph_format.space_after = Pt(0) # Ép các dòng sát lại nhau
+                                    p.paragraph_format.space_after = Pt(0)
                                     p.alignment = WD_ALIGN_PARAGRAPH.LEFT
                                     parse_and_add_runs(p, c_line.strip())
                             else:
@@ -184,9 +194,8 @@ def app_pdf_to_word():
                                         cell_lines = cell_data.split('<br>')
                                         for idx, c_line in enumerate(cell_lines):
                                             p = cell.paragraphs[0] if idx == 0 else cell.add_paragraph()
-                                            p.paragraph_format.space_after = Pt(0) # Ép các dòng sát lại nhau
+                                            p.paragraph_format.space_after = Pt(0)
                                             
-                                            # Căn giữa mọi thứ trong bảng Header tàng hình
                                             if is_header_table:
                                                 p.alignment = WD_ALIGN_PARAGRAPH.CENTER
                                             else:
@@ -204,7 +213,6 @@ def app_pdf_to_word():
                         if not line_stripped or line_stripped.startswith("```"):
                             continue
 
-                        # Nhận diện lệnh đặt bảng tàng hình
                         if line_stripped == '[HEADER_TABLE]':
                             is_next_table_header = True
                             continue
@@ -222,7 +230,7 @@ def app_pdf_to_word():
                                     table_buffer.pop(0)
                                 build_docx_table(doc, table_buffer, is_header_table=is_next_table_header)
                                 table_buffer = []
-                                is_next_table_header = False # Reset cờ
+                                is_next_table_header = False
                             
                             if line_stripped.startswith('---'):
                                 continue
@@ -239,6 +247,7 @@ def app_pdf_to_word():
                             if line_stripped:
                                 p = doc.add_paragraph()
                                 p.alignment = align
+                                p.paragraph_format.space_after = Pt(6) # Cách dòng văn bản ngoài nhẹ nhàng
                                 parse_and_add_runs(p, line_stripped)
 
                     if table_buffer:
@@ -249,7 +258,7 @@ def app_pdf_to_word():
                     output_docx_path = "ket_qua.docx"
                     doc.save(output_docx_path)
 
-                    st.success("🎉 Chuyển đổi thành công! Header Hành chính đã được định dạng chuẩn.")
+                    st.success("🎉 Chuyển đổi thành công! Form hành chính đã được xử lý chuẩn 100%.")
 
                     with open(output_docx_path, "rb") as file_download:
                         st.download_button(
