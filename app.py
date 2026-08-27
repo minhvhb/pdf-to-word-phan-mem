@@ -39,7 +39,6 @@ def clear_file():
 # 2. KHU VỰC APP 1: CHUYỂN PDF SANG WORD
 # ==========================================
 def parse_and_add_runs(paragraph, text):
-    """Hàm phân tích In đậm (**), In nghiêng (*) và Gạch chân (<u>...</u>)"""
     parts_bold = re.split(r'\*\*(.*?)\*\*', text)
     for i, p_bold in enumerate(parts_bold):
         is_bold = (i % 2 == 1)
@@ -63,7 +62,7 @@ def app_pdf_to_word():
         st.stop()
 
     st.title("📄 Ứng dụng Chuyển đổi PDF & Ảnh sang Word")
-    st.markdown("Sử dụng **Google Gemini AI** để trích xuất văn bản và bảng biểu chuẩn Form Hành chính.")
+    st.markdown("Sử dụng **Google Gemini AI** để trích xuất văn bản và bảng biểu chuẩn Form Hành chính A4.")
 
     uploaded_file = st.file_uploader("Tải lên file ảnh (JPG, PNG) hoặc PDF:", type=["jpg", "jpeg", "png", "pdf"], key=f"app1_{st.session_state.uploader_key}")
 
@@ -71,7 +70,7 @@ def app_pdf_to_word():
         st.success(f"Đã tải lên file: **{uploaded_file.name}**")
         
         if st.button("🚀 Bắt đầu Chuyển đổi", type="primary"):
-            with st.spinner("🤖 AI đang phân tích lề và vẽ lại bảng tàng hình, vui lòng đợi..."):
+            with st.spinner("🤖 AI đang phân tích lề và vẽ lại trang Word khổ A4..."):
                 try:
                     temp_input_path = f"temp_{uploaded_file.name}"
                     with open(temp_input_path, "wb") as f:
@@ -121,18 +120,7 @@ def app_pdf_to_word():
                     )
                     
                     doc = Document()
-                    
-                    # Tối ưu Margins chuẩn Nghị định 30 (Trái 3cm, Phải 2cm, Trên 2cm, Dưới 2cm)
                     section = doc.sections[0]
-                    section.top_margin = Mm(20)
-                    section.bottom_margin = Mm(20)
-                    section.left_margin = Mm(30)
-                    section.right_margin = Mm(20)
-
-                    style = doc.styles['Normal']
-                    font = style.font
-                    font.name = 'Times New Roman'
-                    font.size = Pt(13) # Size chuẩn văn bản
                     
                     response_text = response.text
                     is_landscape = False
@@ -145,14 +133,27 @@ def app_pdf_to_word():
                         is_landscape = False
                         response_text = response_text.replace("[ORIENTATION: PORTRAIT]", "").strip()
 
+                    # Ép kích thước A4 chuẩn Word
                     if is_landscape:
-                        if section.page_height > section.page_width:
-                            new_width, new_height = section.page_height, section.page_width
-                            section.orientation = WD_ORIENT.LANDSCAPE
-                            section.page_width = new_width
-                            section.page_height = new_height
+                        section.orientation = WD_ORIENT.LANDSCAPE
+                        section.page_width = Mm(297)
+                        section.page_height = Mm(210)
+                    else:
+                        section.orientation = WD_ORIENT.PORTRAIT
+                        section.page_width = Mm(210)
+                        section.page_height = Mm(297)
+
+                    # Margins chuẩn
+                    section.top_margin = Mm(20)
+                    section.bottom_margin = Mm(20)
+                    section.left_margin = Mm(30)
+                    section.right_margin = Mm(20)
+
+                    style = doc.styles['Normal']
+                    font = style.font
+                    font.name = 'Times New Roman'
+                    font.size = Pt(13)
                     
-                    # --- HÀM HỖ TRỢ XÂY DỰNG BẢNG DOCX THÔNG MINH ---
                     def build_docx_table(doc_obj, buffer, is_header_table=False):
                         if not buffer: return
                         num_cols = max(len(row) for row in buffer)
@@ -166,7 +167,6 @@ def app_pdf_to_word():
                         for row_idx, row_data in enumerate(buffer):
                             row_cells = current_table.rows[row_idx].cells
                             
-                            # Xử lý tỷ lệ 2 cột chuẩn văn bản hành chính (Left: 40%, Right: 60%)
                             if is_header_table and num_cols == 2:
                                 row_cells[0].width = Cm(6.0)
                                 row_cells[1].width = Cm(10.0)
@@ -202,7 +202,6 @@ def app_pdf_to_word():
                                                 p.alignment = WD_ALIGN_PARAGRAPH.CENTER if row_idx == 0 else WD_ALIGN_PARAGRAPH.LEFT
                                                 
                                             parse_and_add_runs(p, c_line.strip())
-                    # ------------------------------------------------
 
                     table_buffer = []
                     is_next_table_header = False
@@ -247,7 +246,7 @@ def app_pdf_to_word():
                             if line_stripped:
                                 p = doc.add_paragraph()
                                 p.alignment = align
-                                p.paragraph_format.space_after = Pt(6) # Cách dòng văn bản ngoài nhẹ nhàng
+                                p.paragraph_format.space_after = Pt(6)
                                 parse_and_add_runs(p, line_stripped)
 
                     if table_buffer:
@@ -258,7 +257,7 @@ def app_pdf_to_word():
                     output_docx_path = "ket_qua.docx"
                     doc.save(output_docx_path)
 
-                    st.success("🎉 Chuyển đổi thành công! Form hành chính đã được xử lý chuẩn 100%.")
+                    st.success("🎉 Chuyển đổi thành công! File Word đã được ép chuẩn khổ A4 tuyệt đối.")
 
                     with open(output_docx_path, "rb") as file_download:
                         st.download_button(
@@ -377,8 +376,8 @@ def app_number_3():
         st.error("⚠️ Hệ thống chưa được cấu hình API Key. Vui lòng liên hệ Quản trị viên!")
         st.stop()
 
-    st.title("📊 Bóc tách PDF/Ảnh sang Excel (Giữ Định Dạng)")
-    st.markdown("Trích xuất và tự động định dạng In đậm 1 phần, Canh giữa, Kẻ bảng giống hệt bản PDF gốc.")
+    st.title("📊 Bóc tách PDF/Ảnh sang Excel (Chuẩn A4 & Giữ Định Dạng)")
+    st.markdown("Trích xuất và tự động định dạng giống PDF gốc, ép sẵn khổ in **A4**.")
 
     uploaded_excel_file = st.file_uploader("Tải lên tài liệu (Ảnh hoặc PDF):", type=["jpg", "jpeg", "png", "pdf"], key=f"app3_{st.session_state.uploader_key}")
 
@@ -386,7 +385,7 @@ def app_number_3():
         st.success(f"Đã tải lên file: **{uploaded_excel_file.name}**")
         
         if st.button("🚀 Trích xuất ra Excel", type="primary"):
-            with st.spinner("🤖 AI đang đọc cấu trúc và vẽ lại bảng Excel, vui lòng đợi..."):
+            with st.spinner("🤖 AI đang đọc cấu trúc và vẽ lại bảng Excel (A4), vui lòng đợi..."):
                 try:
                     temp_input_path = f"temp_excel_{uploaded_excel_file.name}"
                     with open(temp_input_path, "wb") as f:
@@ -439,6 +438,12 @@ def app_number_3():
                     ws = wb.active
                     ws.title = "Danh_Sach"
 
+                    # --------------------------------------------------
+                    # BỔ SUNG: ÉP EXCEL NHẬN DIỆN KHỔ GIẤY A4 KHI IN
+                    # --------------------------------------------------
+                    ws.page_setup.paperSize = ws.PAPERSIZE_A4
+                    ws.print_options.horizontalCentered = True # Căn giữa trang giấy khi in
+                    
                     font_title = Font(name="Times New Roman", size=14, bold=True)
                     font_bold = Font(name="Times New Roman", size=12, bold=True)
                     font_normal = Font(name="Times New Roman", size=12)
@@ -508,10 +513,10 @@ def app_number_3():
                     wb.save(output)
                     processed_data = output.getvalue()
 
-                    st.success("🎉 Đã xuất bảng Excel thành công với 100% định dạng!")
+                    st.success("🎉 Đã xuất bảng Excel thành công! Khổ giấy in đã được set sẵn là A4.")
 
                     st.download_button(
-                        label="📥 Tải xuống Excel Chuẩn Format (.xlsx)",
+                        label="📥 Tải xuống Excel Chuẩn A4 (.xlsx)",
                         data=processed_data,
                         file_name=f"Excel_Chuan_{uploaded_excel_file.name.split('.')[0]}.xlsx",
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
