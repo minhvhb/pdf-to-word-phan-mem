@@ -60,17 +60,11 @@ if uploaded_file is not None:
                     8. XỬ LÝ CHỮ KÝ & CON DẤU: Bỏ qua các hình ảnh con dấu đỏ hoặc hình mờ. Tại vị trí có chữ ký tay, hãy ghi chú là: [Đã ký].
                     9. ĐỊNH DẠNG VÀ CẤU TRÚC: Giữ nguyên cấu trúc các cấp tiêu đề (dùng #, ##, ###). Trình bày bảng biểu bằng cú pháp Markdown. 
                     10. LỌC NHIỄU: Không chèn thêm các đường kẻ ngang (---) phân cách trang. Tự động bỏ qua số trang hoặc tiêu đề đầu/chân trang bị lặp lại (header/footer).
-                    prompt = """
-                    Bạn là một hệ thống OCR và số hóa tài liệu cấp cao. Nhiệm vụ của bạn là bóc tách toàn bộ nội dung từ ảnh/PDF sang định dạng văn bản để chuyển vào file Word.
-
-                    YÊU CẦU KỶ LUẬT THÉP (BẮT BUỘC TUÂN THỦ):
-                    1. QUÉT SẠCH KHÔNG BỎ SÓT: Phải đọc kỹ từ trên xuống dưới, không được bỏ sót bất kỳ ký tự, con số hay mã vạch nào ở các góc, lề, hoặc đáy trang (Ví dụ: số Serial, mã số phụ ở cuối trang).
-                    2. ĐỘ CHÍNH XÁC TUYỆT ĐỐI: Sao chép chính xác 100% bản gốc. Giữ nguyên các lỗi sai chính tả.
-                    3. KHÔNG TỰ Ý THÊM KÝ TỰ: Nếu bản gốc có khoảng trắng lớn, chỉ dùng phím Space hoặc Tab. TUYỆT ĐỐI KHÔNG tự ý chèn thêm dấu chấm (...), dấu gạch ngang (---) vào khoảng trắng.
-                    4. XỬ LÝ DỮ LIỆU DẠNG CỘT/FORM: Đối với các báo cáo, hóa đơn có dữ liệu kiểu [Khóa | Giá trị] (ví dụ: Total | 506725), hãy trình bày bằng văn bản thường cách nhau bởi dấu 2 chấm hoặc Tab (Ví dụ: Total: 506725). TUYỆT ĐỐI KHÔNG dùng cú pháp bảng Markdown (|...|) cho các dòng ngắn này để tránh lỗi hiển thị trên file Word. 
-                    5. XỬ LÝ CHỮ KÝ: Tại vị trí có chữ ký tay, hãy ghi chú là: [Đã ký]. Bỏ qua con dấu đỏ.
-                    """
-
+                    11. QUÉT SẠCH KHÔNG BỎ SÓT: Phải đọc kỹ từ trên xuống dưới, không được bỏ sót bất kỳ ký tự, con số hay mã vạch nào ở các góc, lề, hoặc đáy trang (Ví dụ: số Serial, mã số phụ ở cuối trang).
+                    12. ĐỘ CHÍNH XÁC TUYỆT ĐỐI: Sao chép chính xác 100% bản gốc. Giữ nguyên các lỗi sai chính tả.
+                    13. KHÔNG TỰ Ý THÊM KÝ TỰ: Nếu bản gốc có khoảng trắng lớn, chỉ dùng phím Space hoặc Tab. TUYỆT ĐỐI KHÔNG tự ý chèn thêm dấu chấm (...), dấu gạch ngang (---) vào khoảng trắng.
+                    14. XỬ LÝ DỮ LIỆU DẠNG CỘT/FORM: Đối với các báo cáo, hóa đơn có dữ liệu kiểu [Khóa | Giá trị] (ví dụ: Total | 506725), hãy trình bày bằng văn bản thường cách nhau bởi dấu 2 chấm hoặc Tab (Ví dụ: Total: 506725). TUYỆT ĐỐI KHÔNG dùng cú pháp bảng Markdown (|...|) cho các dòng ngắn này để tránh lỗi hiển thị trên file Word. 
+                    15. XỬ LÝ CHỮ KÝ: Tại vị trí có chữ ký tay, hãy ghi chú là: [Đã ký]. Bỏ qua con dấu đỏ.
                     """
 
                     response = client.models.generate_content(
