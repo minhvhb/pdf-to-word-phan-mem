@@ -53,7 +53,6 @@ if uploaded_file is not None:
                         file_bytes = f.read()
                     mime_type = "application/pdf" if uploaded_file.name.endswith(".pdf") else "image/jpeg"
                     
-                    # PROMPT ĐÃ ĐƯỢC MỞ KHÓA TÍNH NĂNG BẢNG BIỂU
                     prompt = """
                     Bạn là một hệ thống OCR và số hóa tài liệu cấp cao. Nhiệm vụ của bạn là bóc tách toàn bộ nội dung từ ảnh/PDF sang định dạng văn bản thô (Clean Text/Markdown) để chuyển vào file Word.
                     
@@ -62,12 +61,6 @@ if uploaded_file is not None:
                     2. KHÔNG TỰ BỊA DỮ LIỆU: Chỉ sử dụng khoảng trắng (Space/Tab). TUYỆT ĐỐI KHÔNG tự ý chèn thêm dấu ba chấm (...).
                     3. XỬ LÝ CHỮ KÝ: Tự động bỏ qua hình mờ và con dấu đỏ. Tại vị trí có chữ ký tay, chỉ cần ghi chú chữ: [Đã ký].
                     4. BẢNG BIỂU (QUAN TRỌNG): Bất cứ khi nào tài liệu gốc là một bảng có kẻ khung (ví dụ báo cáo Total | Prints), BẮT BUỘC phải trình bày bằng cú pháp bảng Markdown chuẩn (có dấu | ở đầu và cuối mỗi dòng). Không được gộp thành văn bản thường.
-                    5. QUÉT SẠCH & CHÍNH XÁC 100%: Quét từ trên xuống dưới, không bỏ sót bất kỳ ký tự, con số, mã vạch nào ở góc/lề (VD: số Serial). Sao chép chính xác nguyên bản, bắt buộc giữ nguyên cả các lỗi sai chính tả của bản gốc.    
-                    6. KHÔNG TỰ BỊA DỮ LIỆU: Nếu bản gốc có khoảng trắng chờ điền, chỉ sử dụng phím Space hoặc Tab. TUYỆT ĐỐI KHÔNG tự ý điền ngày tháng, không chèn thêm dấu ba chấm (...), không thêm nét đứt (---).      
-                    7. XỬ LÝ CHỮ KÝ & RÁC ĐỊNH DẠNG: Tự động bỏ qua số trang/header/footer lặp lại, hình mờ và con dấu đỏ. Tại vị trí có chữ ký tay, chỉ cần ghi chú chữ: [Đã ký].
-                    8. CẤU TRÚC VĂN BẢN: Nhận diện đúng luồng đọc (VD: đọc hết cột trái rồi mới sang phải). Dùng Markdown để phân cấp tiêu đề (# cho H1, ## cho H2). Tự động nối các câu bị ngắt dòng vô lý lại thành đoạn văn hoàn chỉnh.  
-                    9. BẢNG BIỂU (TABLE): Với các bảng biểu thực sự có viền ô, bắt buộc dùng cú pháp bảng Markdown chuẩn, không bỏ sót dòng/cột. 
-                    10. BIỂU MẪU / BÁO CÁO (FORM): Với các biểu mẫu/hóa đơn có dữ liệu ngắn kiểu [Khóa | Giá trị] (Ví dụ: Total | 506725), hãy trình bày bằng văn bản thường cách nhau bởi dấu hai chấm (Ví dụ: Total: 506725). Tuyệt đối KHÔNG dùng cú pháp bảng Markdown cho các dòng này để tránh vỡ định dạng Word.
                     """
 
                     response = client.models.generate_content(
@@ -83,27 +76,25 @@ if uploaded_file is not None:
                     
                     doc.add_heading('Kết quả trích xuất từ AI', level=1)
                     
-                    # --- THUẬT TOÁN VẼ BẢNG VÀO WORD ---
                     in_table = False
                     current_table = None
 
                     for line in response.text.split('\n'):
                         line_stripped = line.strip()
 
-                        # Bỏ qua dòng kẻ ngang dư thừa của văn bản
                         if line_stripped.startswith('---') and not line_stripped.startswith('|'):
                             continue
 
                         # Phát hiện Bảng Markdown
                         if line_stripped.startswith('|') and line_stripped.endswith('|'):
-                            if '|---' in line_stripped: # Bỏ qua dòng gạch ngang của bảng markdown
+                            # ĐÃ VÁ LỖI: Lọc sạch khoảng trắng để bắt chết dòng gạch ngang
+                            check_line = line_stripped.replace(' ', '').replace(':', '')
+                            if check_line.startswith('|---'): 
                                 continue
                             
-                            # Tách các ô trong hàng
                             cells_data = [cell.strip() for cell in line_stripped.split('|')][1:-1]
                             
                             if not in_table:
-                                # Tạo bảng mới trong Word với khung viền rõ ràng
                                 current_table = doc.add_table(rows=1, cols=len(cells_data))
                                 current_table.style = 'Table Grid'
                                 hdr_cells = current_table.rows[0].cells
@@ -112,18 +103,16 @@ if uploaded_file is not None:
                                         hdr_cells[i].text = data
                                 in_table = True
                             else:
-                                # Thêm hàng mới vào bảng đang vẽ
                                 row_cells = current_table.add_row().cells
                                 for i, data in enumerate(cells_data):
                                     if i < len(row_cells):
                                         row_cells[i].text = data
                         else:
-                            in_table = False # Kết thúc bảng
+                            in_table = False 
                             
-                            # Xử lý văn bản bình thường
                             if line_stripped.startswith('#'):
                                 doc.add_heading(line_stripped.replace('#', '').strip(), level=2)
-                            elif line_stripped: # Không in dòng trống vô lý
+                            elif line_stripped:
                                 p = doc.add_paragraph(line_stripped)
                                 p.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
 
