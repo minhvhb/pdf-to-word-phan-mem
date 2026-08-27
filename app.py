@@ -754,5 +754,5 @@ elif app_mode == "🖨️ 2. Chuyển PDF về khổ A4":
     app_number_2()
 elif app_mode == "📊 3. PDF/Ảnh sang Excel":
     app_number_3()
-elif app_mode == "🔍 4. So sánh Văn bản/Hợp đồng":
+elif app_mode == "🔍 4. Kính lúp So sánh":
     app_document_compare()
