@@ -3,6 +3,9 @@ import os
 import re
 import pandas as pd
 from io import BytesIO
+import json
+import openpyxl
+from openpyxl.styles import Font, Alignment, Border, Side
 from google import genai
 from google.genai import types
 from docx import Document
@@ -308,8 +311,8 @@ def app_number_3():
         st.error("⚠️ Hệ thống chưa được cấu hình API Key. Vui lòng liên hệ Quản trị viên!")
         st.stop()
 
-    st.title("📊 Bóc tách PDF/Ảnh sang Excel")
-    st.markdown("Trích xuất thông tin hành chính và bảng danh sách chi tiết từ tài liệu thành file **Excel (.xlsx)** sạch sẽ, đúng form chuẩn.")
+    st.title("📊 Bóc tách PDF/Ảnh sang Excel (Giữ Định Dạng)")
+    st.markdown("Trích xuất và tự động định dạng In đậm, Canh giữa, Kẻ bảng giống hệt bản PDF gốc.")
 
     uploaded_excel_file = st.file_uploader("Tải lên tài liệu (Ảnh hoặc PDF):", type=["jpg", "jpeg", "png", "pdf"], key=f"app3_{st.session_state.uploader_key}")
 
@@ -317,7 +320,7 @@ def app_number_3():
         st.success(f"Đã tải lên file: **{uploaded_excel_file.name}**")
         
         if st.button("🚀 Trích xuất ra Excel", type="primary"):
-            with st.spinner("🤖 AI đang phân tích tiêu đề và bóc tách bảng biểu, vui lòng đợi..."):
+            with st.spinner("🤖 AI đang đọc cấu trúc và vẽ lại bảng Excel, vui lòng đợi..."):
                 try:
                     temp_input_path = f"temp_excel_{uploaded_excel_file.name}"
                     with open(temp_input_path, "wb") as f:
@@ -328,17 +331,24 @@ def app_number_3():
                         file_bytes = f.read()
                     mime_type = "application/pdf" if uploaded_excel_file.name.endswith(".pdf") else "image/jpeg"
                     
-                    # PROMPT ĐÃ ĐƯỢC TỐI ƯU ĐỂ TÁCH BIỆT TIÊU ĐỀ VÀ BẢNG DỮ LIỆU
+                    # PROMPT JSON: Ép AI trả về chuẩn cấu trúc lập trình, không rác markdown
                     prompt = """
-                    Bạn là một chuyên gia số hóa dữ liệu. Hãy đọc kỹ tài liệu và trả về kết quả cấu trúc gồm 2 phần rõ rệt:
-                    
-                    PHẦN 1 - THÔNG TIN TIÊU ĐỀ:
-                    Liệt kê các dòng thông tin chung ở đầu trang (Tên danh sách, Thời gian, Nội dung cuộc họp, Chủ trì, Thành phần) dưới dạng văn bản thuần túy, tuyệt đối KHÔNG dùng ký hiệu markdown in đậm (**) hay dấu gạch ngang rườm rà.
-                    
-                    PHẦN 2 - BẢNG DỮ LIỆU CHI TIẾT:
-                    Trình bày bảng danh sách dưới dạng bảng Markdown chuẩn (có dấu | ở đầu và cuối mỗi dòng), bao gồm đầy đủ các cột: Stt, Họ và Tên, Đơn vị Phòng ban, Chức vụ, Ký tên.
-                    
-                    Lưu ý: Không tự ý bịa thêm dữ liệu, giữ nguyên vẹn nội dung từ bản gốc.
+                    Bạn là một chuyên gia số hóa tài liệu. Hãy đọc kỹ tài liệu và trả về kết quả DUY NHẤT dưới dạng chuỗi JSON hợp lệ. Không trả lời thêm bất kỳ câu nào khác. Không dùng markdown ```json.
+                    Cấu trúc JSON BẮT BUỘC:
+                    {
+                      "title": "Dòng tiêu đề lớn nhất trên cùng (ví dụ: DANH SÁCH THÀNH VIÊN...)",
+                      "info_lines": [
+                        "Dòng thông tin 1 (ví dụ: - Thời gian: 9 giờ...)",
+                        "Dòng thông tin 2",
+                        "Dòng thông tin 3"
+                      ],
+                      "headers": ["Cột 1", "Cột 2", "Cột 3", "Cột 4", "Cột 5"],
+                      "rows": [
+                        ["Dữ liệu 1", "Dữ liệu 2", "Dữ liệu 3", "Dữ liệu 4", "Dữ liệu 5"],
+                        ["Dữ liệu 1", "Dữ liệu 2", "Dữ liệu 3", "Dữ liệu 4", "Dữ liệu 5"]
+                      ]
+                    }
+                    LƯU Ý: Tuyệt đối không dùng ký hiệu in đậm (**) bên trong dữ liệu JSON.
                     """
 
                     response = client.models.generate_content(
@@ -346,53 +356,101 @@ def app_number_3():
                         contents=[types.Part.from_bytes(data=file_bytes, mime_type=mime_type), prompt]
                     )
                     
-                    response_text = response.text
+                    # Dọn dẹp chuỗi JSON lỡ bị AI bọc markdown
+                    raw_text = response.text.strip()
+                    if raw_text.startswith("```json"):
+                        raw_text = raw_text[7:]
+                    if raw_text.startswith("```"):
+                        raw_text = raw_text[3:]
+                    if raw_text.endswith("```"):
+                        raw_text = raw_text[:-3]
+                    raw_text = raw_text.strip()
                     
-                    # Xử lý phân tách nội dung văn bản phía trên và bảng Markdown phía dưới
-                    excel_rows = []
-                    
-                    for line in response_text.split('\n'):
-                        line_str = line.strip()
-                        if not line_str or line_str.startswith("```"):
-                            continue
-                        
-                        # Nếu là dòng của bảng Markdown
-                        if line_str.startswith('|') and line_str.endswith('|'):
-                            if re.match(r'^\|[\s\-:]+\|$', line_str.replace(' ', '')):
-                                continue # Bỏ qua dòng phân cách |---|
-                            cells = [cell.strip().replace('**', '') for cell in line_str.split('|')][1:-1]
-                            excel_rows.append(cells)
-                        else:
-                            # Dòng tiêu đề thông tin chung, làm sạch dấu ** nếu có
-                            clean_text = line_str.replace('**', '')
-                            if clean_text:
-                                excel_rows.append([clean_text])
+                    data = json.loads(raw_text)
 
-                    if len(excel_rows) > 0:
-                        max_cols = max(len(row) for row in excel_rows)
-                        normalized_rows = [row + [''] * (max_cols - len(row)) for row in excel_rows]
+                    # ===============================================
+                    # BẮT ĐẦU VẼ BẢNG EXCEL BẰNG OPENPYXL
+                    # ===============================================
+                    wb = openpyxl.Workbook()
+                    ws = wb.active
+                    ws.title = "Danh_Sach"
 
-                        df = pd.DataFrame(normalized_rows)
-                        
-                        output = BytesIO()
-                        with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                            df.to_excel(writer, index=False, header=False, sheet_name='Danh_Sach')
-                        processed_data = output.getvalue()
+                    # Khởi tạo các công cụ định dạng
+                    font_title = Font(name="Times New Roman", size=14, bold=True)
+                    font_bold = Font(name="Times New Roman", size=12, bold=True)
+                    font_normal = Font(name="Times New Roman", size=12)
+                    align_center = Alignment(horizontal="center", vertical="center")
+                    align_left = Alignment(horizontal="left", vertical="center")
+                    thin_border = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
 
-                        st.success("🎉 Bóc tách dữ liệu thành công và sạch sẽ!")
+                    current_row = 1
+                    total_cols = len(data.get("headers", [1,2,3,4,5]))
 
-                        st.download_button(
-                            label="📥 Tải xuống file Excel (.xlsx)",
-                            data=processed_data,
-                            file_name=f"Excel_{uploaded_excel_file.name.split('.')[0]}.xlsx",
-                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                            on_click=clear_file
-                        )
-                    else:
-                        st.warning("⚠️ Không tìm thấy dữ liệu hợp lệ trong tài liệu này.")
+                    # 1. Vẽ Tiêu Đề Chính (In đậm, Canh giữa, Gộp ô)
+                    title = data.get("title", "")
+                    if title:
+                        cell = ws.cell(row=current_row, column=1, value=title.upper())
+                        cell.font = font_title
+                        cell.alignment = align_center
+                        ws.merge_cells(start_row=current_row, start_column=1, end_row=current_row, end_column=total_cols)
+                        current_row += 1
+
+                    # 2. Vẽ Các dòng thông tin chung (Thời gian, Chủ trì...)
+                    for info in data.get("info_lines", []):
+                        cell = ws.cell(row=current_row, column=1, value=info)
+                        cell.font = font_normal
+                        cell.alignment = align_left
+                        ws.merge_cells(start_row=current_row, start_column=1, end_row=current_row, end_column=total_cols)
+                        current_row += 1
+
+                    current_row += 1 # Cách 1 dòng cho thoáng
+
+                    # 3. Vẽ Tiêu đề cột của bảng (In đậm, Canh giữa, Kẻ viền)
+                    headers = data.get("headers", [])
+                    for col_idx, header in enumerate(headers, 1):
+                        cell = ws.cell(row=current_row, column=col_idx, value=header)
+                        cell.font = font_bold
+                        cell.alignment = align_center
+                        cell.border = thin_border
+                    current_row += 1
+
+                    # 4. Vẽ Dữ liệu hàng (Căn lề chuẩn, Kẻ viền)
+                    for row_data in data.get("rows", []):
+                        for col_idx, val in enumerate(row_data, 1):
+                            cell = ws.cell(row=current_row, column=col_idx, value=val)
+                            cell.font = font_normal
+                            cell.border = thin_border
+                            # Căn giữa cho cột STT và Ký tên, Căn trái cho các cột còn lại
+                            if col_idx == 1 or col_idx == total_cols:
+                                cell.alignment = align_center
+                            else:
+                                cell.alignment = align_left
+                        current_row += 1
+
+                    # 5. Căn chỉnh độ rộng cột cho đẹp mắt
+                    ws.column_dimensions['A'].width = 8   # STT
+                    ws.column_dimensions['B'].width = 25  # Họ tên
+                    ws.column_dimensions['C'].width = 30  # Đơn vị
+                    ws.column_dimensions['D'].width = 25  # Chức vụ
+                    ws.column_dimensions['E'].width = 15  # Ký tên
+
+                    # Lưu ra bộ nhớ ảo
+                    output = BytesIO()
+                    wb.save(output)
+                    processed_data = output.getvalue()
+
+                    st.success("🎉 Đã xuất bảng Excel thành công với 100% định dạng!")
+
+                    st.download_button(
+                        label="📥 Tải xuống Excel Chuẩn Format (.xlsx)",
+                        data=processed_data,
+                        file_name=f"Excel_Chuan_{uploaded_excel_file.name.split('.')[0]}.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        on_click=clear_file
+                    )
 
                 except Exception as e:
-                    st.error(f"Đã xảy ra lỗi: {e}")
+                    st.error(f"Đã xảy ra lỗi hệ thống: {e}")
 
 # ==========================================
 # 5. THANH MENU BÊN TRÁI ĐIỀU HƯỚNG CÁC APP
