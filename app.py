@@ -57,10 +57,10 @@ if uploaded_file is not None:
                     Bạn là một hệ thống OCR và số hóa tài liệu cấp cao. Nhiệm vụ của bạn là bóc tách toàn bộ nội dung từ ảnh/PDF sang định dạng văn bản thô (Clean Text/Markdown) để chuyển vào file Word.
                     
                     YÊU CẦU KỶ LUẬT THÉP (BẮT BUỘC TUÂN THỦ):
-                    1. QUÉT SẠCH & CHÍNH XÁC 100%: Quét từ trên xuống dưới, không bỏ sót bất kỳ ký tự, con số, mã vạch nào ở góc/lề (VD: số Serial). Sao chép chính xác nguyên bản, bắt buộc giữ nguyên cả lỗi sai chính tả.
-                    2. KHÔNG TỰ BỊA DỮ LIỆU: Chỉ sử dụng khoảng trắng (Space/Tab). TUYỆT ĐỐI KHÔNG tự ý chèn thêm dấu ba chấm (...).
+                    1. QUÉT SẠCH & CHÍNH XÁC 100%: Quét từ trên xuống dưới, không bỏ sót bất kỳ ký tự, con số, mã vạch nào ở góc/lề. Bắt buộc giữ nguyên các lỗi sai chính tả.
+                    2. NGHIÊM CẤM TỰ BỊA KÝ TỰ: Nếu bản gốc có khoảng trắng lớn, CHỈ ĐƯỢC dùng phím Space hoặc Tab. TUYỆT ĐỐI KHÔNG được tự ý gõ thêm dấu ba chấm (...) hay gạch ngang để lấp chỗ.
                     3. XỬ LÝ CHỮ KÝ: Tự động bỏ qua hình mờ và con dấu đỏ. Tại vị trí có chữ ký tay, chỉ cần ghi chú chữ: [Đã ký].
-                    4. BẢNG BIỂU (QUAN TRỌNG): Bất cứ khi nào tài liệu gốc là một bảng có kẻ khung (ví dụ báo cáo Total | Prints), BẮT BUỘC phải trình bày bằng cú pháp bảng Markdown chuẩn (có dấu | ở đầu và cuối mỗi dòng). Không được gộp thành văn bản thường.
+                    4. BẢNG BIỂU (QUAN TRỌNG): Khi tài liệu gốc là một bảng có kẻ khung, BẮT BUỘC trình bày bằng cú pháp bảng Markdown chuẩn (có dấu | ở đầu và cuối).
                     """
 
                     response = client.models.generate_content(
@@ -74,47 +74,65 @@ if uploaded_file is not None:
                     font.name = 'Times New Roman'
                     font.size = Pt(12)
                     
-                    doc.add_heading('Kết quả trích xuất từ AI', level=1)
+                    # ĐÃ XÓA DÒNG doc.add_heading('Kết quả trích xuất từ AI'...)
                     
-                    in_table = False
-                    current_table = None
+                    table_buffer = []
 
                     for line in response.text.split('\n'):
                         line_stripped = line.strip()
 
-                        if line_stripped.startswith('---') and not line_stripped.startswith('|'):
-                            continue
-
-                        # Phát hiện Bảng Markdown
+                        # Phát hiện các dòng thuộc Bảng Markdown
                         if line_stripped.startswith('|') and line_stripped.endswith('|'):
-                            # ĐÃ VÁ LỖI: Lọc sạch khoảng trắng để bắt chết dòng gạch ngang
                             check_line = line_stripped.replace(' ', '').replace(':', '')
                             if check_line.startswith('|---'): 
                                 continue
                             
                             cells_data = [cell.strip() for cell in line_stripped.split('|')][1:-1]
-                            
-                            if not in_table:
-                                current_table = doc.add_table(rows=1, cols=len(cells_data))
-                                current_table.style = 'Table Grid'
-                                hdr_cells = current_table.rows[0].cells
-                                for i, data in enumerate(cells_data):
-                                    if i < len(hdr_cells):
-                                        hdr_cells[i].text = data
-                                in_table = True
-                            else:
-                                row_cells = current_table.add_row().cells
-                                for i, data in enumerate(cells_data):
-                                    if i < len(row_cells):
-                                        row_cells[i].text = data
+                            table_buffer.append(cells_data)
                         else:
-                            in_table = False 
+                            # Nếu có bảng được gom lại, vẽ nó ra Word
+                            if table_buffer:
+                                # THUẬT TOÁN MỚI: Xóa dòng đầu tiên nếu nó bị AI bịa ra (dòng trống hoàn toàn)
+                                if all(cell == '' for cell in table_buffer[0]):
+                                    table_buffer.pop(0)
+                                    
+                                if table_buffer: # Nếu bảng vẫn còn dòng dữ liệu
+                                    num_cols = max(len(row) for row in table_buffer)
+                                    current_table = doc.add_table(rows=len(table_buffer), cols=num_cols)
+                                    current_table.style = 'Table Grid'
+                                    
+                                    for row_idx, row_data in enumerate(table_buffer):
+                                        row_cells = current_table.rows[row_idx].cells
+                                        for col_idx, cell_data in enumerate(row_data):
+                                            if col_idx < len(row_cells):
+                                                row_cells[col_idx].text = cell_data
+                                
+                                table_buffer = [] # Reset lại buffer cho bảng tiếp theo
                             
+                            # Bỏ qua gạch ngang thừa
+                            if line_stripped.startswith('---'):
+                                continue
+                                
+                            # Xử lý chữ bình thường
                             if line_stripped.startswith('#'):
                                 doc.add_heading(line_stripped.replace('#', '').strip(), level=2)
                             elif line_stripped:
                                 p = doc.add_paragraph(line_stripped)
                                 p.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
+
+                    # Đảm bảo vẽ nốt bảng nếu nó nằm ở dòng cuối cùng của tài liệu
+                    if table_buffer:
+                        if all(cell == '' for cell in table_buffer[0]):
+                            table_buffer.pop(0)
+                        if table_buffer:
+                            num_cols = max(len(row) for row in table_buffer)
+                            current_table = doc.add_table(rows=len(table_buffer), cols=num_cols)
+                            current_table.style = 'Table Grid'
+                            for row_idx, row_data in enumerate(table_buffer):
+                                row_cells = current_table.rows[row_idx].cells
+                                for col_idx, cell_data in enumerate(row_data):
+                                    if col_idx < len(row_cells):
+                                        row_cells[col_idx].text = cell_data
 
                     output_docx_path = "ket_qua.docx"
                     doc.save(output_docx_path)
