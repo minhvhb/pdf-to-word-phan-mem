@@ -299,7 +299,7 @@ def app_number_2():
                     st.error(f"Đã xảy ra lỗi: {e}")
 
 # ==========================================
-# 4. KHU VỰC APP 3: BÓC TÁCH BẢNG BIỂU SANG EXCEL
+# 4. KHU VỰC APP 3: BÓC TÁCH ĐẦY ĐỦ SANG EXCEL
 # ==========================================
 def app_number_3():
     try:
@@ -308,16 +308,16 @@ def app_number_3():
         st.error("⚠️ Hệ thống chưa được cấu hình API Key. Vui lòng liên hệ Quản trị viên!")
         st.stop()
 
-    st.title("📊 Bóc tách PDF/Ảnh sang Excel")
-    st.markdown("Trích xuất tự động các bảng biểu tài chính, sao kê, danh sách từ PDF hoặc Ảnh thành file **Excel (.xlsx)** sạch sẽ.")
+    st.title("📊 Bóc tách PDF/Ảnh sang Excel (Toàn bộ nội dung)")
+    st.markdown("Giữ nguyên vẹn mọi thông tin tiêu đề, thời gian, chủ trì và bảng biểu chi tiết từ PDF/Ảnh đưa thẳng vào file **Excel (.xlsx)** giống hệt bản gốc.")
 
-    uploaded_excel_file = st.file_uploader("Tải lên tài liệu chứa bảng (Ảnh hoặc PDF):", type=["jpg", "jpeg", "png", "pdf"], key=f"app3_{st.session_state.uploader_key}")
+    uploaded_excel_file = st.file_uploader("Tải lên tài liệu (Ảnh hoặc PDF):", type=["jpg", "jpeg", "png", "pdf"], key=f"app3_{st.session_state.uploader_key}")
 
     if uploaded_excel_file is not None:
         st.success(f"Đã tải lên file: **{uploaded_excel_file.name}**")
         
-        if st.button("🚀 Trích xuất ra Excel", type="primary"):
-            with st.spinner("🤖 AI đang quét cấu trúc bảng và bóc tách dữ liệu số liệu..."):
+        if st.button("🚀 Trích xuất chính xác ra Excel", type="primary"):
+            with st.spinner("🤖 AI đang quét toàn bộ bố cục, tiêu đề và bảng biểu, vui lòng đợi..."):
                 try:
                     temp_input_path = f"temp_excel_{uploaded_excel_file.name}"
                     with open(temp_input_path, "wb") as f:
@@ -328,14 +328,15 @@ def app_number_3():
                         file_bytes = f.read()
                     mime_type = "application/pdf" if uploaded_excel_file.name.endswith(".pdf") else "image/jpeg"
                     
+                    # PROMPT ĐẶC BIỆT: GOM CẢ TIÊU ĐỀ LẪN BẢNG BIỂU VÀO MỘT CẤU TRÚC EXCEL DUY NHẤT
                     prompt = """
-                    Bạn là một chuyên gia số hóa dữ liệu kế toán và hành chính. 
-                    Nhiệm vụ của bạn là đọc toàn bộ bảng biểu có trong tài liệu này và xuất kết quả DUY NHẤT dưới dạng bảng Markdown chuẩn (có dấu | ở đầu và cuối mỗi dòng).
-                    
-                    YÊU CẦU QUAN TRỌNG:
-                    1. Giữ nguyên vẹn các con số, ký hiệu tiền tệ, ngày tháng, tên riêng. Không tự ý làm tròn hoặc bịa thêm số liệu.
-                    2. Nếu tài liệu có nhiều bảng, hãy bóc tách và phân tách chúng rõ ràng.
-                    3. KHÔNG trả về các đoạn văn bản dài dòng ngoài lề, chỉ tập trung vào cấu trúc bảng dữ liệu Markdown.
+                    Bạn là một chuyên gia số hóa tài liệu hành chính cao cấp. 
+                    Nhiệm vụ của bạn là đọc toàn bộ nội dung từ tài liệu (gồm cả phần thông tin/tiêu đề ở trên và bảng biểu chi tiết ở dưới) và chuyển đổi thành một bảng dữ liệu (Grid) duy nhất dưới dạng Markdown chuẩn (có dấu | ở đầu và cuối mỗi dòng).
+
+                    HƯỚNG DẪN TRÌNH BÀY TRÊN EXCEL:
+                    1. Các dòng thông tin tiêu đề chung (như Tên danh sách, Thời gian, Nội dung cuộc họp, Chủ trì, Thành phần) hãy đặt trải dài theo hàng ngang hoặc từng dòng riêng biệt ở phía trên cùng của bảng (mỗi dòng thông tin chiếm 1 hàng, có thể để các cột sau trống).
+                    2. Tiếp theo, để cách 1 dòng trống, sau đó trình bày tiếp bảng danh sách chi tiết (Stt, Họ và Tên, Đơn vị Phòng ban, Chức vụ, Ký tên) bằng các cột Markdown chuẩn.
+                    3. Đảm bảo toàn bộ nội dung được gom trọn vẹn vào cú pháp bảng Markdown để khi xuất ra file Excel, người dùng thấy đầy đủ cả thông tin cuộc họp lẫn bảng danh sách y hệt bản gốc. Không bỏ sót bất kỳ chi tiết nào.
                     """
 
                     response = client.models.generate_content(
@@ -354,28 +355,29 @@ def app_number_3():
                             cells = [cell.strip() for cell in line_str.split('|')][1:-1]
                             table_rows.append(cells)
 
-                    if len(table_rows) > 1:
-                        headers = table_rows[0]
-                        data = table_rows[1:]
-                        
-                        df = pd.DataFrame(data, columns=headers if len(headers) == len(data[0]) else None)
+                    if len(table_rows) > 0:
+                        # Đảm bảo các hàng có số lượng cột bằng nhau để tạo DataFrame mượt mà
+                        max_cols = max(len(row) for row in table_rows)
+                        normalized_rows = [row + [''] * (max_cols - len(row)) for row in table_rows]
+
+                        df = pd.DataFrame(normalized_rows)
                         
                         output = BytesIO()
                         with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                            df.to_excel(writer, index=False, sheet_name='Sheet1')
+                            df.to_excel(writer, index=False, header=False, sheet_name='Trang_1')
                         processed_data = output.getvalue()
 
-                        st.success("🎉 Bóc tách dữ liệu thành công!")
+                        st.success("🎉 Bóc tách toàn bộ nội dung và bảng biểu thành công!")
 
                         st.download_button(
-                            label="📥 Tải xuống file Excel (.xlsx)",
+                            label="📥 Tải xuống file Excel chuẩn gốc (.xlsx)",
                             data=processed_data,
-                            file_name=f"Data_{uploaded_excel_file.name.split('.')[0]}.xlsx",
+                            file_name=f"FullData_{uploaded_excel_file.name.split('.')[0]}.xlsx",
                             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                             on_click=clear_file
                         )
                     else:
-                        st.warning("⚠️ Không tìm thấy bảng dữ liệu rõ ràng trong tài liệu này. Vui lòng thử lại với file có khung bảng sắc nét hơn.")
+                        st.warning("⚠️ Không tìm thấy dữ liệu cấu trúc trong tài liệu này.")
 
                 except Exception as e:
                     st.error(f"Đã xảy ra lỗi: {e}")
