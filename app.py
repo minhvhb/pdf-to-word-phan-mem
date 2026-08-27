@@ -22,27 +22,26 @@ st.markdown(
     unsafe_allow_html=True
 )
 
-# Kéo API Key từ Két sắt
-try:
-    api_key_input = st.secrets["GEMINI_API_KEY"]
-except KeyError:
-    st.error("⚠️ Hệ thống chưa được cấu hình API Key. Vui lòng liên hệ Quản trị viên!")
-    st.stop()
-
-# ==========================================
-# 2. KHU VỰC APP 1: CHUYỂN PDF SANG WORD (Giữ nguyên code chuẩn)
-# ==========================================
 if "uploader_key" not in st.session_state:
     st.session_state.uploader_key = 0
 
 def clear_file():
     st.session_state.uploader_key += 1
 
+# ==========================================
+# 2. KHU VỰC APP 1: CHUYỂN PDF SANG WORD
+# ==========================================
 def app_pdf_to_word():
+    try:
+        api_key_input = st.secrets["GEMINI_API_KEY"]
+    except KeyError:
+        st.error("⚠️ Hệ thống chưa được cấu hình API Key. Vui lòng liên hệ Quản trị viên!")
+        st.stop()
+
     st.title("📄 Ứng dụng Chuyển đổi PDF & Ảnh sang Word")
     st.markdown("Sử dụng **Google Gemini AI** để trích xuất văn bản và bảng biểu với độ chính xác cao.")
 
-    uploaded_file = st.file_uploader("Tải lên file ảnh (JPG, PNG) hoặc PDF:", type=["jpg", "jpeg", "png", "pdf"], key=str(st.session_state.uploader_key))
+    uploaded_file = st.file_uploader("Tải lên file ảnh (JPG, PNG) hoặc PDF:", type=["jpg", "jpeg", "png", "pdf"], key=f"app1_{st.session_state.uploader_key}")
 
     if uploaded_file is not None:
         st.success(f"Đã tải lên file: **{uploaded_file.name}**")
@@ -221,27 +220,72 @@ def app_pdf_to_word():
                     st.error(f"Đã xảy ra lỗi: {e}")
 
 # ==========================================
-# 3. KHU VỰC APP 2: ỨNG DỤNG MỚI (CHỜ PHÁT TRIỂN)
+# 3. KHU VỰC APP 2: CHUYỂN ĐỔI KHỔ GIẤY A4
 # ==========================================
 def app_number_2():
-    st.title("🛠️ Ứng dụng số 2 (Đang phát triển)")
-    st.info("Khu vực này đã được dọn dẹp sẵn sàng. Nhập tính năng bạn muốn vào đây!")
-    # Code của App 2 sau này sẽ nằm toàn bộ trong khu vực này.
+    st.title("🖨️ Chuẩn hóa kích thước bản vẽ sang A4")
+    st.markdown("Tự động ép khuôn mọi loại file PDF (Letter, A3, Custom...) về đúng kích thước A4 tiêu chuẩn. Giúp máy in không bị lỗi mất góc, đứt viền.")
+
+    uploaded_pdf = st.file_uploader("Tải lên bản vẽ PDF cần xử lý:", type=["pdf"], key=f"app2_{st.session_state.uploader_key}")
+
+    if uploaded_pdf is not None:
+        st.success(f"Đã tải lên file: **{uploaded_file.name}**")
+        
+        if st.button("📏 Bắt đầu Ép khổ A4", type="primary"):
+            with st.spinner("Đang tính toán tỷ lệ và đóng khung A4..."):
+                try:
+                    from pypdf import PdfReader, PdfWriter
+                    
+                    reader = PdfReader(uploaded_pdf)
+                    writer = PdfWriter()
+
+                    # Tọa độ kích thước A4 chuẩn xác (Tính bằng đơn vị Point)
+                    A4_WIDTH = 595.28
+                    A4_HEIGHT = 841.89
+
+                    for page in reader.pages:
+                        orig_w = float(page.mediabox.width)
+                        orig_h = float(page.mediabox.height)
+
+                        # Tự động nhận diện bản ngang hay dọc để xoay A4 tương ứng
+                        if orig_w > orig_h: # Bản vẽ ngang
+                            page.scale_to(width=A4_HEIGHT, height=A4_WIDTH)
+                        else: # Bản vẽ dọc
+                            page.scale_to(width=A4_WIDTH, height=A4_HEIGHT)
+
+                        writer.add_page(page)
+
+                    output_path = f"A4_Chuan_{uploaded_pdf.name}"
+                    with open(output_path, "wb") as f:
+                        writer.write(f)
+
+                    st.success("🎉 Xử lý thành công! Bản vẽ đã được ép chuẩn kích thước A4.")
+
+                    with open(output_path, "rb") as f:
+                        st.download_button(
+                            label="📥 Tải xuống bản vẽ A4 chuẩn (.pdf)",
+                            data=f,
+                            file_name=output_path,
+                            mime="application/pdf",
+                            on_click=clear_file
+                        )
+                except ImportError:
+                    st.error("⚠️ Hệ thống thiếu công cụ cắt giấy. Vui lòng tạo file `requirements.txt` trên thư mục GitHub và điền vào chữ `pypdf` như hướng dẫn.")
+                except Exception as e:
+                    st.error(f"Đã xảy ra lỗi: {e}")
 
 # ==========================================
 # 4. THANH MENU BÊN TRÁI ĐIỀU HƯỚNG CÁC APP
 # ==========================================
 st.sidebar.title("📌 Menu Công Cụ")
 
-# Tạo nút chọn App
 app_mode = st.sidebar.radio(
     "Vui lòng chọn ứng dụng:",
-    ["📄 1. PDF sang Word", "🛠️ 2. Ứng dụng số 2"]
+    ["📄 1. PDF sang Word", "🖨️ 2. Ép PDF về khổ A4"]
 )
 
-st.sidebar.markdown("---") # Kẻ một đường ngang phân cách cho đẹp
+st.sidebar.markdown("---") 
 
-# Cảnh báo màu đỏ luôn nằm dưới Menu
 st.sidebar.error("""
 :red[**⚠️ NGUYÊN TẮC SỬ DỤNG:**]
 
@@ -255,5 +299,5 @@ st.sidebar.error("""
 # ==========================================
 if app_mode == "📄 1. PDF sang Word":
     app_pdf_to_word()
-elif app_mode == "🛠️ 2. Ứng dụng số 2":
+elif app_mode == "🖨️ 2. Ép PDF về khổ A4":
     app_number_2()
