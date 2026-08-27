@@ -1,5 +1,6 @@
 import streamlit as st
 import os
+import re  # Thêm thư viện nhận diện và xóa mã HTML
 from google import genai
 from google.genai import types
 from docx import Document
@@ -58,9 +59,10 @@ if uploaded_file is not None:
                     
                     YÊU CẦU KỶ LUẬT THÉP (BẮT BUỘC TUÂN THỦ):
                     1. QUÉT SẠCH & CHÍNH XÁC 100%: Quét từ trên xuống dưới, không bỏ sót bất kỳ ký tự, con số, mã vạch nào ở góc/lề. Bắt buộc giữ nguyên các lỗi sai chính tả.
-                    2. NGHIÊM CẤM TỰ BỊA KÝ TỰ: Nếu bản gốc có khoảng trắng lớn, CHỈ ĐƯỢC dùng phím Space hoặc Tab. TUYỆT ĐỐI KHÔNG được tự ý gõ thêm dấu ba chấm (...) hay gạch ngang để lấp chỗ.
+                    2. NGHIÊM CẤM TỰ BỊA KÝ TỰ: Chỉ dùng Space/Tab cho khoảng trắng. Tuyệt đối không tự gõ thêm dấu chấm/gạch ngang.
                     3. XỬ LÝ CHỮ KÝ: Tự động bỏ qua hình mờ và con dấu đỏ. Tại vị trí có chữ ký tay, chỉ cần ghi chú chữ: [Đã ký].
-                    4. BẢNG BIỂU (QUAN TRỌNG): Khi tài liệu gốc là một bảng có kẻ khung, BẮT BUỘC trình bày bằng cú pháp bảng Markdown chuẩn (có dấu | ở đầu và cuối).
+                    4. BẢNG BIỂU: Khi tài liệu gốc là một bảng có kẻ khung, BẮT BUỘC trình bày bằng cú pháp bảng Markdown chuẩn (có dấu | ở đầu và cuối).
+                    5. KHÔNG DÙNG MÃ HTML/CSS: TUYỆT ĐỐI KHÔNG xuất ra các thẻ lập trình như <span>, <div>, <style>. Để biểu diễn các chữ cách xa nhau, chỉ dùng dấu cách (Space).
                     """
 
                     response = client.models.generate_content(
@@ -74,12 +76,12 @@ if uploaded_file is not None:
                     font.name = 'Times New Roman'
                     font.size = Pt(12)
                     
-                    # ĐÃ XÓA DÒNG doc.add_heading('Kết quả trích xuất từ AI'...)
-                    
                     table_buffer = []
 
                     for line in response.text.split('\n'):
-                        line_stripped = line.strip()
+                        # BƯỚC LỌC MỚI: Xóa sạch mọi thẻ HTML nếu AI vô tình chèn vào
+                        clean_line = re.sub(r'<[^>]+>', '', line)
+                        line_stripped = clean_line.strip()
 
                         # Phát hiện các dòng thuộc Bảng Markdown
                         if line_stripped.startswith('|') and line_stripped.endswith('|'):
@@ -90,13 +92,11 @@ if uploaded_file is not None:
                             cells_data = [cell.strip() for cell in line_stripped.split('|')][1:-1]
                             table_buffer.append(cells_data)
                         else:
-                            # Nếu có bảng được gom lại, vẽ nó ra Word
                             if table_buffer:
-                                # THUẬT TOÁN MỚI: Xóa dòng đầu tiên nếu nó bị AI bịa ra (dòng trống hoàn toàn)
                                 if all(cell == '' for cell in table_buffer[0]):
                                     table_buffer.pop(0)
                                     
-                                if table_buffer: # Nếu bảng vẫn còn dòng dữ liệu
+                                if table_buffer:
                                     num_cols = max(len(row) for row in table_buffer)
                                     current_table = doc.add_table(rows=len(table_buffer), cols=num_cols)
                                     current_table.style = 'Table Grid'
@@ -107,20 +107,17 @@ if uploaded_file is not None:
                                             if col_idx < len(row_cells):
                                                 row_cells[col_idx].text = cell_data
                                 
-                                table_buffer = [] # Reset lại buffer cho bảng tiếp theo
+                                table_buffer = []
                             
-                            # Bỏ qua gạch ngang thừa
                             if line_stripped.startswith('---'):
                                 continue
                                 
-                            # Xử lý chữ bình thường
                             if line_stripped.startswith('#'):
                                 doc.add_heading(line_stripped.replace('#', '').strip(), level=2)
                             elif line_stripped:
                                 p = doc.add_paragraph(line_stripped)
                                 p.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
 
-                    # Đảm bảo vẽ nốt bảng nếu nó nằm ở dòng cuối cùng của tài liệu
                     if table_buffer:
                         if all(cell == '' for cell in table_buffer[0]):
                             table_buffer.pop(0)
