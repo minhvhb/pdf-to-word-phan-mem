@@ -57,6 +57,25 @@ def parse_and_add_runs(paragraph, text):
                     run.italic = is_italic
                     run.underline = is_underline
 
+def clean_tags_and_align(text, paragraph, default_align):
+    """Hàm quét sạch các mã lề lọt vào văn bản và gán lề chuẩn"""
+    align = default_align
+    text_clean = text.strip()
+    
+    # Quét và áp dụng lệnh
+    if '[CENTER]' in text_clean:
+        align = WD_ALIGN_PARAGRAPH.CENTER
+        text_clean = text_clean.replace('[CENTER]', '').strip()
+    if '[RIGHT]' in text_clean:
+        align = WD_ALIGN_PARAGRAPH.RIGHT
+        text_clean = text_clean.replace('[RIGHT]', '').strip()
+    if '[LEFT]' in text_clean:
+        align = WD_ALIGN_PARAGRAPH.LEFT
+        text_clean = text_clean.replace('[LEFT]', '').strip()
+        
+    paragraph.alignment = align
+    return text_clean
+
 def app_pdf_to_word():
     try:
         api_key_input = st.secrets["GEMINI_API_KEY"]
@@ -87,30 +106,25 @@ def app_pdf_to_word():
                     prompt = """
                     NHIỆM VỤ OCR - BẮT BUỘC TUÂN THỦ NGHIÊM NGẶT CÁC QUY TẮC SAU:
 
-                    1. THỂ THỨC VĂN BẢN HÀNH CHÍNH (QUỐC HIỆU & TÊN CƠ QUAN):
-                       - Phần trên cùng của văn bản hành chính Việt Nam có 2 khối chữ song song.
-                       - BẮT BUỘC dùng BẢNG MARKDOWN 2 CỘT để chứa 2 khối này.
-                       - TRƯỚC bảng này, BẮT BUỘC ghi mã [HEADER_TABLE] để hệ thống giấu khung viền và canh chỉnh tỷ lệ.
-                       - Dùng thẻ <br> để xuống dòng. 
-                       - VÍ DỤ CHUẨN:
-                       [HEADER_TABLE]
-                       | UBND THÀNH PHỐ...<br>**TỔNG CÔNG TY...**<br>TNHH MỘT THÀNH VIÊN<br>**<u>(CNS)</u>**<br>Số: 1029/... | **CỘNG HÒA XÃ HỘI...**<br>**<u>Độc lập – Tự do – Hạnh phúc</u>**<br>*Thành phố Hồ Chí Minh, ngày...* |
+                    1. THỂ THỨC VĂN BẢN (QUỐC HIỆU & CHỮ KÝ):
+                       - Phần Quốc hiệu trên cùng (hoặc các khối chữ ký nằm song song ngang nhau): BẮT BUỘC dùng [HEADER_TABLE] (bảng tàng hình 2 cột) để chia tỷ lệ.
+                       - TUYỆT ĐỐI KHÔNG dùng thẻ HTML (như <td>, <colspan>...).
+                       - TUYỆT ĐỐI KHÔNG vẽ bảng cho phần Footer (ví dụ: BM/66-VPCQ, Lần ban hành, Trang). Hãy viết thành văn bản thường trên 1 dòng.
 
-                    2. CANH LỀ ĐOẠN VĂN (Bên ngoài bảng):
-                       - Ghi [CENTER] ở đầu MỌI dòng cần canh giữa (Tiêu đề chính...).
-                       - Ghi [RIGHT] ở đầu MỌI dòng lệch phải (Nơi nhận, Ký tên...).
+                    2. CANH LỀ ĐOẠN VĂN (Sử dụng Tag):
+                       - Ghi [CENTER] ở đầu MỌI dòng cần canh giữa.
+                       - Ghi [RIGHT] ở đầu MỌI dòng lệch phải.
+                       - (Không cần ghi tag cho nội dung chính, hệ thống sẽ tự Canh đều 2 bên - Justify).
 
                     3. ĐỊNH DẠNG CHỮ TỪNG PHẦN: 
                        - Chữ in đậm -> bọc trong ** (VD: **THÔNG BÁO**). 
                        - Chữ in nghiêng -> bọc trong * (VD: *Nơi nhận:*).
-                       - Chữ có dòng kẻ/gạch chân bên dưới -> bọc trong <u> và </u> (VD: <u>(CNS)</u>).
+                       - Chữ có dòng kẻ/gạch chân bên dưới -> bọc trong <u> và </u>.
 
-                    4. BẢNG BIỂU THÔNG THƯỜNG (Có khung viền): 
-                       - Vẽ bảng Markdown chuẩn (|...|).
+                    4. BẢNG BIỂU THÔNG THƯỜNG: 
+                       - CHỈ vẽ bảng Markdown (|...|) KHI văn bản gốc THỰC SỰ CÓ KHUNG VIỀN KẺ Ô.
+                       - TUYỆT ĐỐI KHÔNG tự ý cho nội dung văn bản thường vào trong bảng.
                        - Dùng `<br>` để xuống dòng trong ô.
-                       - GỘP Ô (MERGE CELLS): Với dòng tiêu đề nhóm (VD: "I. Nhà máy..."), ghi chữ vào Cột 1, các cột còn lại để trống (Ví dụ: | **I. Nhà máy...** | | | | | ).
-
-                    5. KHÔNG dùng mã HTML (ngoại trừ <br> và <u>).
                     """
 
                     response = client.models.generate_content(
@@ -167,6 +181,7 @@ def app_pdf_to_word():
                         for row_idx, row_data in enumerate(buffer):
                             row_cells = current_table.rows[row_idx].cells
                             
+                            # Tỷ lệ cho Header hành chính
                             if is_header_table and num_cols == 2:
                                 row_cells[0].width = Cm(6.0)
                                 row_cells[1].width = Cm(10.0)
@@ -184,8 +199,8 @@ def app_pdf_to_word():
                                 for idx, c_line in enumerate(cell_lines):
                                     p = main_cell.paragraphs[0] if idx == 0 else main_cell.add_paragraph()
                                     p.paragraph_format.space_after = Pt(0)
-                                    p.alignment = WD_ALIGN_PARAGRAPH.LEFT
-                                    parse_and_add_runs(p, c_line.strip())
+                                    clean_text = clean_tags_and_align(c_line.strip(), p, WD_ALIGN_PARAGRAPH.LEFT)
+                                    parse_and_add_runs(p, clean_text)
                             else:
                                 for col_idx, cell_data in enumerate(row_data):
                                     if col_idx < len(row_cells):
@@ -196,19 +211,18 @@ def app_pdf_to_word():
                                             p = cell.paragraphs[0] if idx == 0 else cell.add_paragraph()
                                             p.paragraph_format.space_after = Pt(0)
                                             
-                                            if is_header_table:
-                                                p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                                            else:
-                                                p.alignment = WD_ALIGN_PARAGRAPH.CENTER if row_idx == 0 else WD_ALIGN_PARAGRAPH.LEFT
-                                                
-                                            parse_and_add_runs(p, c_line.strip())
+                                            default_al = WD_ALIGN_PARAGRAPH.CENTER if is_header_table else (WD_ALIGN_PARAGRAPH.CENTER if row_idx == 0 else WD_ALIGN_PARAGRAPH.LEFT)
+                                            clean_text = clean_tags_and_align(c_line.strip(), p, default_al)
+                                            parse_and_add_runs(p, clean_text)
 
                     response_text = response.text
                     table_buffer = []
                     is_next_table_header = False
 
                     for line in response_text.split('\n'):
-                        line_stripped = line.strip()
+                        # Dọn dẹp các mã HTML rác do AI ảo giác
+                        line_stripped = re.sub(r'<td[^>]*>', '', line.strip())
+                        line_stripped = re.sub(r'</td>', '', line_stripped)
 
                         if not line_stripped or line_stripped.startswith("```"):
                             continue
@@ -234,20 +248,12 @@ def app_pdf_to_word():
                             if line_stripped.startswith('---'):
                                 continue
                                 
-                            align = WD_ALIGN_PARAGRAPH.LEFT 
-                            
-                            if line_stripped.startswith('[CENTER]'):
-                                align = WD_ALIGN_PARAGRAPH.CENTER
-                                line_stripped = line_stripped.replace('[CENTER]', '', 1).strip()
-                            elif line_stripped.startswith('[RIGHT]'):
-                                align = WD_ALIGN_PARAGRAPH.RIGHT
-                                line_stripped = line_stripped.replace('[RIGHT]', '', 1).strip()
-                            
                             if line_stripped:
                                 p = doc.add_paragraph()
-                                p.alignment = align
                                 p.paragraph_format.space_after = Pt(6)
-                                parse_and_add_runs(p, line_stripped)
+                                # ÉP CANH ĐỀU 2 BÊN (JUSTIFY) CHO NỘI DUNG CHÍNH (CHUẨN HÀNH CHÍNH)
+                                clean_line = clean_tags_and_align(line_stripped, p, WD_ALIGN_PARAGRAPH.JUSTIFY)
+                                parse_and_add_runs(p, clean_line)
 
                     if table_buffer:
                         if all(cell == '' for cell in table_buffer[0]):
@@ -257,7 +263,7 @@ def app_pdf_to_word():
                     output_docx_path = "ket_qua.docx"
                     doc.save(output_docx_path)
 
-                    st.success("🎉 Chuyển đổi thành công! Bảng biểu đã được dọn sạch hoàn toàn các ký tự lạ.")
+                    st.success("🎉 Chuyển đổi thành công! Văn bản đã được canh lề Justify chuẩn xác.")
 
                     with open(output_docx_path, "rb") as file_download:
                         st.download_button(
