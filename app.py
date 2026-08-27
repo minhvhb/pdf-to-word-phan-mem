@@ -64,8 +64,6 @@ def app_pdf_to_word():
         st.stop()
 
     st.title("📄 Ứng dụng Chuyển đổi PDF & Ảnh sang Word")
-    st.markdown("Sử dụng **Google Gemini AI** để trích xuất văn bản và bảng biểu chuẩn Form Hành chính A4.")
-
     uploaded_file = st.file_uploader("Tải lên file ảnh (JPG, PNG) hoặc PDF:", type=["jpg", "jpeg", "png", "pdf"], key=f"app1_{st.session_state.uploader_key}")
 
     if uploaded_file is not None:
