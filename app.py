@@ -20,6 +20,16 @@ st.markdown(
     unsafe_allow_html=True
 )
 
+# --- THỦ THUẬT RESET FILE UPLOADER ---
+# Khởi tạo một "chìa khóa" trong bộ nhớ ảo của ứng dụng
+if "uploader_key" not in st.session_state:
+    st.session_state.uploader_key = 0
+
+# Hàm này sẽ chạy ngay khi người dùng bấm nút Tải Word
+def clear_file():
+    st.session_state.uploader_key += 1
+# ------------------------------------
+
 st.title("📄 Ứng dụng Chuyển đổi PDF & Ảnh sang Word")
 st.markdown("Sử dụng **Google Gemini AI** để trích xuất văn bản và bảng biểu với độ chính xác cao.")
 
@@ -37,7 +47,8 @@ st.sidebar.error("""
 :red[- **Tối ưu:** Chỉ tải file PDF **dưới 30 trang/lần** để file Word không bị lỗi định dạng.]
 """)
 
-uploaded_file = st.file_uploader("Tải lên file ảnh (JPG, PNG) hoặc PDF:", type=["jpg", "jpeg", "png", "pdf"])
+# Gắn "chìa khóa" vào khung tải file. Khi chìa khóa thay đổi, khung này sẽ tự động trống trơn.
+uploaded_file = st.file_uploader("Tải lên file ảnh (JPG, PNG) hoặc PDF:", type=["jpg", "jpeg", "png", "pdf"], key=str(st.session_state.uploader_key))
 
 if uploaded_file is not None:
     st.success(f"Đã tải lên file: **{uploaded_file.name}**")
@@ -54,7 +65,6 @@ if uploaded_file is not None:
                     file_bytes = f.read()
                 mime_type = "application/pdf" if uploaded_file.name.endswith(".pdf") else "image/jpeg"
                 
-                # PROMPT ĐÃ ĐƯỢC TÁI CẤU TRÚC: ÉP BUỘC LÀM THEO THỨ TỰ
                 prompt = """
                 NHIỆM VỤ OCR - BẮT BUỘC TUÂN THỦ NGHIÊM NGẶT THEO THỨ TỰ SAU:
 
@@ -87,7 +97,6 @@ if uploaded_file is not None:
                 
                 response_text = response.text
 
-                # --- NHẬN DIỆN VÀ XOAY TRANG GIẤY MỘT CÁCH CHẮC CHẮN ---
                 section = doc.sections[0]
                 is_landscape = False
                 
@@ -99,16 +108,13 @@ if uploaded_file is not None:
                     is_landscape = False
                     response_text = response_text.replace("[ORIENTATION: PORTRAIT]", "").strip()
 
-                # Áp dụng xoay
                 if is_landscape:
-                    # Nếu giấy đang dọc, thì xoay ngang
                     if section.page_height > section.page_width:
                         new_width, new_height = section.page_height, section.page_width
                         section.orientation = WD_ORIENT.LANDSCAPE
                         section.page_width = new_width
                         section.page_height = new_height
                 else:
-                    # Nếu yêu cầu dọc nhưng lỡ đang ngang, thì xoay dọc lại
                     if section.page_width > section.page_height:
                         new_width, new_height = section.page_height, section.page_width
                         section.orientation = WD_ORIENT.PORTRAIT
@@ -121,11 +127,9 @@ if uploaded_file is not None:
                     clean_line = re.sub(r'<[^>]+>', '', line)
                     line_stripped = clean_line.strip()
 
-                    # Bỏ qua dòng rỗng hoặc các lệnh dư thừa
                     if not line_stripped or line_stripped == '```markdown' or line_stripped == '```':
                         continue
 
-                    # XỬ LÝ BẢNG BIỂU
                     if line_stripped.startswith('|') and line_stripped.endswith('|'):
                         check_line = line_stripped.replace(' ', '').replace(':', '')
                         if check_line.startswith('|---'): 
@@ -164,7 +168,6 @@ if uploaded_file is not None:
                         if line_stripped.startswith('---'):
                             continue
                             
-                        # XỬ LÝ CANH LỀ ĐOẠN VĂN
                         align = WD_ALIGN_PARAGRAPH.LEFT 
                         
                         if line_stripped.startswith('[CENTER]'):
@@ -178,7 +181,6 @@ if uploaded_file is not None:
                             p = doc.add_paragraph()
                             p.alignment = align
                             
-                            # XỬ LÝ IN ĐẬM
                             parts = re.split(r'\*\*(.*?)\*\*', line_stripped)
                             for i, part in enumerate(parts):
                                 if part:
@@ -186,7 +188,6 @@ if uploaded_file is not None:
                                     if i % 2 == 1:
                                         run.bold = True
 
-                # Vẽ nốt bảng nếu bảng nằm ở cuối
                 if table_buffer:
                     if all(cell == '' for cell in table_buffer[0]):
                         table_buffer.pop(0)
@@ -219,7 +220,8 @@ if uploaded_file is not None:
                         label="📥 Tải xuống file Word (.docx)",
                         data=file_download,
                         file_name=f"Converted_{uploaded_file.name.split('.')[0]}.docx",
-                        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                        on_click=clear_file  # <- Lệnh kích hoạt quét dọn màn hình khi bấm tải
                     )
             except Exception as e:
                 st.error(f"Đã xảy ra lỗi: {e}")
