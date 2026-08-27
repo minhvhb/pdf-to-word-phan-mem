@@ -6,7 +6,7 @@ from google.genai import types
 from docx import Document
 from docx.shared import Pt
 from docx.enum.text import WD_ALIGN_PARAGRAPH
-from docx.enum.section import WD_ORIENT  # Thư viện để xoay giấy ngang/dọc
+from docx.enum.section import WD_ORIENT
 
 # Ép mở thanh bên và ẩn mũi tên
 st.set_page_config(page_title="Chuyển PDF/Ảnh sang Word", page_icon="📄", layout="centered", initial_sidebar_state="expanded")
@@ -43,7 +43,7 @@ if uploaded_file is not None:
     st.success(f"Đã tải lên file: **{uploaded_file.name}**")
     
     if st.button("🚀 Bắt đầu Chuyển đổi", type="primary"):
-        with st.spinner("🤖 AI đang phân tích bố cục, chiều trang và vẽ bảng, vui lòng đợi..."):
+        with st.spinner("🤖 AI đang phân tích hướng giấy và trích xuất dữ liệu, vui lòng đợi..."):
             try:
                 temp_input_path = f"temp_{uploaded_file.name}"
                 with open(temp_input_path, "wb") as f:
@@ -54,22 +54,24 @@ if uploaded_file is not None:
                     file_bytes = f.read()
                 mime_type = "application/pdf" if uploaded_file.name.endswith(".pdf") else "image/jpeg"
                 
-                # PROMPT NÂNG CẤP: DẠY AI NHẬN DIỆN CHIỀU TRANG VÀ CANH LỀ
+                # PROMPT ĐÃ ĐƯỢC TÁI CẤU TRÚC: ÉP BUỘC LÀM THEO THỨ TỰ
                 prompt = """
-                Bạn là một hệ thống OCR và số hóa tài liệu cấp cao. Nhiệm vụ của bạn là bóc tách nội dung từ ảnh/PDF sang văn bản thô để chuyển vào Word.
+                NHIỆM VỤ OCR - BẮT BUỘC TUÂN THỦ NGHIÊM NGẶT THEO THỨ TỰ SAU:
+
+                1. CHIỀU TRANG GIẤY (ĐIỀU KIỆN TIÊN QUYẾT):
+                   - Phân tích bức ảnh. Nếu bề ngang rộng hơn bề dọc, DÒNG ĐẦU TIÊN CỦA BẠN PHẢI LÀ: [ORIENTATION: LANDSCAPE]. 
+                   - Nếu bề dọc dài hơn bề ngang, DÒNG ĐẦU TIÊN CỦA BẠN PHẢI LÀ: [ORIENTATION: PORTRAIT].
+
+                2. CANH LỀ ĐOẠN VĂN:
+                   - Tiêu đề hoặc chữ canh giữa trang -> ghi [CENTER] ở đầu dòng.
+                   - Chữ nằm lệch góc phải -> ghi [RIGHT] ở đầu dòng.
+                   - (KHÔNG áp dụng lệnh [CENTER] hay [RIGHT] vào bên trong bảng biểu).
+
+                3. ĐỊNH DẠNG CHỮ: Chữ nào in đậm trong bản gốc, phải bọc bằng dấu sao kép (Ví dụ: **DANH SÁCH**).
+
+                4. BẢNG BIỂU: Vẽ bảng bằng cú pháp Markdown chuẩn (|...|).
                 
-                YÊU CẦU VỀ BỐ CỤC & ĐỊNH DẠNG (BẮT BUỘC):
-                1. CHIỀU TRANG (Rất quan trọng): Nhìn tổng thể tài liệu. Nếu là giấy xoay ngang (chiều rộng lớn hơn chiều cao, ví dụ: danh sách, bảng chấm công), BẮT BUỘC ghi đúng 1 dòng này ở trên cùng: [ORIENTATION: LANDSCAPE]. Nếu xoay dọc, ghi: [ORIENTATION: PORTRAIT].
-                2. CANH LỀ: 
-                   - Nếu văn bản canh giữa (ví dụ: Tiêu đề), ghi thêm [CENTER] ở đầu dòng đó.
-                   - Nếu canh phải (ví dụ: ngày tháng năm), ghi thêm [RIGHT] ở đầu dòng đó.
-                3. IN ĐẬM: Bọc các chữ được in đậm trong bản gốc bằng dấu sao kép (Ví dụ: **Nội dung in đậm**).
-                
-                YÊU CẦU KỶ LUẬT THÉP (BẮT BUỘC TUÂN THỦ):
-                1. QUÉT SẠCH & CHÍNH XÁC: Quét không bỏ sót. Giữ nguyên lỗi sai chính tả.
-                2. BẢNG BIỂU: Trình bày bằng cú pháp bảng Markdown chuẩn. TUYỆT ĐỐI KHÔNG chèn tag [CENTER] hay [RIGHT] vào bên trong bảng Markdown để tránh lỗi.
-                3. XỬ LÝ CHỮ KÝ: Tự động bỏ qua hình mờ và con dấu đỏ. Chữ ký tay ghi là: [Đã ký].
-                4. KHÔNG DÙNG MÃ HTML/CSS. Không tự bịa dấu chấm/gạch ngang.
+                5. TUYỆT ĐỐI KHÔNG dùng HTML, không bịa dấu ba chấm. Chữ ký tay thay bằng [Đã ký].
                 """
 
                 response = client.models.generate_content(
@@ -85,22 +87,43 @@ if uploaded_file is not None:
                 
                 response_text = response.text
 
-                # --- 1. NHẬN DIỆN VÀ XOAY TRANG GIẤY TỰ ĐỘNG ---
+                # --- NHẬN DIỆN VÀ XOAY TRANG GIẤY MỘT CÁCH CHẮC CHẮN ---
                 section = doc.sections[0]
-                if "[ORIENTATION: LANDSCAPE]" in response_text:
-                    new_width, new_height = section.page_height, section.page_width
-                    section.orientation = WD_ORIENT.LANDSCAPE
-                    section.page_width = new_width
-                    section.page_height = new_height
+                is_landscape = False
                 
-                # Dọn dẹp mã mật khẩu xoay trang ra khỏi văn bản
-                response_text = response_text.replace("[ORIENTATION: LANDSCAPE]", "").replace("[ORIENTATION: PORTRAIT]", "").strip()
+                if "[ORIENTATION: LANDSCAPE]" in response_text:
+                    is_landscape = True
+                    response_text = response_text.replace("[ORIENTATION: LANDSCAPE]", "").strip()
+                
+                if "[ORIENTATION: PORTRAIT]" in response_text:
+                    is_landscape = False
+                    response_text = response_text.replace("[ORIENTATION: PORTRAIT]", "").strip()
+
+                # Áp dụng xoay
+                if is_landscape:
+                    # Nếu giấy đang dọc, thì xoay ngang
+                    if section.page_height > section.page_width:
+                        new_width, new_height = section.page_height, section.page_width
+                        section.orientation = WD_ORIENT.LANDSCAPE
+                        section.page_width = new_width
+                        section.page_height = new_height
+                else:
+                    # Nếu yêu cầu dọc nhưng lỡ đang ngang, thì xoay dọc lại
+                    if section.page_width > section.page_height:
+                        new_width, new_height = section.page_height, section.page_width
+                        section.orientation = WD_ORIENT.PORTRAIT
+                        section.page_width = new_width
+                        section.page_height = new_height
                 
                 table_buffer = []
 
                 for line in response_text.split('\n'):
                     clean_line = re.sub(r'<[^>]+>', '', line)
                     line_stripped = clean_line.strip()
+
+                    # Bỏ qua dòng rỗng hoặc các lệnh dư thừa
+                    if not line_stripped or line_stripped == '```markdown' or line_stripped == '```':
+                        continue
 
                     # XỬ LÝ BẢNG BIỂU
                     if line_stripped.startswith('|') and line_stripped.endswith('|'):
@@ -125,10 +148,10 @@ if uploaded_file is not None:
                                     for col_idx, cell_data in enumerate(row_data):
                                         if col_idx < len(row_cells):
                                             cell = row_cells[col_idx]
-                                            cell.text = "" # Xóa nội dung rỗng mặc định
+                                            cell.text = "" 
                                             p = cell.paragraphs[0]
+                                            p.alignment = WD_ALIGN_PARAGRAPH.CENTER if row_idx == 0 else WD_ALIGN_PARAGRAPH.LEFT
                                             
-                                            # Trích xuất và bôi đậm chữ bên trong bảng
                                             parts = re.split(r'\*\*(.*?)\*\*', cell_data)
                                             for i, part in enumerate(parts):
                                                 if part:
@@ -141,8 +164,8 @@ if uploaded_file is not None:
                         if line_stripped.startswith('---'):
                             continue
                             
-                        # --- 2. XỬ LÝ CANH LỀ ---
-                        align = WD_ALIGN_PARAGRAPH.LEFT # Mặc định canh trái cho đẹp
+                        # XỬ LÝ CANH LỀ ĐOẠN VĂN
+                        align = WD_ALIGN_PARAGRAPH.LEFT 
                         
                         if line_stripped.startswith('[CENTER]'):
                             align = WD_ALIGN_PARAGRAPH.CENTER
@@ -155,7 +178,7 @@ if uploaded_file is not None:
                             p = doc.add_paragraph()
                             p.alignment = align
                             
-                            # --- 3. XỬ LÝ IN ĐẬM ---
+                            # XỬ LÝ IN ĐẬM
                             parts = re.split(r'\*\*(.*?)\*\*', line_stripped)
                             for i, part in enumerate(parts):
                                 if part:
@@ -163,7 +186,7 @@ if uploaded_file is not None:
                                     if i % 2 == 1:
                                         run.bold = True
 
-                # Vẽ nốt bảng nếu bảng nằm ở cuối file
+                # Vẽ nốt bảng nếu bảng nằm ở cuối
                 if table_buffer:
                     if all(cell == '' for cell in table_buffer[0]):
                         table_buffer.pop(0)
@@ -178,6 +201,7 @@ if uploaded_file is not None:
                                     cell = row_cells[col_idx]
                                     cell.text = "" 
                                     p = cell.paragraphs[0]
+                                    p.alignment = WD_ALIGN_PARAGRAPH.CENTER if row_idx == 0 else WD_ALIGN_PARAGRAPH.LEFT
                                     parts = re.split(r'\*\*(.*?)\*\*', cell_data)
                                     for i, part in enumerate(parts):
                                         if part:
