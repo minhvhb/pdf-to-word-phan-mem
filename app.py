@@ -17,7 +17,6 @@ from docx.enum.section import WD_ORIENT
 from PIL import Image
 from pypdf import PdfReader, PdfWriter, Transformation
 import difflib
-import time
 
 # ==========================================
 # 1. CẤU HÌNH TRANG CHỦ ĐẠO
@@ -391,7 +390,6 @@ def app_number_3():
                     client = genai.Client(api_key=api_key_input)
                     with open(temp_input_path, "rb") as f:
                         file_bytes = f.read()
-                    
                     mime_type = "application/pdf" if uploaded_excel_file.name.endswith(".pdf") else "image/jpeg"
                     
                     prompt = """
@@ -540,10 +538,10 @@ def app_number_3():
                     st.error(f"Đã xảy ra lỗi hệ thống: {e}")
 
 # ==========================================
-# 5. KHU VỰC APP 4: SO SÁNH VĂN BẢN / HỢP ĐỒNG (BẢN CHUẨN)
+# 5. KHU VỰC APP 4: KÍNH LÚP SO SÁNH HỢP ĐỒNG (BẢN CHUẨN)
 # ==========================================
 def extract_text_from_file(uploaded_file, client):
-    """Hàm trích xuất text từ Word hoặc PDF"""
+    """Hàm trích xuất text từ Word hoặc PDF bằng AI/Thuật toán"""
     text = ""
     file_ext = uploaded_file.name.split('.')[-1].lower()
     
@@ -565,20 +563,6 @@ def extract_text_from_file(uploaded_file, client):
     
     return text
 
-def add_custom_heading(doc, text, level, size):
-    """Hàm hỗ trợ ép chuẩn Font Times New Roman và Kích thước cho Tiêu đề"""
-    h = doc.add_heading(text, level)
-    for run in h.runs:
-        run.font.name = 'Times New Roman'
-        run.font.size = Pt(size)
-    return h
-
-def display_text_for_table(t):
-    """Hàm hỗ trợ hiển thị khoảng trắng rõ ràng trong Bảng"""
-    if not t: return "(Không có)"
-    if t.isspace(): return "[Khoảng trắng]"
-    return t
-
 def app_document_compare():
     try:
         api_key_input = st.secrets["GEMINI_API_KEY"]
@@ -586,7 +570,7 @@ def app_document_compare():
         st.error("⚠️ Hệ thống chưa được cấu hình API Key. Vui lòng liên hệ Quản trị viên!")
         st.stop()
 
-    st.title("🔍 So sánh Văn bản / Hợp đồng")
+    st.title("🔍 Kính lúp So sánh Hợp đồng")
     st.markdown("Đối soát độ lệch chữ giữa 2 phiên bản tài liệu. Hỗ trợ đối chiếu chéo **Word vs Word**, **PDF scan vs Word**.")
 
     col1, col2 = st.columns(2)
@@ -599,20 +583,21 @@ def app_document_compare():
 
     if file_v1 and file_v2:
         if st.button("🔎 Soi Sự Khác Biệt", type="primary"):
-            with st.spinner("🤖 Đang quét tài liệu và so sánh từng ký tự... (Có thể mất 10-15s để tránh nghẽn API)"):
+            with st.spinner("🤖 Đang quét tài liệu và so sánh từng ký tự..."):
                 try:
                     client = genai.Client(api_key=api_key_input)
                     
                     st.toast("Đang đọc và giải mã Bản Gốc (V1)...")
                     text_v1 = extract_text_from_file(file_v1, client)
                     
-                    time.sleep(3)
-                    
                     st.toast("Đang đọc và giải mã Bản Đối Tác (V2)...")
                     text_v2 = extract_text_from_file(file_v2, client)
 
-                    words_v1_flat = [t for t in re.split(r'(\s+|[.,!?;:()[\]{}"\'-])', text_v1) if t]
-                    words_v2_flat = [t for t in re.split(r'(\s+|[.,!?;:()[\]{}"\'-])', text_v2) if t]
+                    words_v1 = text_v1.splitlines() 
+                    words_v2 = text_v2.splitlines()
+                    
+                    words_v1_flat = [word for line in words_v1 for word in line.split(" ") if word.strip()]
+                    words_v2_flat = [word for line in words_v2 for word in line.split(" ") if word.strip()]
 
                     matcher = difflib.SequenceMatcher(None, words_v1_flat, words_v2_flat)
                     
@@ -621,14 +606,12 @@ def app_document_compare():
                         if tag != 'equal':
                             edits.append({
                                 'tag': tag,
-                                'old': "".join(words_v1_flat[i1:i2]),
-                                'new': "".join(words_v2_flat[j1:j2])
+                                'old': " ".join(words_v1_flat[i1:i2]),
+                                'new': " ".join(words_v2_flat[j1:j2])
                             })
                     
                     total_edits = len(edits)
 
-                    time.sleep(3)
-                    
                     st.toast("AI đang đánh giá rủi ro các điểm thay đổi...")
                     summary_prompt = f"""
                     Tôi có 2 phiên bản hợp đồng. Phát hiện tổng cộng {total_edits} lần thay đổi.
@@ -653,9 +636,9 @@ def app_document_compare():
                     font.name = 'Times New Roman'
                     font.size = Pt(13)
 
-                    add_custom_heading(doc_report, 'BÁO CÁO ĐỐI CHIẾU TÀI LIỆU (V1 vs V2)', 0, 14)
+                    doc_report.add_heading('BÁO CÁO ĐỐI CHIẾU TÀI LIỆU (V1 vs V2)', 0)
                     
-                    add_custom_heading(doc_report, 'I. Bảng Tổng kết chi tiết các lần chỉnh sửa', 1, 12)
+                    doc_report.add_heading('I. Bảng Tổng kết chi tiết các lần chỉnh sửa', level=1)
                     p_total = doc_report.add_paragraph()
                     run_total = p_total.add_run(f"Hệ thống ghi nhận tổng cộng {total_edits} lần chỉnh sửa từ đối tác.")
                     run_total.bold = True
@@ -681,21 +664,21 @@ def app_document_compare():
                             
                             if edit['tag'] == 'delete':
                                 row_cells[1].text = 'Xóa bỏ'
-                                row_cells[2].text = display_text_for_table(edit['old'])
+                                row_cells[2].text = edit['old']
                                 row_cells[3].text = "(Đã xóa)"
                             elif edit['tag'] == 'insert':
                                 row_cells[1].text = 'Thêm mới'
                                 row_cells[2].text = "(Không có)"
-                                row_cells[3].text = display_text_for_table(edit['new'])
+                                row_cells[3].text = edit['new']
                             elif edit['tag'] == 'replace':
                                 row_cells[1].text = 'Thay thế'
-                                row_cells[2].text = display_text_for_table(edit['old'])
-                                row_cells[3].text = display_text_for_table(edit['new'])
+                                row_cells[2].text = edit['old']
+                                row_cells[3].text = edit['new']
 
-                    add_custom_heading(doc_report, 'II. Nhận định rủi ro tổng quan (AI)', 1, 12)
+                    doc_report.add_heading('II. Nhận định rủi ro tổng quan (AI)', level=1)
                     doc_report.add_paragraph(ai_text)
 
-                    add_custom_heading(doc_report, 'III. Chi tiết văn bản (Kính lúp bôi màu)', 1, 12)
+                    doc_report.add_heading('III. Chi tiết văn bản (Kính lúp bôi màu)', level=1)
                     legend = doc_report.add_paragraph()
                     run_del = legend.add_run("Chữ màu đỏ có gạch ngang: Bị đối tác xóa bỏ\n")
                     run_del.font.color.rgb = RGBColor(255, 0, 0)
@@ -708,28 +691,28 @@ def app_document_compare():
                     
                     for tag, i1, i2, j1, j2 in matcher.get_opcodes():
                         if tag == 'equal':
-                            p_diff.add_run("".join(words_v1_flat[i1:i2]))
+                            p_diff.add_run(" " + " ".join(words_v1_flat[i1:i2]))
                         elif tag == 'delete':
-                            run = p_diff.add_run("".join(words_v1_flat[i1:i2]))
+                            run = p_diff.add_run(" " + " ".join(words_v1_flat[i1:i2]))
                             run.font.color.rgb = RGBColor(255, 0, 0)
                             run.font.strike = True
                         elif tag == 'insert':
-                            run = p_diff.add_run("".join(words_v2_flat[j1:j2]))
+                            run = p_diff.add_run(" " + " ".join(words_v2_flat[j1:j2]))
                             run.font.color.rgb = RGBColor(0, 0, 255)
                             run.font.underline = True
                         elif tag == 'replace':
-                            run_old = p_diff.add_run("".join(words_v1_flat[i1:i2]))
+                            run_old = p_diff.add_run(" " + " ".join(words_v1_flat[i1:i2]))
                             run_old.font.color.rgb = RGBColor(255, 0, 0)
                             run_old.font.strike = True
                             
-                            run_new = p_diff.add_run("".join(words_v2_flat[j1:j2]))
+                            run_new = p_diff.add_run(" " + " ".join(words_v2_flat[j1:j2]))
                             run_new.font.color.rgb = RGBColor(0, 0, 255)
                             run_new.font.underline = True
 
                     output_report_path = "Bao_Cao_So_Sanh.docx"
                     doc_report.save(output_report_path)
 
-                    st.success("🎉 So sánh hoàn tất! Đã bắt được toàn bộ lỗi khoảng trắng, dấu câu và định dạng chuẩn Font.")
+                    st.success("🎉 So sánh hoàn tất! Báo cáo đã được định dạng chuẩn hành chính.")
 
                     with open(output_report_path, "rb") as file_download:
                         st.download_button(
@@ -749,7 +732,7 @@ st.sidebar.title("📌 Menu Công Cụ")
 
 app_mode = st.sidebar.radio(
     "Vui lòng chọn ứng dụng:",
-    ["📄 1. PDF sang Word", "🖨️ 2. Chuyển PDF về khổ A4", "📊 3. PDF/Ảnh sang Excel", "🔍 4. So sánh Văn bản / Hợp đồng"]
+    ["📄 1. PDF sang Word", "🖨️ 2. Chuyển PDF về khổ A4", "📊 3. PDF/Ảnh sang Excel", "🔍 4. Kính lúp So sánh"]
 )
 
 st.sidebar.markdown("---") 
@@ -771,5 +754,5 @@ elif app_mode == "🖨️ 2. Chuyển PDF về khổ A4":
     app_number_2()
 elif app_mode == "📊 3. PDF/Ảnh sang Excel":
     app_number_3()
-elif app_mode == "🔍 4. So sánh Văn bản / Hợp đồng":
+elif app_mode == "🔍 4. Kính lúp So sánh":
     app_document_compare()
