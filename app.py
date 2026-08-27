@@ -216,9 +216,12 @@ def app_pdf_to_word():
                             is_next_table_header = True
                             continue
 
+                        # --------------------------------------------------
+                        # BỘ LỌC THÉP: DỌN SẠCH CÁC KÝ TỰ LẠ (:-: VÀ ---)
+                        # --------------------------------------------------
                         if line_stripped.startswith('|') and line_stripped.endswith('|'):
-                            check_line = line_stripped.replace(' ', '').replace(':', '')
-                            if check_line.startswith('|---'): 
+                            # Nếu dòng chỉ chứa ký tự phân cách bảng của Markdown (|, -, :, khoảng trắng) thì vứt bỏ
+                            if re.match(r'^[\s\|\-:]+$', line_stripped):
                                 continue
                             
                             cells_data = [cell.strip() for cell in line_stripped.split('|')][1:-1]
@@ -257,7 +260,7 @@ def app_pdf_to_word():
                     output_docx_path = "ket_qua.docx"
                     doc.save(output_docx_path)
 
-                    st.success("🎉 Chuyển đổi thành công! Khổ giấy (Ngang/Dọc) đã được đo đạc và ép chuẩn 100%.")
+                    st.success("🎉 Chuyển đổi thành công! Bảng biểu đã được dọn sạch hoàn toàn các ký tự lạ.")
 
                     with open(output_docx_path, "rb") as file_download:
                         st.download_button(
@@ -421,7 +424,6 @@ def app_number_3():
                         contents=[types.Part.from_bytes(data=file_bytes, mime_type=mime_type), prompt]
                     )
                     
-                    # Xác định chiều trang giấy tự động bằng Toán học cho Excel
                     is_landscape = False
                     try:
                         if uploaded_excel_file.name.lower().endswith('.pdf'):
@@ -451,15 +453,12 @@ def app_number_3():
                     ws = wb.active
                     ws.title = "Danh_Sach"
 
-                    # --------------------------------------------------
-                    # BỔ SUNG: ÉP EXCEL NHẬN DIỆN KHỔ GIẤY VÀ HƯỚNG IN
-                    # --------------------------------------------------
                     ws.page_setup.paperSize = ws.PAPERSIZE_A4
                     if is_landscape:
                         ws.page_setup.orientation = ws.ORIENTATION_LANDSCAPE
                     else:
                         ws.page_setup.orientation = ws.ORIENTATION_PORTRAIT
-                    ws.print_options.horizontalCentered = True # Căn giữa trang giấy khi in
+                    ws.print_options.horizontalCentered = True 
                     
                     font_title = Font(name="Times New Roman", size=14, bold=True)
                     font_bold = Font(name="Times New Roman", size=12, bold=True)
