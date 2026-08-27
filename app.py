@@ -561,7 +561,7 @@ def extract_text_from_file(uploaded_file, client):
         prompt = "Hãy trích xuất TOÀN BỘ nội dung văn bản trong tài liệu này một cách chính xác nhất. Trả về văn bản thuần túy (plain text), giữ nguyên các xuống dòng và không giải thích gì thêm."
         
         response = client.models.generate_content(
-            model='gemini-1.5-flash',
+            model='gemini-3.6-flash', # Đổi dòng này
             contents=[types.Part.from_bytes(data=file_bytes, mime_type=mime_type), prompt]
         )
         text = response.text
@@ -609,7 +609,7 @@ def app_document_compare():
                     Hãy tìm ra những điểm thay đổi lớn về mặt ngữ nghĩa (tiền bạc, thời gian, nghĩa vụ, quyền lợi) giữa 2 bản và lập 1 bảng tóm tắt đánh giá rủi ro. Trả lời ngắn gọn bằng tiếng Việt.
                     """
                     summary_response = client.models.generate_content(
-                        model='gemini-1.5-flash',
+                        model='gemini-3.6-flash', # Đổi dòng này
                         contents=[summary_prompt]
                     )
 
