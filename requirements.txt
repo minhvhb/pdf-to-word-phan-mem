@@ -5,3 +5,5 @@ pillow
 beautifulsoup4
 markdown2
 pypdf
+pandas
+openpyxl
