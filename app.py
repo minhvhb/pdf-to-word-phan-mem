@@ -120,4 +120,217 @@ def app_pdf_to_word():
                         clean_line = re.sub(r'<[^>]+>', '', line)
                         line_stripped = clean_line.strip()
 
-                        if not line_stripped or line_stripped == '```markdown' or line_stripped == '
+                        # --- ĐÃ SỬA LỖI CÚ PHÁP TẠI DÒNG NÀY ---
+                        if not line_stripped or line_stripped.startswith("```"):
+                            continue
+
+                        if line_stripped.startswith('|') and line_stripped.endswith('|'):
+                            check_line = line_stripped.replace(' ', '').replace(':', '')
+                            if check_line.startswith('|---'): 
+                                continue
+                            
+                            cells_data = [cell.strip() for cell in line_stripped.split('|')][1:-1]
+                            table_buffer.append(cells_data)
+                        else:
+                            if table_buffer:
+                                if all(cell == '' for cell in table_buffer[0]):
+                                    table_buffer.pop(0)
+                                    
+                                if table_buffer:
+                                    num_cols = max(len(row) for row in table_buffer)
+                                    current_table = doc.add_table(rows=len(table_buffer), cols=num_cols)
+                                    current_table.style = 'Table Grid'
+                                    
+                                    for row_idx, row_data in enumerate(table_buffer):
+                                        row_cells = current_table.rows[row_idx].cells
+                                        for col_idx, cell_data in enumerate(row_data):
+                                            if col_idx < len(row_cells):
+                                                cell = row_cells[col_idx]
+                                                cell.text = "" 
+                                                p = cell.paragraphs[0]
+                                                p.alignment = WD_ALIGN_PARAGRAPH.CENTER if row_idx == 0 else WD_ALIGN_PARAGRAPH.LEFT
+                                                
+                                                parts = re.split(r'\*\*(.*?)\*\*', cell_data)
+                                                for i, part in enumerate(parts):
+                                                    if part:
+                                                        run = p.add_run(part)
+                                                        if i % 2 == 1:
+                                                            run.bold = True
+                                
+                                table_buffer = []
+                            
+                            if line_stripped.startswith('---'):
+                                continue
+                                
+                            align = WD_ALIGN_PARAGRAPH.LEFT 
+                            
+                            if line_stripped.startswith('[CENTER]'):
+                                align = WD_ALIGN_PARAGRAPH.CENTER
+                                line_stripped = line_stripped.replace('[CENTER]', '').strip()
+                            elif line_stripped.startswith('[RIGHT]'):
+                                align = WD_ALIGN_PARAGRAPH.RIGHT
+                                line_stripped = line_stripped.replace('[RIGHT]', '').strip()
+                            
+                            if line_stripped:
+                                p = doc.add_paragraph()
+                                p.alignment = align
+                                
+                                parts = re.split(r'\*\*(.*?)\*\*', line_stripped)
+                                for i, part in enumerate(parts):
+                                    if part:
+                                        run = p.add_run(part)
+                                        if i % 2 == 1:
+                                            run.bold = True
+
+                    if table_buffer:
+                        if all(cell == '' for cell in table_buffer[0]):
+                            table_buffer.pop(0)
+                        if table_buffer:
+                            num_cols = max(len(row) for row in table_buffer)
+                            current_table = doc.add_table(rows=len(table_buffer), cols=num_cols)
+                            current_table.style = 'Table Grid'
+                            for row_idx, row_data in enumerate(table_buffer):
+                                row_cells = current_table.rows[row_idx].cells
+                                for col_idx, cell_data in enumerate(row_data):
+                                    if col_idx < len(row_cells):
+                                        cell = row_cells[col_idx]
+                                        cell.text = "" 
+                                        p = cell.paragraphs[0]
+                                        p.alignment = WD_ALIGN_PARAGRAPH.CENTER if row_idx == 0 else WD_ALIGN_PARAGRAPH.LEFT
+                                        parts = re.split(r'\*\*(.*?)\*\*', cell_data)
+                                        for i, part in enumerate(parts):
+                                            if part:
+                                                run = p.add_run(part)
+                                                if i % 2 == 1:
+                                                    run.bold = True
+
+                    output_docx_path = "ket_qua.docx"
+                    doc.save(output_docx_path)
+
+                    st.success("🎉 Chuyển đổi và định dạng chuẩn thành công!")
+
+                    with open(output_docx_path, "rb") as file_download:
+                        st.download_button(
+                            label="📥 Tải xuống file Word (.docx)",
+                            data=file_download,
+                            file_name=f"Converted_{uploaded_file.name.split('.')[0]}.docx",
+                            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                            on_click=clear_file
+                        )
+                except Exception as e:
+                    st.error(f"Đã xảy ra lỗi: {e}")
+
+# ==========================================
+# 3. KHU VỰC APP 2: CHUYỂN ĐỔI KHỔ GIẤY A4
+# ==========================================
+def app_number_2():
+    st.title("🖨️ Chuẩn hóa kích thước bản vẽ sang A4")
+    st.markdown("Xóa bỏ mọi khung ẩn của bản vẽ cũ, ép lại chính xác thành khổ A4 tiêu chuẩn (11.7 x 8.3 Inches).")
+
+    uploaded_pdf = st.file_uploader("Tải lên bản vẽ PDF cần xử lý:", type=["pdf"], key=f"app2_{st.session_state.uploader_key}")
+
+    if uploaded_pdf is not None:
+        st.success(f"Đã tải lên file: **{uploaded_pdf.name}**")
+        
+        if st.button("📏 Đúc lại thành A4", type="primary"):
+            with st.spinner("Đang truy quét và ghi đè các khung viền ẩn..."):
+                try:
+                    from pypdf import PdfReader, PdfWriter, Transformation
+                    
+                    reader = PdfReader(uploaded_pdf)
+                    writer = PdfWriter()
+
+                    # Kích thước A4 tuyệt đối tính bằng point (chuẩn ISO)
+                    A4_W = 595.276
+                    A4_H = 841.890
+
+                    for page in reader.pages:
+                        orig_w = float(page.mediabox.width)
+                        orig_h = float(page.mediabox.height)
+
+                        # Tự động nhận diện bản vẽ dọc/ngang
+                        is_landscape = orig_w > orig_h
+                        target_w = A4_H if is_landscape else A4_W
+                        target_h = A4_W if is_landscape else A4_H
+
+                        # Tính tỷ lệ thu/phóng sao cho vừa khít
+                        scale_w = target_w / orig_w
+                        scale_h = target_h / orig_h
+                        scale_factor = min(scale_w, scale_h)
+
+                        # Tính tọa độ để canh vào giữa trang
+                        scaled_w = orig_w * scale_factor
+                        scaled_h = orig_h * scale_factor
+                        tx = (target_w - scaled_w) / 2.0
+                        ty = (target_h - scaled_h) / 2.0
+
+                        # 1. Áp dụng thu phóng và dời tâm
+                        op = Transformation().scale(sx=scale_factor, sy=scale_factor).translate(tx=tx, ty=ty)
+                        page.add_transformation(op)
+
+                        # 2. BÀN TAY SẮT: Xóa bỏ và ghi đè lại tọa độ TOÀN BỘ 5 loại hộp giới hạn
+                        # Định dạng đúng chuẩn: (0, 0, width, height)
+                        page.mediabox.lower_left = (0, 0)
+                        page.mediabox.upper_right = (target_w, target_h)
+                        
+                        page.cropbox.lower_left = (0, 0)
+                        page.cropbox.upper_right = (target_w, target_h)
+                        
+                        if "/BleedBox" in page:
+                            page.bleedbox.lower_left = (0, 0)
+                            page.bleedbox.upper_right = (target_w, target_h)
+                        if "/TrimBox" in page:
+                            page.trimbox.lower_left = (0, 0)
+                            page.trimbox.upper_right = (target_w, target_h)
+                        if "/ArtBox" in page:
+                            page.artbox.lower_left = (0, 0)
+                            page.artbox.upper_right = (target_w, target_h)
+
+                        writer.add_page(page)
+
+                    output_path = f"A4_Chuan_{uploaded_pdf.name}"
+                    with open(output_path, "wb") as f:
+                        writer.write(f)
+
+                    st.success("🎉 Xử lý thành công! Toàn bộ khung hình đã bị ép thành A4.")
+
+                    with open(output_path, "rb") as f:
+                        st.download_button(
+                            label="📥 Tải xuống bản vẽ A4 chuẩn (.pdf)",
+                            data=f,
+                            file_name=output_path,
+                            mime="application/pdf",
+                            on_click=clear_file
+                        )
+                except ImportError:
+                    st.error("⚠️ Hệ thống thiếu thư viện. Vui lòng thêm `pypdf` vào file requirements.txt")
+                except Exception as e:
+                    st.error(f"Đã xảy ra lỗi: {e}")
+
+# ==========================================
+# 4. THANH MENU BÊN TRÁI ĐIỀU HƯỚNG CÁC APP
+# ==========================================
+st.sidebar.title("📌 Menu Công Cụ")
+
+app_mode = st.sidebar.radio(
+    "Vui lòng chọn ứng dụng:",
+    ["📄 1. PDF sang Word", "🖨️ 2. Ép PDF về khổ A4"]
+)
+
+st.sidebar.markdown("---") 
+
+st.sidebar.error("""
+:red[**⚠️ NGUYÊN TẮC SỬ DỤNG:**]
+
+:red[- **Bảo mật:** KHÔNG tải lên tài liệu MẬT, TỐI MẬT, dữ liệu tài chính chưa công khai và thông tin nhạy cảm của khách hàng.]
+
+:red[- **Tối ưu:** Chỉ tải file PDF **dưới 30 trang/lần**.]
+""")
+
+# ==========================================
+# 5. KÍCH HOẠT ỨNG DỤNG DỰA TRÊN LỰA CHỌN
+# ==========================================
+if app_mode == "📄 1. PDF sang Word":
+    app_pdf_to_word()
+elif app_mode == "🖨️ 2. Ép PDF về khổ A4":
+    app_number_2()
