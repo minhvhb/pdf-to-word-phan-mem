@@ -224,43 +224,60 @@ def app_pdf_to_word():
 # ==========================================
 def app_number_2():
     st.title("🖨️ Chuẩn hóa kích thước bản vẽ sang A4")
-    st.markdown("Tự động ép khuôn mọi loại file PDF (Letter, A3, Custom...) về đúng kích thước A4 tiêu chuẩn. Giúp máy in không bị lỗi mất góc, đứt viền.")
+    st.markdown("Đúc lại lõi PDF thành A4 tiêu chuẩn. Chống cắt viền, chống lệch khung máy in.")
 
     uploaded_pdf = st.file_uploader("Tải lên bản vẽ PDF cần xử lý:", type=["pdf"], key=f"app2_{st.session_state.uploader_key}")
 
     if uploaded_pdf is not None:
-        # ĐÃ SỬA LỖI NAME ERROR Ở DÒNG DƯỚI ĐÂY
         st.success(f"Đã tải lên file: **{uploaded_pdf.name}**")
         
-        if st.button("📏 Bắt đầu Ép khổ A4", type="primary"):
-            with st.spinner("Đang tính toán tỷ lệ và đóng khung A4..."):
+        if st.button("📏 Đúc lại thành A4", type="primary"):
+            with st.spinner("Đang đúc lại phôi A4 trắng và dán bản vẽ..."):
                 try:
-                    from pypdf import PdfReader, PdfWriter
+                    from pypdf import PdfReader, PdfWriter, Transformation, PageObject
                     
                     reader = PdfReader(uploaded_pdf)
                     writer = PdfWriter()
 
-                    # Tọa độ kích thước A4 chuẩn xác (Tính bằng đơn vị Point)
-                    A4_WIDTH = 595.28
-                    A4_HEIGHT = 841.89
+                    # Kích thước A4 tuyệt đối (Points)
+                    A4_W = 595.28
+                    A4_H = 841.89
 
                     for page in reader.pages:
                         orig_w = float(page.mediabox.width)
                         orig_h = float(page.mediabox.height)
 
-                        # Tự động nhận diện bản ngang hay dọc để xoay A4 tương ứng
-                        if orig_w > orig_h: # Bản vẽ ngang
-                            page.scale_to(width=A4_HEIGHT, height=A4_WIDTH)
-                        else: # Bản vẽ dọc
-                            page.scale_to(width=A4_WIDTH, height=A4_HEIGHT)
+                        # Tự động nhận diện bản vẽ dọc/ngang
+                        is_landscape = orig_w > orig_h
+                        target_w = A4_H if is_landscape else A4_W
+                        target_h = A4_W if is_landscape else A4_H
 
-                        writer.add_page(page)
+                        # Tính tỷ lệ thu/phóng sao cho vừa khít mà không bị méo (Aspect Ratio)
+                        scale_w = target_w / orig_w
+                        scale_h = target_h / orig_h
+                        scale_factor = min(scale_w, scale_h)
+
+                        # BƯỚC ĐỘT PHÁ: Tạo một tờ giấy trắng tinh đúc bằng khuôn A4
+                        new_page = PageObject.create_blank_page(width=target_w, height=target_h)
+
+                        # Dán bản vẽ cũ lên tâm của tờ giấy trắng
+                        scaled_w = orig_w * scale_factor
+                        scaled_h = orig_h * scale_factor
+                        tx = (target_w - scaled_w) / 2
+                        ty = (target_h - scaled_h) / 2
+
+                        op = Transformation().scale(sx=scale_factor, sy=scale_factor).translate(tx=tx, ty=ty)
+                        page.add_transformation(op)
+                        
+                        # Gộp lại thành phẩm
+                        new_page.merge_page(page)
+                        writer.add_page(new_page)
 
                     output_path = f"A4_Chuan_{uploaded_pdf.name}"
                     with open(output_path, "wb") as f:
                         writer.write(f)
 
-                    st.success("🎉 Xử lý thành công! Bản vẽ đã được ép chuẩn kích thước A4.")
+                    st.success("🎉 Xử lý thành công! Bản vẽ đã được ép chuẩn kích thước A4 tuyệt đối.")
 
                     with open(output_path, "rb") as f:
                         st.download_button(
@@ -271,7 +288,7 @@ def app_number_2():
                             on_click=clear_file
                         )
                 except ImportError:
-                    st.error("⚠️ Hệ thống thiếu công cụ cắt giấy. Vui lòng tạo file `requirements.txt` trên thư mục GitHub và điền vào chữ `pypdf` như hướng dẫn.")
+                    st.error("⚠️ Hệ thống thiếu thư viện. Vui lòng thêm `pypdf` vào file requirements.txt")
                 except Exception as e:
                     st.error(f"Đã xảy ra lỗi: {e}")
 
