@@ -277,4 +277,149 @@ def app_number_2():
                             page.trimbox.upper_right = (target_w, target_h)
                         if "/ArtBox" in page:
                             page.artbox.lower_left = (0, 0)
-                            page.artbox.upper_right = (
+                            page.artbox.upper_right = (target_w, target_h)
+
+                        writer.add_page(page)
+
+                    output_path = f"A4_Chuan_{uploaded_pdf.name}"
+                    with open(output_path, "wb") as f:
+                        writer.write(f)
+
+                    st.success("🎉 Xử lý thành công! Toàn bộ khung hình đã được chuyển thành A4.")
+
+                    with open(output_path, "rb") as f:
+                        st.download_button(
+                            label="📥 Tải xuống bản vẽ A4 chuẩn (.pdf)",
+                            data=f,
+                            file_name=output_path,
+                            mime="application/pdf",
+                            on_click=clear_file
+                        )
+                except Exception as e:
+                    st.error(f"Đã xảy ra lỗi: {e}")
+
+# ==========================================
+# 4. KHU VỰC APP 3: BÓC TÁCH ĐẦY ĐỦ VÀ SẠCH SẼ SANG EXCEL
+# ==========================================
+def app_number_3():
+    try:
+        api_key_input = st.secrets["GEMINI_API_KEY"]
+    except KeyError:
+        st.error("⚠️ Hệ thống chưa được cấu hình API Key. Vui lòng liên hệ Quản trị viên!")
+        st.stop()
+
+    st.title("📊 Bóc tách PDF/Ảnh sang Excel")
+    st.markdown("Trích xuất thông tin hành chính và bảng danh sách chi tiết từ tài liệu thành file **Excel (.xlsx)** sạch sẽ, đúng form chuẩn.")
+
+    uploaded_excel_file = st.file_uploader("Tải lên tài liệu (Ảnh hoặc PDF):", type=["jpg", "jpeg", "png", "pdf"], key=f"app3_{st.session_state.uploader_key}")
+
+    if uploaded_excel_file is not None:
+        st.success(f"Đã tải lên file: **{uploaded_excel_file.name}**")
+        
+        if st.button("🚀 Trích xuất ra Excel", type="primary"):
+            with st.spinner("🤖 AI đang phân tích tiêu đề và bóc tách bảng biểu, vui lòng đợi..."):
+                try:
+                    temp_input_path = f"temp_excel_{uploaded_excel_file.name}"
+                    with open(temp_input_path, "wb") as f:
+                        f.write(uploaded_excel_file.getbuffer())
+
+                    client = genai.Client(api_key=api_key_input)
+                    with open(temp_input_path, "rb") as f:
+                        file_bytes = f.read()
+                    mime_type = "application/pdf" if uploaded_excel_file.name.endswith(".pdf") else "image/jpeg"
+                    
+                    # PROMPT ĐÃ ĐƯỢC TỐI ƯU ĐỂ TÁCH BIỆT TIÊU ĐỀ VÀ BẢNG DỮ LIỆU
+                    prompt = """
+                    Bạn là một chuyên gia số hóa dữ liệu. Hãy đọc kỹ tài liệu và trả về kết quả cấu trúc gồm 2 phần rõ rệt:
+                    
+                    PHẦN 1 - THÔNG TIN TIÊU ĐỀ:
+                    Liệt kê các dòng thông tin chung ở đầu trang (Tên danh sách, Thời gian, Nội dung cuộc họp, Chủ trì, Thành phần) dưới dạng văn bản thuần túy, tuyệt đối KHÔNG dùng ký hiệu markdown in đậm (**) hay dấu gạch ngang rườm rà.
+                    
+                    PHẦN 2 - BẢNG DỮ LIỆU CHI TIẾT:
+                    Trình bày bảng danh sách dưới dạng bảng Markdown chuẩn (có dấu | ở đầu và cuối mỗi dòng), bao gồm đầy đủ các cột: Stt, Họ và Tên, Đơn vị Phòng ban, Chức vụ, Ký tên.
+                    
+                    Lưu ý: Không tự ý bịa thêm dữ liệu, giữ nguyên vẹn nội dung từ bản gốc.
+                    """
+
+                    response = client.models.generate_content(
+                        model='gemini-3.6-flash',
+                        contents=[types.Part.from_bytes(data=file_bytes, mime_type=mime_type), prompt]
+                    )
+                    
+                    response_text = response.text
+                    
+                    # Xử lý phân tách nội dung văn bản phía trên và bảng Markdown phía dưới
+                    excel_rows = []
+                    
+                    for line in response_text.split('\n'):
+                        line_str = line.strip()
+                        if not line_str or line_str.startswith("```"):
+                            continue
+                        
+                        # Nếu là dòng của bảng Markdown
+                        if line_str.startswith('|') and line_str.endswith('|'):
+                            if re.match(r'^\|[\s\-:]+\|$', line_str.replace(' ', '')):
+                                continue # Bỏ qua dòng phân cách |---|
+                            cells = [cell.strip().replace('**', '') for cell in line_str.split('|')][1:-1]
+                            excel_rows.append(cells)
+                        else:
+                            # Dòng tiêu đề thông tin chung, làm sạch dấu ** nếu có
+                            clean_text = line_str.replace('**', '')
+                            if clean_text:
+                                excel_rows.append([clean_text])
+
+                    if len(excel_rows) > 0:
+                        max_cols = max(len(row) for row in excel_rows)
+                        normalized_rows = [row + [''] * (max_cols - len(row)) for row in excel_rows]
+
+                        df = pd.DataFrame(normalized_rows)
+                        
+                        output = BytesIO()
+                        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                            df.to_excel(writer, index=False, header=False, sheet_name='Danh_Sach')
+                        processed_data = output.getvalue()
+
+                        st.success("🎉 Bóc tách dữ liệu thành công và sạch sẽ!")
+
+                        st.download_button(
+                            label="📥 Tải xuống file Excel (.xlsx)",
+                            data=processed_data,
+                            file_name=f"Excel_{uploaded_excel_file.name.split('.')[0]}.xlsx",
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                            on_click=clear_file
+                        )
+                    else:
+                        st.warning("⚠️ Không tìm thấy dữ liệu hợp lệ trong tài liệu này.")
+
+                except Exception as e:
+                    st.error(f"Đã xảy ra lỗi: {e}")
+
+# ==========================================
+# 5. THANH MENU BÊN TRÁI ĐIỀU HƯỚNG CÁC APP
+# ==========================================
+st.sidebar.title("📌 Menu Công Cụ")
+
+app_mode = st.sidebar.radio(
+    "Vui lòng chọn ứng dụng:",
+    ["📄 1. PDF sang Word", "🖨️ 2. Chuyển PDF về khổ A4", "📊 3. PDF/Ảnh sang Excel"]
+)
+
+st.sidebar.markdown("---") 
+
+st.sidebar.error("""
+:red[**⚠️ NGUYÊN TẮC SỬ DỤNG:**]
+
+:red[- **Bảo mật:** KHÔNG tải lên tài liệu MẬT, TỐI MẬT, dữ liệu tài chính chưa công khai và thông tin nhạy cảm của khách hàng.]
+
+:red[- **Tối ưu:** Chỉ tải file PDF **dưới 30 trang/lần**.]
+""")
+
+# ==========================================
+# 6. KÍCH HOẠT ỨNG DỤNG DỰA TRÊN LỰA CHỌN
+# ==========================================
+if app_mode == "📄 1. PDF sang Word":
+    app_pdf_to_word()
+elif app_mode == "🖨️ 2. Chuyển PDF về khổ A4":
+    app_number_2()
+elif app_mode == "📊 3. PDF/Ảnh sang Excel":
+    app_number_3()
