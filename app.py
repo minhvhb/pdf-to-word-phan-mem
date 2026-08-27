@@ -538,10 +538,9 @@ def app_number_3():
                     st.error(f"Đã xảy ra lỗi hệ thống: {e}")
 
 # ==========================================
-# 5. KHU VỰC APP 4: KÍNH LÚP SO SÁNH HỢP ĐỒNG (BẢN CHUẨN)
+# 5. KHU VỰC APP 4: SO SÁNH VĂN BẢN / HỢP ĐỒNG
 # ==========================================
 def extract_text_from_file(uploaded_file, client):
-    """Hàm trích xuất text từ Word hoặc PDF bằng AI/Thuật toán"""
     text = ""
     file_ext = uploaded_file.name.split('.')[-1].lower()
     
@@ -570,7 +569,7 @@ def app_document_compare():
         st.error("⚠️ Hệ thống chưa được cấu hình API Key. Vui lòng liên hệ Quản trị viên!")
         st.stop()
 
-    st.title("🔍 Kính lúp So sánh Hợp đồng")
+    st.title("🔍 So sánh Văn bản / Hợp đồng")
     st.markdown("Đối soát độ lệch chữ giữa 2 phiên bản tài liệu. Hỗ trợ đối chiếu chéo **Word vs Word**, **PDF scan vs Word**.")
 
     col1, col2 = st.columns(2)
@@ -631,14 +630,24 @@ def app_document_compare():
 
                     doc_report = Document()
                     
+                    # Chỉnh font chữ cơ bản
                     style = doc_report.styles['Normal']
-                    font = style.font
-                    font.name = 'Times New Roman'
-                    font.size = Pt(13)
+                    style.font.name = 'Times New Roman'
+                    style.font.size = Pt(13)
 
-                    doc_report.add_heading('BÁO CÁO ĐỐI CHIẾU TÀI LIỆU (V1 vs V2)', 0)
+                    # TẠO TIÊU ĐỀ CHÍNH (ÉP CHUẨN FONT 14, TIMES NEW ROMAN, CANH GIỮA)
+                    p_title = doc_report.add_heading(level=0)
+                    p_title.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                    r_title = p_title.add_run('BÁO CÁO ĐỐI CHIẾU TÀI LIỆU (V1 vs V2)')
+                    r_title.font.name = 'Times New Roman'
+                    r_title.font.size = Pt(14)
                     
-                    doc_report.add_heading('I. Bảng Tổng kết chi tiết các lần chỉnh sửa', level=1)
+                    # MỤC I (ÉP CHUẨN FONT 12, TIMES NEW ROMAN)
+                    p_h1 = doc_report.add_heading(level=1)
+                    r_h1 = p_h1.add_run('I. Bảng Tổng kết chi tiết các lần chỉnh sửa')
+                    r_h1.font.name = 'Times New Roman'
+                    r_h1.font.size = Pt(12)
+
                     p_total = doc_report.add_paragraph()
                     run_total = p_total.add_run(f"Hệ thống ghi nhận tổng cộng {total_edits} lần chỉnh sửa từ đối tác.")
                     run_total.bold = True
@@ -653,9 +662,11 @@ def app_document_compare():
                         hdr_cells[2].text = 'Bản gốc (V1)'
                         hdr_cells[3].text = 'Đối tác sửa (V2)'
                         
+                        # Chỉnh font cho thanh tiêu đề bảng
                         for cell in hdr_cells:
                             for p in cell.paragraphs:
                                 for r in p.runs:
+                                    r.font.name = 'Times New Roman'
                                     r.bold = True
                         
                         for idx, edit in enumerate(edits, 1):
@@ -675,10 +686,20 @@ def app_document_compare():
                                 row_cells[2].text = edit['old']
                                 row_cells[3].text = edit['new']
 
-                    doc_report.add_heading('II. Nhận định rủi ro tổng quan (AI)', level=1)
+                    # MỤC II (ÉP CHUẨN FONT 12, TIMES NEW ROMAN)
+                    p_h2 = doc_report.add_heading(level=1)
+                    r_h2 = p_h2.add_run('II. Nhận định rủi ro tổng quan (AI)')
+                    r_h2.font.name = 'Times New Roman'
+                    r_h2.font.size = Pt(12)
+                    
                     doc_report.add_paragraph(ai_text)
 
-                    doc_report.add_heading('III. Chi tiết văn bản (Kính lúp bôi màu)', level=1)
+                    # MỤC III (ÉP CHUẨN FONT 12, TIMES NEW ROMAN)
+                    p_h3 = doc_report.add_heading(level=1)
+                    r_h3 = p_h3.add_run('III. Chi tiết văn bản (Kính lúp bôi màu)')
+                    r_h3.font.name = 'Times New Roman'
+                    r_h3.font.size = Pt(12)
+                    
                     legend = doc_report.add_paragraph()
                     run_del = legend.add_run("Chữ màu đỏ có gạch ngang: Bị đối tác xóa bỏ\n")
                     run_del.font.color.rgb = RGBColor(255, 0, 0)
@@ -732,7 +753,7 @@ st.sidebar.title("📌 Menu Công Cụ")
 
 app_mode = st.sidebar.radio(
     "Vui lòng chọn ứng dụng:",
-    ["📄 1. PDF sang Word", "🖨️ 2. Chuyển PDF về khổ A4", "📊 3. PDF/Ảnh sang Excel", "🔍 4. Kính lúp So sánh"]
+    ["📄 1. PDF sang Word", "🖨️ 2. Chuyển PDF về khổ A4", "📊 3. PDF/Ảnh sang Excel", "🔍 4. So sánh Văn bản / Hợp đồng"]
 )
 
 st.sidebar.markdown("---") 
@@ -754,5 +775,5 @@ elif app_mode == "🖨️ 2. Chuyển PDF về khổ A4":
     app_number_2()
 elif app_mode == "📊 3. PDF/Ảnh sang Excel":
     app_number_3()
-elif app_mode == "🔍 4. Kính lúp So sánh":
+elif app_mode == "🔍 4. So sánh Văn bản / Hợp đồng":
     app_document_compare()
