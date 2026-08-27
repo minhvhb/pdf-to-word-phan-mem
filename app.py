@@ -375,7 +375,7 @@ def app_number_3():
         st.stop()
 
     st.title("📊 Bóc tách PDF/Ảnh sang Excel (Chuẩn A4 & Giữ Định Dạng)")
-    st.markdown("Trích xuất và tự động định dạng giống PDF gốc, ép sẵn khổ in **A4 (Dọc/Ngang tự động)**.")
+    st.markdown("Trích xuất và tự động định dạng giống PDF gốc, ép sẵn khổ in **A4 (Ngang/Dọc tự động)**.")
 
     uploaded_excel_file = st.file_uploader("Tải lên tài liệu (Ảnh hoặc PDF):", type=["jpg", "jpeg", "png", "pdf"], key=f"app3_{st.session_state.uploader_key}")
 
@@ -383,7 +383,7 @@ def app_number_3():
         st.success(f"Đã tải lên file: **{uploaded_excel_file.name}**")
         
         if st.button("🚀 Trích xuất ra Excel", type="primary"):
-            with st.spinner("🤖 AI đang đọc cấu trúc và vẽ lại bảng Excel, vui lòng đợi..."):
+            with st.spinner("🤖 AI đang đọc cấu trúc và vẽ lại bảng Excel (A4), vui lòng đợi..."):
                 try:
                     temp_input_path = f"temp_excel_{uploaded_excel_file.name}"
                     with open(temp_input_path, "wb") as f:
@@ -421,9 +421,7 @@ def app_number_3():
                         contents=[types.Part.from_bytes(data=file_bytes, mime_type=mime_type), prompt]
                     )
                     
-                    # --------------------------------------------------
-                    # BỔ SUNG: XÁC ĐỊNH CHIỀU TRANG GIẤY BẰNG TOÁN HỌC (CHUẨN 100%)
-                    # --------------------------------------------------
+                    # Xác định chiều trang giấy tự động bằng Toán học cho Excel
                     is_landscape = False
                     try:
                         if uploaded_excel_file.name.lower().endswith('.pdf'):
@@ -442,3 +440,135 @@ def app_number_3():
                     if raw_text.startswith("```json"):
                         raw_text = raw_text[7:]
                     if raw_text.startswith("```"):
+                        raw_text = raw_text[3:]
+                    if raw_text.endswith("```"):
+                        raw_text = raw_text[:-3]
+                    raw_text = raw_text.strip()
+                    
+                    data = json.loads(raw_text)
+
+                    wb = openpyxl.Workbook()
+                    ws = wb.active
+                    ws.title = "Danh_Sach"
+
+                    # --------------------------------------------------
+                    # BỔ SUNG: ÉP EXCEL NHẬN DIỆN KHỔ GIẤY VÀ HƯỚNG IN
+                    # --------------------------------------------------
+                    ws.page_setup.paperSize = ws.PAPERSIZE_A4
+                    if is_landscape:
+                        ws.page_setup.orientation = ws.ORIENTATION_LANDSCAPE
+                    else:
+                        ws.page_setup.orientation = ws.ORIENTATION_PORTRAIT
+                    ws.print_options.horizontalCentered = True # Căn giữa trang giấy khi in
+                    
+                    font_title = Font(name="Times New Roman", size=14, bold=True)
+                    font_bold = Font(name="Times New Roman", size=12, bold=True)
+                    font_normal = Font(name="Times New Roman", size=12)
+                    align_center = Alignment(horizontal="center", vertical="center")
+                    align_left = Alignment(horizontal="left", vertical="center")
+                    thin_border = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
+
+                    current_row = 1
+                    total_cols = len(data.get("headers", [1,2,3,4,5]))
+
+                    title = data.get("title", "")
+                    if title:
+                        clean_title = str(title).replace('**', '').upper()
+                        cell = ws.cell(row=current_row, column=1, value=clean_title)
+                        cell.font = font_title
+                        cell.alignment = align_center
+                        ws.merge_cells(start_row=current_row, start_column=1, end_row=current_row, end_column=total_cols)
+                        current_row += 1
+
+                    for info in data.get("info_lines", []):
+                        cell = ws.cell(row=current_row, column=1)
+                        rich_val = parse_rich_text(info)
+                        
+                        cell.value = rich_val
+                        if isinstance(rich_val, str): 
+                            cell.font = font_normal
+                            
+                        cell.alignment = align_left
+                        ws.merge_cells(start_row=current_row, start_column=1, end_row=current_row, end_column=total_cols)
+                        current_row += 1
+
+                    current_row += 1 
+
+                    headers = data.get("headers", [])
+                    for col_idx, header in enumerate(headers, 1):
+                        clean_header = str(header).replace('**', '')
+                        cell = ws.cell(row=current_row, column=col_idx, value=clean_header)
+                        cell.font = font_bold
+                        cell.alignment = align_center
+                        cell.border = thin_border
+                    current_row += 1
+
+                    for row_data in data.get("rows", []):
+                        for col_idx, val in enumerate(row_data, 1):
+                            cell = ws.cell(row=current_row, column=col_idx)
+                            rich_val = parse_rich_text(val)
+                            
+                            cell.value = rich_val
+                            if isinstance(rich_val, str):
+                                cell.font = font_normal
+                                
+                            cell.border = thin_border
+                            
+                            if col_idx == 1 or col_idx == total_cols:
+                                cell.alignment = align_center
+                            else:
+                                cell.alignment = align_left
+                        current_row += 1
+
+                    ws.column_dimensions['A'].width = 8   
+                    ws.column_dimensions['B'].width = 25  
+                    ws.column_dimensions['C'].width = 30  
+                    ws.column_dimensions['D'].width = 25  
+                    ws.column_dimensions['E'].width = 15  
+
+                    output = BytesIO()
+                    wb.save(output)
+                    processed_data = output.getvalue()
+
+                    st.success("🎉 Đã xuất bảng Excel thành công! Khổ giấy in đã được set tự động xoay ngang/dọc.")
+
+                    st.download_button(
+                        label="📥 Tải xuống Excel Chuẩn Format (.xlsx)",
+                        data=processed_data,
+                        file_name=f"Excel_Chuan_{uploaded_excel_file.name.split('.')[0]}.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        on_click=clear_file
+                    )
+
+                except Exception as e:
+                    st.error(f"Đã xảy ra lỗi hệ thống: {e}")
+
+# ==========================================
+# 5. THANH MENU BÊN TRÁI ĐIỀU HƯỚNG CÁC APP
+# ==========================================
+st.sidebar.title("📌 Menu Công Cụ")
+
+app_mode = st.sidebar.radio(
+    "Vui lòng chọn ứng dụng:",
+    ["📄 1. PDF sang Word", "🖨️ 2. Chuyển PDF về khổ A4", "📊 3. PDF/Ảnh sang Excel"]
+)
+
+st.sidebar.markdown("---") 
+
+st.sidebar.error("""
+:red[**⚠️ NGUYÊN TẮC SỬ DỤNG:**]
+
+:red[- **Bảo mật:** KHÔNG tải lên tài liệu MẬT, TỐI MẬT, dữ liệu tài chính chưa công khai và thông tin nhạy cảm của khách hàng.]
+
+:red[- **Tối ưu:** Chỉ tải file PDF **dưới 30 trang/lần**.]
+""")
+
+# ==========================================
+# 6. KÍCH HOẠT ỨNG DỤNG DỰA TRÊN LỰA CHỌN
+# ==========================================
+if app_mode == "📄 1. PDF sang Word":
+    app_pdf_to_word()
+elif app_mode == "🖨️ 2. Chuyển PDF về khổ A4":
+    app_number_2()
+elif app_mode == "📊 3. PDF/Ảnh sang Excel":
+    app_number_3()
