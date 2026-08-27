@@ -871,15 +871,14 @@ def app_excel_expert():
         st.error("⚠️ Hệ thống chưa được cấu hình API Key. Vui lòng liên hệ Quản trị viên!")
         st.stop()
 
-    st.title("🤖 Chuyên gia Công thức & VBA Excel")
-    st.markdown("Tải file lên, mô tả bài toán và nhận ngay Công thức hoặc Mã VBA chuẩn xác. Chống lỗi 429 tuyệt đối.")
+    st.title("💻 Chuyên gia Công thức & VBA Excel")
+    st.markdown("Tải file lên, mô tả bài toán và nhận ngay Công thức hoặc Mã VBA chuẩn xác.")
 
     uploaded_file = st.file_uploader("Tải lên bảng dữ liệu (Excel/CSV) làm mẫu:", type=["csv", "xlsx", "xls"], key=f"app6_{st.session_state.uploader_key}")
     
     if uploaded_file:
         st.success(f"Đã nạp thành công: **{uploaded_file.name}**")
         
-        # Chiến thuật Anti-429: Chỉ đọc 3 dòng đầu làm Context
         context_str = ""
         try:
             if uploaded_file.name.endswith('.csv'):
@@ -904,7 +903,6 @@ def app_excel_expert():
             with st.spinner("🤖 AI đang tính toán phương án tối ưu nhất..."):
                 client = genai.Client(api_key=api_key_input)
                 
-                # Áp dụng 3 quy tắc thép từ File PDF
                 prompt = f"""
                 Bạn là Chuyên gia Cố vấn Excel và VBA.
                 
@@ -937,7 +935,6 @@ def app_excel_expert():
                     )
                     
                     st.info("💡 Kết quả từ AI (Nhấp vào biểu tượng ở góc phải khung code để sao chép):")
-                    # Sử dụng st.markdown để render khối code block, Streamlit sẽ tự động đính kèm nút Copy
                     st.markdown(response.text)
                     
                 except Exception as e:
@@ -956,7 +953,7 @@ app_mode = st.sidebar.radio(
         "📊 3. PDF/Ảnh sang Excel", 
         "🔍 4. So sánh Văn bản / Hợp đồng",
         "✂️ 5. Cắt & Ghép PDF",
-        "🤖 6. Chuyên gia Công thức & VBA"
+        "💻 6. Chuyên gia Công thức & VBA"
     ]
 )
 
@@ -983,5 +980,5 @@ elif app_mode == "🔍 4. So sánh Văn bản / Hợp đồng":
     app_document_compare()
 elif app_mode == "✂️ 5. Cắt & Ghép PDF":
     app_pdf_split_merge()
-elif app_mode == "🤖 6. Chuyên gia Công thức & VBA":
+elif app_mode == "💻 6. Chuyên gia Công thức & VBA":
     app_excel_expert()
