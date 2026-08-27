@@ -1,6 +1,8 @@
 import streamlit as st
 import os
 import re
+import pandas as pd
+from io import BytesIO
 from google import genai
 from google.genai import types
 from docx import Document
@@ -120,7 +122,6 @@ def app_pdf_to_word():
                         clean_line = re.sub(r'<[^>]+>', '', line)
                         line_stripped = clean_line.strip()
 
-                        # --- ĐÃ SỬA LỖI CÚ PHÁP TẠI DÒNG NÀY ---
                         if not line_stripped or line_stripped.startswith("```"):
                             continue
 
@@ -221,11 +222,11 @@ def app_pdf_to_word():
                     st.error(f"Đã xảy ra lỗi: {e}")
 
 # ==========================================
-# 3. KHU VỰC APP 2: CHUYỂN ĐỔI KHỔ GIẤY A4
+# 3. KHU VỰC APP 2: CHUYỂN PDF VỀ KHỔ A4
 # ==========================================
 def app_number_2():
-    st.title("🖨️ Chuẩn hóa kích thước bản vẽ sang A4")
-    st.markdown("Xóa bỏ mọi khung ẩn của bản vẽ cũ, ép lại chính xác thành khổ A4 tiêu chuẩn (11.7 x 8.3 Inches).")
+    st.title("🖨️ Chuyển PDF về khổ A4")
+    st.markdown("Xóa bỏ mọi khung ẩn của bản vẽ cũ, ép lại chính xác thành khổ A4 tiêu chuẩn.")
 
     uploaded_pdf = st.file_uploader("Tải lên bản vẽ PDF cần xử lý:", type=["pdf"], key=f"app2_{st.session_state.uploader_key}")
 
@@ -240,7 +241,6 @@ def app_number_2():
                     reader = PdfReader(uploaded_pdf)
                     writer = PdfWriter()
 
-                    # Kích thước A4 tuyệt đối tính bằng point (chuẩn ISO)
                     A4_W = 595.276
                     A4_H = 841.890
 
@@ -248,31 +248,24 @@ def app_number_2():
                         orig_w = float(page.mediabox.width)
                         orig_h = float(page.mediabox.height)
 
-                        # Tự động nhận diện bản vẽ dọc/ngang
                         is_landscape = orig_w > orig_h
                         target_w = A4_H if is_landscape else A4_W
                         target_h = A4_W if is_landscape else A4_H
 
-                        # Tính tỷ lệ thu/phóng sao cho vừa khít
                         scale_w = target_w / orig_w
                         scale_h = target_h / orig_h
                         scale_factor = min(scale_w, scale_h)
 
-                        # Tính tọa độ để canh vào giữa trang
                         scaled_w = orig_w * scale_factor
                         scaled_h = orig_h * scale_factor
                         tx = (target_w - scaled_w) / 2.0
                         ty = (target_h - scaled_h) / 2.0
 
-                        # 1. Áp dụng thu phóng và dời tâm
                         op = Transformation().scale(sx=scale_factor, sy=scale_factor).translate(tx=tx, ty=ty)
                         page.add_transformation(op)
 
-                        # 2. BÀN TAY SẮT: Xóa bỏ và ghi đè lại tọa độ TOÀN BỘ 5 loại hộp giới hạn
-                        # Định dạng đúng chuẩn: (0, 0, width, height)
                         page.mediabox.lower_left = (0, 0)
                         page.mediabox.upper_right = (target_w, target_h)
-                        
                         page.cropbox.lower_left = (0, 0)
                         page.cropbox.upper_right = (target_w, target_h)
                         
@@ -292,7 +285,7 @@ def app_number_2():
                     with open(output_path, "wb") as f:
                         writer.write(f)
 
-                    st.success("🎉 Xử lý thành công! Toàn bộ khung hình đã bị ép thành A4.")
+                    st.success("🎉 Xử lý thành công! Toàn bộ khung hình đã được chuyển thành A4.")
 
                     with open(output_path, "rb") as f:
                         st.download_button(
@@ -302,19 +295,99 @@ def app_number_2():
                             mime="application/pdf",
                             on_click=clear_file
                         )
-                except ImportError:
-                    st.error("⚠️ Hệ thống thiếu thư viện. Vui lòng thêm `pypdf` vào file requirements.txt")
                 except Exception as e:
                     st.error(f"Đã xảy ra lỗi: {e}")
 
 # ==========================================
-# 4. THANH MENU BÊN TRÁI ĐIỀU HƯỚNG CÁC APP
+# 4. KHU VỰC APP 3: BÓC TÁCH BẢNG BIỂU SANG EXCEL
+# ==========================================
+def app_number_3():
+    try:
+        api_key_input = st.secrets["GEMINI_API_KEY"]
+    except KeyError:
+        st.error("⚠️ Hệ thống chưa được cấu hình API Key. Vui lòng liên hệ Quản trị viên!")
+        st.stop()
+
+    st.title("📊 Bóc tách PDF/Ảnh sang Excel")
+    st.markdown("Trích xuất tự động các bảng biểu tài chính, sao kê, danh sách từ PDF hoặc Ảnh thành file **Excel (.xlsx)** sạch sẽ.")
+
+    uploaded_excel_file = st.file_uploader("Tải lên tài liệu chứa bảng (Ảnh hoặc PDF):", type=["jpg", "jpeg", "png", "pdf"], key=f"app3_{st.session_state.uploader_key}")
+
+    if uploaded_excel_file is not None:
+        st.success(f"Đã tải lên file: **{uploaded_excel_file.name}**")
+        
+        if st.button("🚀 Trích xuất ra Excel", type="primary"):
+            with st.spinner("🤖 AI đang quét cấu trúc bảng và bóc tách dữ liệu số liệu..."):
+                try:
+                    temp_input_path = f"temp_excel_{uploaded_excel_file.name}"
+                    with open(temp_input_path, "wb") as f:
+                        f.write(uploaded_excel_file.getbuffer())
+
+                    client = genai.Client(api_key=api_key_input)
+                    with open(temp_input_path, "rb") as f:
+                        file_bytes = f.read()
+                    mime_type = "application/pdf" if uploaded_excel_file.name.endswith(".pdf") else "image/jpeg"
+                    
+                    prompt = """
+                    Bạn là một chuyên gia số hóa dữ liệu kế toán và hành chính. 
+                    Nhiệm vụ của bạn là đọc toàn bộ bảng biểu có trong tài liệu này và xuất kết quả DUY NHẤT dưới dạng bảng Markdown chuẩn (có dấu | ở đầu và cuối mỗi dòng).
+                    
+                    YÊU CẦU QUAN TRỌNG:
+                    1. Giữ nguyên vẹn các con số, ký hiệu tiền tệ, ngày tháng, tên riêng. Không tự ý làm tròn hoặc bịa thêm số liệu.
+                    2. Nếu tài liệu có nhiều bảng, hãy bóc tách và phân tách chúng rõ ràng.
+                    3. KHÔNG trả về các đoạn văn bản dài dòng ngoài lề, chỉ tập trung vào cấu trúc bảng dữ liệu Markdown.
+                    """
+
+                    response = client.models.generate_content(
+                        model='gemini-3.6-flash',
+                        contents=[types.Part.from_bytes(data=file_bytes, mime_type=mime_type), prompt]
+                    )
+                    
+                    lines = response.text.split('\n')
+                    table_rows = []
+                    
+                    for line in lines:
+                        line_str = line.strip()
+                        if line_str.startswith('|') and line_str.endswith('|'):
+                            if re.match(r'^\|[\s\-:]+\|$', line_str.replace(' ', '')):
+                                continue
+                            cells = [cell.strip() for cell in line_str.split('|')][1:-1]
+                            table_rows.append(cells)
+
+                    if len(table_rows) > 1:
+                        headers = table_rows[0]
+                        data = table_rows[1:]
+                        
+                        df = pd.DataFrame(data, columns=headers if len(headers) == len(data[0]) else None)
+                        
+                        output = BytesIO()
+                        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                            df.to_excel(writer, index=False, sheet_name='Sheet1')
+                        processed_data = output.getvalue()
+
+                        st.success("🎉 Bóc tách dữ liệu thành công!")
+
+                        st.download_button(
+                            label="📥 Tải xuống file Excel (.xlsx)",
+                            data=processed_data,
+                            file_name=f"Data_{uploaded_excel_file.name.split('.')[0]}.xlsx",
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                            on_click=clear_file
+                        )
+                    else:
+                        st.warning("⚠️ Không tìm thấy bảng dữ liệu rõ ràng trong tài liệu này. Vui lòng thử lại với file có khung bảng sắc nét hơn.")
+
+                except Exception as e:
+                    st.error(f"Đã xảy ra lỗi: {e}")
+
+# ==========================================
+# 5. THANH MENU BÊN TRÁI ĐIỀU HƯỚNG CÁC APP
 # ==========================================
 st.sidebar.title("📌 Menu Công Cụ")
 
 app_mode = st.sidebar.radio(
     "Vui lòng chọn ứng dụng:",
-    ["📄 1. PDF sang Word", "🖨️ 2. Chuyển PDF về khổ A4"]
+    ["📄 1. PDF sang Word", "🖨️ 2. Chuyển PDF về khổ A4", "📊 3. PDF/Ảnh sang Excel"]
 )
 
 st.sidebar.markdown("---") 
@@ -328,9 +401,11 @@ st.sidebar.error("""
 """)
 
 # ==========================================
-# 5. KÍCH HOẠT ỨNG DỤNG DỰA TRÊN LỰA CHỌN
+# 6. KÍCH HOẠT ỨNG DỤNG DỰA TRÊN LỰA CHỌN
 # ==========================================
 if app_mode == "📄 1. PDF sang Word":
     app_pdf_to_word()
 elif app_mode == "🖨️ 2. Chuyển PDF về khổ A4":
     app_number_2()
+elif app_mode == "📊 3. PDF/Ảnh sang Excel":
+    app_number_3()
