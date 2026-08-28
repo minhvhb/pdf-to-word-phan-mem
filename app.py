@@ -413,7 +413,7 @@ def app_number_3():
                     {
                       "title": "Dòng tiêu đề trên cùng",
                       "info_lines": [
-                        "Dòng thông tin 1",
+                        "Dòng thông্বরূপ tin 1",
                         "Dòng thông tin 2"
                       ],
                       "headers": ["Cột 1", "Cột 2", "Cột 3"],
@@ -548,7 +548,7 @@ def app_number_3():
                     st.error(f"Đã xảy ra lỗi hệ thống: {e}")
 
 # ==========================================
-# 5. KHU VỰC APP 4: SO SÁNH VĂN BẢN / HỢP ĐỒNG
+# 5. KHU VỰC APP 4: SO SÁNH VĂN BẢN / HỢP ĐỒNG (TỐI ƯU PYPDF & GEMINI)
 # ==========================================
 def extract_text_from_file(uploaded_file, client):
     text = ""
@@ -968,27 +968,22 @@ def app_excel_expert():
 # 8. KHU VỰC APP 7: TỔNG HỢP SUẤT ĂN CÔNG NGHIỆP
 # ==========================================
 def create_empty_templates():
-    """Hàm tạo file Excel mẫu ngay trên bộ nhớ để tải về"""
     wb = openpyxl.Workbook()
     
-    # Sheet 1: Danh sách Tổng nhân sự
     ws_tong = wb.active
     ws_tong.title = "DS_Tong_Nhan_Su"
     ws_tong.append(["Mã NV (Code)", "Họ và Tên", "Bộ Phận"])
     ws_tong.append(["0319", "Đặng Chí Hiếu", "PNV"])
     ws_tong.append(["0546", "Trần Mỹ Vân", "BPB"])
     
-    # Sheet 2: Danh sách Cắt cơm tháng
     ws_cat = wb.create_sheet(title="DS_Cat_Com_Thang")
     ws_cat.append(["STT", "BP", "Code", "Họ và Tên", "Ghi chú"])
     ws_cat.append(["1", "PNV", "0319", "Đặng Chí Hiếu", "Mang cơm nhà"])
     
-    # Sheet 3: Danh sách Báo vắng hôm nay
     ws_vang = wb.create_sheet(title="DS_Bao_Vang_Hom_Nay")
     ws_vang.append(["Mã NV (Code)", "Họ và Tên", "Bộ Phận", "Lý do vắng"])
     ws_vang.append(["0546", "Trần Mỹ Vân", "BPB", "Nghỉ phép"])
     
-    # Format Headers
     for ws in wb.worksheets:
         for cell in ws[1]:
             cell.font = Font(bold=True)
@@ -1002,7 +997,6 @@ def app_meal_report():
     st.title("🍱 Tổng hợp Suất ăn Công nghiệp")
     st.markdown("Tính toán tự động số lượng suất ăn nhà máy, trừ hao người cắt cơm tháng và xử lý biến động đột xuất trong ngày.")
 
-    # 1. Tải File Mẫu
     with st.expander("📥 Tải File Excel Mẫu (Template) cho 4 Phòng ban"):
         st.markdown("Dùng file chuẩn này để làm Danh sách Tổng, Danh sách Cắt cơm tháng và phát cho 4 phòng ban điền danh sách Báo vắng hàng ngày.")
         st.download_button(
@@ -1015,15 +1009,14 @@ def app_meal_report():
 
     st.markdown("---")
 
-    # 2. Upload Dữ liệu
     st.subheader("1. Nạp Dữ Liệu Đầu Vào")
     col1, col2 = st.columns(2)
     with col1:
         file_tong = st.file_uploader("Tải lên File 'Danh sách Tổng & Cắt Cơm Tháng'", type=["xlsx", "xls"], key=f"app7_f1_{st.session_state.uploader_key}")
     with col2:
-        file_vang = st.file_uploader("Tải lên File 'Báo vắng hôm nay'", type=["xlsx", "xls"], key=f"app7_f2_{st.session_state.uploader_key}")
+        # TÍNH NĂNG MỚI: CHO PHÉP UPLOAD NHIỀU FILE BÁO VẮNG CÙNG LÚC
+        file_vangs = st.file_uploader("Tải lên File(s) 'Báo vắng hôm nay' (Kéo thả nhiều file cùng lúc)", type=["xlsx", "xls"], accept_multiple_files=True, key=f"app7_f2_{st.session_state.uploader_key}")
 
-    # 3. Bảng Nhập liệu đột xuất
     st.subheader("2. Điều chỉnh Đột Xuất (Trực tiếp)")
     
     st.markdown("🔻 **Người nghỉ ngang / Cắt cơm đột xuất (Giảm suất):**")
@@ -1034,54 +1027,52 @@ def app_meal_report():
     df_tang_init = pd.DataFrame([{"Đoàn khách/Người": "", "Bộ Phận đón": "", "Số lượng": 0, "Ghi chú": ""}] * 2)
     edited_df_tang = st.data_editor(df_tang_init, num_rows="dynamic", key="editor_tang", use_container_width=True)
 
-    # 4. Xử lý & Chốt số
     if st.button("📊 Chốt Số Lượng Suất Ăn Hôm Nay", type="primary"):
-        if not file_tong or not file_vang:
-            st.error("⚠️ Vui lòng tải đủ 2 file dữ liệu (Tổng và Báo vắng) để hệ thống tính toán.")
+        if not file_tong:
+            st.error("⚠️ Vui lòng tải File Danh sách Tổng để hệ thống tính toán.")
             return
 
         with st.spinner("Đang tính toán chốt số..."):
             try:
-                # Đọc File Tổng
                 xls_tong = pd.ExcelFile(file_tong)
-                df_tong = pd.read_excel(xls_tong, sheet_name=0) # Sheet 1 giả định là Tổng NV
-                df_cat_thang = pd.read_excel(xls_tong, sheet_name=1) # Sheet 2 giả định là Cắt tháng
+                df_tong = pd.read_excel(xls_tong, sheet_name=0) 
+                df_cat_thang = pd.read_excel(xls_tong, sheet_name=1) 
                 
-                # Đọc File Vắng
-                df_vang = pd.read_excel(file_vang)
-                
-                # Hàm chuẩn hóa tên cột để dễ map dữ liệu
                 def normalize_cols(df):
                     df.columns = [str(c).strip().lower() for c in df.columns]
-                    # Tìm cột chứa chữ 'bộ phận' hoặc 'bp'
                     bp_col = next((c for c in df.columns if 'bộ phận' in c or c == 'bp'), None)
                     return df, bp_col
 
                 df_tong, bp_col_tong = normalize_cols(df_tong)
                 df_cat_thang, bp_col_cat = normalize_cols(df_cat_thang)
-                df_vang, bp_col_vang = normalize_cols(df_vang)
 
                 if not bp_col_tong:
                     st.error("Không tìm thấy cột 'Bộ Phận' hoặc 'BP' trong file Tổng.")
                     return
 
-                # Đếm số liệu theo BP
                 tong_dict = df_tong.groupby(bp_col_tong).size().to_dict()
                 cat_dict = df_cat_thang.groupby(bp_col_cat).size().to_dict() if bp_col_cat else {}
-                vang_dict = df_vang.groupby(bp_col_vang).size().to_dict() if bp_col_vang else {}
 
-                # Đếm Đột xuất
-                # Lọc bỏ các hàng trống trong data editor
+                # XỬ LÝ GỘP NHIỀU FILE BÁO VẮNG
+                df_vang = pd.DataFrame()
+                bp_col_vang = None
+                vang_dict = {}
+                
+                if file_vangs:
+                    df_vang_list = [pd.read_excel(fv) for fv in file_vangs]
+                    df_vang_raw = pd.concat(df_vang_list, ignore_index=True)
+                    df_vang, bp_col_vang = normalize_cols(df_vang_raw)
+                    if bp_col_vang:
+                        vang_dict = df_vang.groupby(bp_col_vang).size().to_dict()
+
                 df_giam_clean = edited_df_giam[edited_df_giam["Bộ Phận"].str.strip() != ""]
                 giam_dict = df_giam_clean.groupby("Bộ Phận").size().to_dict()
 
                 df_tang_clean = edited_df_tang[(edited_df_tang["Bộ Phận đón"].str.strip() != "") & (edited_df_tang["Số lượng"] > 0)]
                 tang_dict = df_tang_clean.groupby("Bộ Phận đón")["Số lượng"].sum().to_dict()
 
-                # Gom tất cả các Tên Bộ phận có tồn tại
                 all_bps = set(list(tong_dict.keys()) + list(cat_dict.keys()) + list(vang_dict.keys()) + list(giam_dict.keys()) + list(tang_dict.keys()))
 
-                # Tính toán Bảng Tổng hợp
                 summary_data = []
                 total_final = 0
                 
@@ -1107,46 +1098,40 @@ def app_meal_report():
 
                 df_summary = pd.DataFrame(summary_data)
 
-                # --- XUẤT RA MÀN HÌNH ---
                 st.success("✅ Đã chốt số lượng thành công!")
                 
                 st.markdown("### 📋 BẢNG CHỐT SỐ LƯỢNG HÔM NAY")
                 st.dataframe(df_summary, use_container_width=True)
 
-                # Sinh đoạn text gửi Zalo
                 zalo_msg = "🍱 *CHỐT SUẤT ĂN HÔM NAY:*\n\n"
                 for index, row in df_summary.iterrows():
-                    zalo_msg += f"- {row['Bộ Phận']}: {row['THỰC TẾ ĐẶT']} suất\n"
+                    if row['THỰC TẾ ĐẶT'] > 0:
+                        zalo_msg += f"- {row['Bộ Phận']}: {row['THỰC TẾ ĐẶT']} suất\n"
                 zalo_msg += f"\n👉 **TỔNG CỘNG: {total_final} suất.**"
 
                 st.info("💬 Copy tin nhắn này để gửi Zalo cho nhà bếp:")
                 st.code(zalo_msg, language="markdown")
 
-                # --- XUẤT RA EXCEL (ĐẦU RA 2) ---
                 wb = openpyxl.Workbook()
                 
-                # Sheet 1
                 ws1 = wb.active
                 ws1.title = "1_Chot_So_Luong"
                 for r in dataframe_to_rows(df_summary, index=False, header=True):
                     ws1.append(r)
                 
-                # Sheet 2: Danh sách Khách
                 ws2 = wb.create_sheet(title="2_DS_Khach_Tang")
                 for r in dataframe_to_rows(df_tang_clean, index=False, header=True):
                     ws2.append(r)
                     
-                # Sheet 3: Danh sách Giảm đột xuất
                 ws3 = wb.create_sheet(title="3_DS_Giam_Dot_Xuat")
                 for r in dataframe_to_rows(df_giam_clean, index=False, header=True):
                     ws3.append(r)
                     
-                # Sheet 4: Danh sách Vắng trong ngày
                 ws4 = wb.create_sheet(title="4_DS_Vang_Hom_Nay")
-                for r in dataframe_to_rows(df_vang, index=False, header=True):
-                    ws4.append(r)
+                if not df_vang.empty:
+                    for r in dataframe_to_rows(df_vang, index=False, header=True):
+                        ws4.append(r)
 
-                # Style Headers
                 for ws in wb.worksheets:
                     for cell in ws[1]:
                         cell.font = Font(bold=True)
@@ -1166,7 +1151,6 @@ def app_meal_report():
             except Exception as e:
                 st.error(f"Đã xảy ra lỗi trong quá trình xử lý file: {e}")
 
-# Hàm phụ trợ ghi pandas dataframe vào openpyxl
 def dataframe_to_rows(df, index=False, header=True):
     from openpyxl.utils.dataframe import dataframe_to_rows as dtr
     return dtr(df, index=index, header=header)
