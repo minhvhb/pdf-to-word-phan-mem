@@ -90,7 +90,7 @@ def app_pdf_to_word():
         st.success(f"Đã tải lên file: **{uploaded_file.name}**")
         
         if st.button("🚀 Bắt đầu Chuyển đổi", type="primary"):
-            with st.spinner("🤖 AI đang phân tích lề và vẽ lại trang Word khổ A4..."):
+            with st.spinner("🤖 AI đang phân tích lề, vẽ lại bảng và mô phỏng lưu đồ..."):
                 try:
                     temp_input_path = f"temp_{uploaded_file.name}"
                     with open(temp_input_path, "wb") as f:
@@ -101,6 +101,7 @@ def app_pdf_to_word():
                         file_bytes = f.read()
                     mime_type = "application/pdf" if uploaded_file.name.endswith(".pdf") else "image/jpeg"
                     
+                    # CẬP NHẬT PROMPT: Dạy AI xử lý Lưu đồ bằng ASCII Art
                     prompt = """
                     NHIỆM VỤ OCR - BẮT BUỘC TUÂN THỦ NGHIÊM NGẶT CÁC QUY TẮC SAU:
 
@@ -124,9 +125,17 @@ def app_pdf_to_word():
                        - TUYỆT ĐỐI KHÔNG tự ý cho nội dung văn bản thường vào trong bảng.
                        - Dùng `<br>` để xuống dòng trong ô.
 
-                    5. XỬ LÝ KÝ TỰ VÀ PHÂN TRANG (QUAN TRỌNG):
+                    5. XỬ LÝ KÝ TỰ VÀ PHÂN TRANG:
                        - TUYỆT ĐỐI KHÔNG sinh ra các dòng đánh dấu trang (ví dụ: ==Start of Page 1==, ==End of Page==). Hãy xuất văn bản liền mạch.
                        - TUYỆT ĐỐI KHÔNG dùng mã Toán học (như $\ge$, $\rightarrow$). Phải dùng trực tiếp ký tự thông thường (như ≥, →, ≤).
+                       
+                    6. XỬ LÝ LƯU ĐỒ (FLOWCHART) BÊN TRONG BẢNG (QUAN TRỌNG NHẤT):
+                       - Vì hệ thống không thể vẽ hình học vào Word, nếu bạn thấy cột "Lưu đồ" chứa các hình khối, BẮT BUỘC dùng ký hiệu văn bản để bọc lấy chữ nhằm mô phỏng hình khối đó:
+                         + Hình Oval (Bắt đầu/Kết thúc/Nhu cầu): Bọc chữ trong NGOẶC ĐƠN. Ví dụ: ( Nhu cầu mua sắm năm )
+                         + Hình Chữ nhật (Bước thực hiện): Bọc chữ trong NGOẶC VUÔNG. Ví dụ: [ Lập Kế hoạch mua sắm và Dự trù kinh phí ]
+                         + Hình Thoi (Quyết định): Bọc chữ trong NGOẶC NHỌN. Ví dụ: < Duyệt >
+                         + Mũi tên: Dùng ký hiệu ↓ (nếu chỉ xuống) hoặc ➔ (nếu chỉ ngang) để nối các bước.
+                         Ví dụ nếu 1 ô có 2 hình nối nhau: (Nhu cầu mua sắm năm)<br>↓<br>[Lập kế hoạch]
                     """
 
                     response = client.models.generate_content(
@@ -221,14 +230,9 @@ def app_pdf_to_word():
                     is_next_table_header = False
 
                     for line in response_text.split('\n'):
-                        # Dọn dẹp các mã HTML rác
                         line_stripped = re.sub(r'<td[^>]*>', '', line.strip())
                         line_stripped = re.sub(r'</td>', '', line_stripped)
-                        
-                        # BỘ LỌC 1: Xóa sạch các thẻ phân trang (VD: ==Start of Page 1==)
                         line_stripped = re.sub(r'==\s*(Start|End)\s+of\s+Page.*?==', '', line_stripped, flags=re.IGNORECASE).strip()
-
-                        # BỘ LỌC 2: Phiên dịch ký hiệu Toán học về Unicode chuẩn
                         line_stripped = line_stripped.replace('$\\ge$', '≥').replace('$\\rightarrow$', '→').replace('$\\le$', '≤').replace('$\\Rightarrow$', '⇒').replace('$\\leftarrow$', '←')
 
                         if not line_stripped or line_stripped.startswith("```"):
@@ -269,7 +273,7 @@ def app_pdf_to_word():
                     output_docx_path = "ket_qua.docx"
                     doc.save(output_docx_path)
 
-                    st.success("🎉 Chuyển đổi thành công! Ký hiệu lạ và lỗi phân trang đã được quét sạch.")
+                    st.success("🎉 Chuyển đổi thành công! Lưu đồ đã được mô phỏng bằng ký hiệu chuẩn xác.")
 
                     with open(output_docx_path, "rb") as file_download:
                         st.download_button(
