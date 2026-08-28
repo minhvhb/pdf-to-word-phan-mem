@@ -58,11 +58,9 @@ def parse_and_add_runs(paragraph, text):
                     run.underline = is_underline
 
 def clean_tags_and_align(text, paragraph, default_align):
-    """Hàm quét sạch các mã lề lọt vào văn bản và gán lề chuẩn"""
     align = default_align
     text_clean = text.strip()
     
-    # Quét và áp dụng lệnh
     if '[CENTER]' in text_clean:
         align = WD_ALIGN_PARAGRAPH.CENTER
         text_clean = text_clean.replace('[CENTER]', '').strip()
@@ -125,6 +123,10 @@ def app_pdf_to_word():
                        - CHỈ vẽ bảng Markdown (|...|) KHI văn bản gốc THỰC SỰ CÓ KHUNG VIỀN KẺ Ô.
                        - TUYỆT ĐỐI KHÔNG tự ý cho nội dung văn bản thường vào trong bảng.
                        - Dùng `<br>` để xuống dòng trong ô.
+
+                    5. XỬ LÝ KÝ TỰ VÀ PHÂN TRANG (QUAN TRỌNG):
+                       - TUYỆT ĐỐI KHÔNG sinh ra các dòng đánh dấu trang (ví dụ: ==Start of Page 1==, ==End of Page==). Hãy xuất văn bản liền mạch.
+                       - TUYỆT ĐỐI KHÔNG dùng mã Toán học (như $\ge$, $\rightarrow$). Phải dùng trực tiếp ký tự thông thường (như ≥, →, ≤).
                     """
 
                     response = client.models.generate_content(
@@ -181,7 +183,6 @@ def app_pdf_to_word():
                         for row_idx, row_data in enumerate(buffer):
                             row_cells = current_table.rows[row_idx].cells
                             
-                            # Tỷ lệ cho Header hành chính
                             if is_header_table and num_cols == 2:
                                 row_cells[0].width = Cm(6.0)
                                 row_cells[1].width = Cm(10.0)
@@ -220,9 +221,15 @@ def app_pdf_to_word():
                     is_next_table_header = False
 
                     for line in response_text.split('\n'):
-                        # Dọn dẹp các mã HTML rác do AI ảo giác
+                        # Dọn dẹp các mã HTML rác
                         line_stripped = re.sub(r'<td[^>]*>', '', line.strip())
                         line_stripped = re.sub(r'</td>', '', line_stripped)
+                        
+                        # BỘ LỌC 1: Xóa sạch các thẻ phân trang (VD: ==Start of Page 1==)
+                        line_stripped = re.sub(r'==\s*(Start|End)\s+of\s+Page.*?==', '', line_stripped, flags=re.IGNORECASE).strip()
+
+                        # BỘ LỌC 2: Phiên dịch ký hiệu Toán học về Unicode chuẩn
+                        line_stripped = line_stripped.replace('$\\ge$', '≥').replace('$\\rightarrow$', '→').replace('$\\le$', '≤').replace('$\\Rightarrow$', '⇒').replace('$\\leftarrow$', '←')
 
                         if not line_stripped or line_stripped.startswith("```"):
                             continue
@@ -251,7 +258,6 @@ def app_pdf_to_word():
                             if line_stripped:
                                 p = doc.add_paragraph()
                                 p.paragraph_format.space_after = Pt(6)
-                                # ÉP CANH ĐỀU 2 BÊN (JUSTIFY) CHO NỘI DUNG CHÍNH (CHUẨN HÀNH CHÍNH)
                                 clean_line = clean_tags_and_align(line_stripped, p, WD_ALIGN_PARAGRAPH.JUSTIFY)
                                 parse_and_add_runs(p, clean_line)
 
@@ -263,7 +269,7 @@ def app_pdf_to_word():
                     output_docx_path = "ket_qua.docx"
                     doc.save(output_docx_path)
 
-                    st.success("🎉 Chuyển đổi thành công! Văn bản đã được canh lề Justify chuẩn xác.")
+                    st.success("🎉 Chuyển đổi thành công! Ký hiệu lạ và lỗi phân trang đã được quét sạch.")
 
                     with open(output_docx_path, "rb") as file_download:
                         st.download_button(
