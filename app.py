@@ -7,6 +7,9 @@ import streamlit as st
 with open('config.yaml', 'r', encoding='utf-8') as file:
     config = yaml.load(file, Loader=SafeLoader)
 
+# BĂM MẬT KHẨU TỰ ĐỘNG (Dòng này cực kỳ quan trọng để không bị lỗi sai Pass)
+stauth.Hasher.hash_passwords(config['credentials'])
+
 # 2. Cài đặt công cụ đăng nhập
 authenticator = stauth.Authenticate(
     config['credentials'],
@@ -18,7 +21,7 @@ authenticator = stauth.Authenticate(
 # 3. Mở khung đăng nhập
 authenticator.login()
 
-# 4. Kiểm tra
+# 4. Kiểm tra trạng thái
 if st.session_state["authentication_status"] == False:
     st.error('Tên đăng nhập hoặc mật khẩu không đúng!')
     st.stop()
@@ -26,10 +29,18 @@ elif st.session_state["authentication_status"] == None:
     st.warning('Vui lòng đăng nhập để sử dụng công cụ')
     st.stop()
 
-# Đăng nhập thành công
-authenticator.logout('Đăng xuất', 'main')
-st.write(f'Chào mừng **{st.session_state["name"]}**!')
-st.divider()
+# ==========================================
+# KHI ĐĂNG NHẬP THÀNH CÔNG -> TẠO BỐ CỤC 1 TRÊN THANH BÊN
+# ==========================================
+# Lệnh đẩy Lời chào và nút Đăng xuất sang thanh bên (sidebar)
+st.sidebar.write(f'Chào mừng **{st.session_state["name"]}**!')
+authenticator.logout('Đăng xuất', 'sidebar')
+
+# Vẽ đường kẻ ngang số 1
+st.sidebar.divider() 
+
+# Dòng chữ dưới đây chỉ là ghi chú, máy sẽ tự động bỏ qua
+# --- TỪ DÒNG NÀY TRỞ XUỐNG LÀ CODE APP PDF CŨ CỦA BẠN (GIỮ NGUYÊN) ---
 
 # --- TỪ DÒNG NÀY TRỞ XUỐNG LÀ CODE APP PDF CŨ CỦA BẠN (GIỮ NGUYÊN) ---
 
