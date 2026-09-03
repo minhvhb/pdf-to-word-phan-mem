@@ -7,29 +7,28 @@ import streamlit as st
 with open('config.yaml') as file:
     config = yaml.load(file, Loader=SafeLoader)
 
-# 2. Cài đặt công cụ đăng nhập
+# 2. Cài đặt công cụ đăng nhập (đã xóa pre-authorized theo bản cập nhật mới)
 authenticator = stauth.Authenticate(
     config['credentials'],
     config['cookie']['name'],
     config['cookie']['key'],
-    config['cookie']['expiry_days'],
-    config['pre-authorized']
+    config['cookie']['expiry_days']
 )
 
 # 3. Tạo khung đăng nhập
-name, authentication_status, username = authenticator.login('main')
+authenticator.login()
 
-# 4. Kiểm tra trạng thái
-if authentication_status == False:
+# 4. Kiểm tra trạng thái đăng nhập
+if st.session_state["authentication_status"] == False:
     st.error('Tên đăng nhập hoặc mật khẩu không đúng!')
-    st.stop() # Dừng toàn bộ app, không cho hiển thị phần chuyển PDF nếu nhập sai
-elif authentication_status == None:
+    st.stop()
+elif st.session_state["authentication_status"] == None:
     st.warning('Vui lòng đăng nhập để sử dụng công cụ')
-    st.stop() # Dừng toàn bộ app nếu chưa nhập gì
+    st.stop()
 
-# Nếu code chạy đến dòng này tức là đã đăng nhập thành công
+# Đăng nhập thành công
 authenticator.logout('Đăng xuất', 'main')
-st.write(f'Chào mừng **{name}**!')
+st.write(f'Chào mừng **{st.session_state["name"]}**!')
 st.divider()
 
 # --- TỪ DÒNG NÀY TRỞ XUỐNG LÀ CODE APP PDF CŨ CỦA BẠN (GIỮ NGUYÊN) ---
