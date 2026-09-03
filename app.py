@@ -3,6 +3,12 @@ from yaml.loader import SafeLoader
 import streamlit_authenticator as stauth
 import streamlit as st
 
+# --- BẮT ĐẦU ĐOẠN LẤY MÃ ---
+mk = stauth.Hasher(['Cns@2026@']).generate()
+st.error(f"Hãy Copy đoạn mã này: {mk[0]}")
+st.stop()
+# --- KẾT THÚC ĐOẠN LẤY MÃ ---
+
 # 1. Đọc dữ liệu tài khoản từ file config
 with open('config.yaml') as file:
     config = yaml.load(file, Loader=SafeLoader)
