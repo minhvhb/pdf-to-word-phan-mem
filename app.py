@@ -69,38 +69,53 @@ elif st.session_state["authentication_status"] == None:
     st.stop()
 
 # ==========================================
-# 2. GIAO DIỆN THANH BÊN (SIDEBAR) SAU KHI ĐĂNG NHẬP
+# 2. GIAO DIỆN THANH BÊN (SIDEBAR) TỐI ƯU 1 TRANG
 # ==========================================
-
-# CSS tối ưu ép khoảng cách để không bị cuộn trang khi bung Bảng cảnh báo
 st.markdown("""
     <style>
-        /* Đẩy nội dung thanh bên lên trên một chút cho cân đối, không bị dính nóc */
-        [data-testid="stSidebarUserContent"] { padding-top: 1rem !important; padding-bottom: 0rem !important; }
+        /* Đẩy nội dung thanh bên lên sát nóc và mở rộng 2 bên lề */
+        [data-testid="stSidebarUserContent"] { 
+            padding-top: 1rem !important; 
+            padding-bottom: 0rem !important; 
+            padding-left: 1rem !important; 
+            padding-right: 1rem !important;
+        }
         
         /* Thu hẹp khoảng cách giữa các dòng trong Menu radio */
-        [data-testid="stSidebarUserContent"] div[role="radiogroup"] > label { margin-bottom: -5px !important; }
+        [data-testid="stSidebarUserContent"] div[role="radiogroup"] > label { 
+            margin-bottom: -6px !important; 
+        }
         
         /* Thu hẹp đường kẻ ngang */
-        [data-testid="stSidebarUserContent"] hr { margin-top: 10px; margin-bottom: 10px; }
+        [data-testid="stSidebarUserContent"] hr { 
+            margin-top: 5px; 
+            margin-bottom: 5px; 
+        }
         
-        /* Ép bảng cảnh báo nhỏ gọn lại */
-        [data-testid="stSidebarUserContent"] div[data-testid="stAlert"] { padding: 10px !important; }
+        /* CSS cho bảng Nguyên tắc để chữ tràn ngang, không bị thụt lề */
+        .custom-alert {
+            background-color: #f8d7da;
+            color: #842029;
+            padding: 10px;
+            border-radius: 5px;
+            font-size: 13.5px;
+            line-height: 1.4;
+            border: 1px solid #f5c2c7;
+        }
     </style>
 """, unsafe_allow_html=True)
 
-# Lời chào 
-st.sidebar.markdown(f"<h4 style='text-align: center; margin-bottom: 10px;'>Chào mừng {st.session_state['name']}!</h4>", unsafe_allow_html=True)
-
-# Canh giữa nút Đăng xuất bằng thủ thuật chia cột
+# 1. Nút Đăng xuất đưa LÊN TRÊN (canh giữa)
 col1, col2, col3 = st.sidebar.columns([1, 2, 1])
 with col2:
-    # Lệnh 'main' kết hợp với with col2 sẽ ép nút vào chính giữa thanh bên
     authenticator.logout('Đăng xuất', 'main')
+
+# 2. Lời chào đưa XUỐNG DƯỚI
+st.sidebar.markdown(f"<h5 style='text-align: center; margin-top: 5px; margin-bottom: 0px;'>Chào mừng {st.session_state['name']}!</h5>", unsafe_allow_html=True)
 
 st.sidebar.markdown("---")
 
-# Menu Ứng dụng
+# 3. Menu Ứng dụng
 st.sidebar.markdown("### 📌 Menu Công Cụ")
 app_mode = st.sidebar.radio(
     "Vui lòng chọn ứng dụng:",
@@ -113,20 +128,23 @@ app_mode = st.sidebar.radio(
         "💻 6. Chuyên gia Công thức & VBA",
         "🍱 7. Tổng hợp Suất ăn Công nghiệp"
     ],
-    label_visibility="collapsed" # Ẩn chữ "Vui lòng chọn ứng dụng" để tiết kiệm thêm chiều cao
+    label_visibility="collapsed"
 )
 
 st.sidebar.markdown("---") 
 
-# Bảng nguyên tắc mở bung ra (như yêu cầu của bạn)
-st.sidebar.error(
-    "⚠️ **NGUYÊN TẮC SỬ DỤNG:**\n\n"
-    "- **Bảo mật:** KHÔNG tải lên tài liệu MẬT, TỐI MẬT, dữ liệu tài chính chưa công khai.\n\n"
-    "- **Tối ưu:** Chỉ tải file PDF **dưới 30 trang/lần**."
-)
+# 4. Bảng nguyên tắc sử dụng (Ép sát lề, trải ngang chữ)
+st.sidebar.markdown("""
+    <div class="custom-alert">
+        <b>⚠️ NGUYÊN TẮC SỬ DỤNG:</b><br>
+        <b>- Bảo mật:</b> KHÔNG tải lên tài liệu MẬT, TỐI MẬT, dữ liệu tài chính chưa công khai.<br>
+        <b>- Tối ưu:</b> Chỉ tải file PDF <b>dưới 30 trang/lần</b>.
+    </div>
+""", unsafe_allow_html=True)
+
 
 # ==========================================
-# 3. CÁC HÀM XỬ LÝ CHỨC NĂNG 
+# 3. CÁC HÀM XỬ LÝ CHỨC NĂNG CỦA ỨNG DỤNG
 # ==========================================
 def parse_and_add_runs(paragraph, text):
     parts_bold = re.split(r'\*\*(.*?)\*\*', text)
