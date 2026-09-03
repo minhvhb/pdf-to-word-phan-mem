@@ -3,19 +3,33 @@ from yaml.loader import SafeLoader
 import streamlit_authenticator as stauth
 import streamlit as st
 
-# Đọc file config
+# 1. Đọc dữ liệu tài khoản
 with open('config.yaml', 'r', encoding='utf-8') as file:
     config = yaml.load(file, Loader=SafeLoader)
 
-# Tự động mã hóa mật khẩu
-stauth.Hasher.hash_passwords(config['credentials'])
+# 2. Cài đặt công cụ đăng nhập
+authenticator = stauth.Authenticate(
+    config['credentials'],
+    config['cookie']['name'],
+    config['cookie']['key'],
+    config['cookie']['expiry_days']
+)
 
-# Tự động ghi đè đoạn mã vào lại file config.yaml
-with open('config.yaml', 'w', encoding='utf-8') as file:
-    yaml.dump(config, file, default_flow_style=False)
+# 3. Mở khung đăng nhập
+authenticator.login()
 
-st.success("Hệ thống đã tự động mã hóa và lưu mật khẩu vào file config.yaml thành công!")
-st.stop()
+# 4. Kiểm tra
+if st.session_state["authentication_status"] == False:
+    st.error('Tên đăng nhập hoặc mật khẩu không đúng!')
+    st.stop()
+elif st.session_state["authentication_status"] == None:
+    st.warning('Vui lòng đăng nhập để sử dụng công cụ')
+    st.stop()
+
+# Đăng nhập thành công
+authenticator.logout('Đăng xuất', 'main')
+st.write(f'Chào mừng **{st.session_state["name"]}**!')
+st.divider()
 
 # --- TỪ DÒNG NÀY TRỞ XUỐNG LÀ CODE APP PDF CŨ CỦA BẠN (GIỮ NGUYÊN) ---
 
