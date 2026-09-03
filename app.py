@@ -59,7 +59,16 @@ authenticator = stauth.Authenticate(
     config['cookie']['expiry_days']
 )
 
-authenticator.login()
+# === ĐÃ THÊM LỆNH VIỆT HÓA KHUNG ĐĂNG NHẬP ===
+authenticator.login(
+    location='main',
+    fields={
+        'Form name': 'Đăng nhập',
+        'Username': 'Tên đăng nhập',
+        'Password': 'Mật khẩu',
+        'Login': 'Đăng nhập'
+    }
+)
 
 if st.session_state["authentication_status"] == False:
     st.error('Tên đăng nhập hoặc mật khẩu không đúng!')
