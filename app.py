@@ -60,9 +60,8 @@ authenticator = stauth.Authenticate(
 )
 
 # ==========================================
-# 2. GIAO DIỆN TRANG ĐĂNG NHẬP (KIỂU KÍNH MỜ CHUYÊN NGHIỆP)
+# 2. GIAO DIỆN TRANG ĐĂNG NHẬP (ÉP CSS TỐI ĐA ĐỂ KHÔNG BỊ VỠ LAYOUT)
 # ==========================================
-# Áp dụng giao diện hình nền và form kính mờ khi chưa đăng nhập
 if st.session_state.get("authentication_status") != True:
     st.markdown("""
         <style>
@@ -74,53 +73,69 @@ if st.session_state.get("authentication_status") != True:
                 background-attachment: fixed;
             }
             
-            /* 2. Ép Form thành dạng Kính mờ (Glassmorphism) nằm giữa trang */
+            /* 2. Ép Form Kính mờ nằm giữa trang, đổ bóng chuyên nghiệp */
             [data-testid="stForm"] {
-                background-color: rgba(255, 255, 255, 0.92);
-                padding: 40px 30px;
-                border-radius: 12px;
-                box-shadow: 0px 8px 24px rgba(0, 0, 0, 0.5);
-                max-width: 400px !important;
-                margin: 8vh auto 0 auto;
-                border: 1px solid rgba(255, 255, 255, 0.3);
+                background-color: rgba(255, 255, 255, 0.85) !important;
+                padding: 40px !important;
+                border-radius: 15px !important;
+                box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3) !important;
+                width: 450px !important;
+                max-width: 90vw !important;
+                margin: 10vh auto 0 auto !important;
+                border: 1px solid rgba(255, 255, 255, 0.5) !important;
+                backdrop-filter: blur(10px) !important;
+                -webkit-backdrop-filter: blur(10px) !important;
             }
             
-            /* 3. Tùy chỉnh Tiêu đề của Form */
+            /* 3. Tiêu đề Form: Canh giữa tuyệt đối, không rớt dòng bừa bãi */
             [data-testid="stForm"] h2 {
-                text-align: center;
-                color: #003366;
-                font-weight: 900;
-                font-size: 24px;
-                padding-bottom: 25px;
-                text-transform: uppercase;
-                letter-spacing: 1px;
+                text-align: center !important;
+                width: 100% !important;
+                color: #003366 !important;
+                font-weight: 900 !important;
+                font-size: 24px !important;
+                margin-bottom: 25px !important;
+                padding-bottom: 0px !important;
             }
             
-            /* 4. Nút bấm Đăng nhập to, xanh, tràn viền */
-            [data-testid="stForm"] button {
-                width: 100%;
-                background-color: #003366;
+            /* 4. Ép 2 ô nhập liệu rộng 100% */
+            [data-testid="stForm"] .stTextInput {
+                width: 100% !important;
+            }
+            [data-testid="stForm"] .stTextInput > div {
+                width: 100% !important;
+            }
+            [data-testid="stForm"] .stTextInput label p {
+                font-size: 14px !important;
+                font-weight: bold !important;
+                color: #333 !important;
+            }
+            
+            /* 5. Nút bấm Đăng nhập: Tràn viền 100%, canh giữa, màu nổi bật */
+            [data-testid="stFormSubmitButton"] {
+                width: 100% !important;
+                display: flex !important;
+                justify-content: center !important;
+                margin-top: 15px !important;
+            }
+            [data-testid="stFormSubmitButton"] > button {
+                width: 100% !important;
+                background-color: #003366 !important;
                 color: white !important;
-                font-weight: bold;
-                font-size: 16px;
-                border-radius: 6px;
-                padding: 12px 0;
-                border: none;
-                margin-top: 15px;
-                text-transform: uppercase;
+                font-weight: bold !important;
+                font-size: 16px !important;
+                border-radius: 8px !important;
+                padding: 12px 0 !important;
+                border: none !important;
+                transition: all 0.3s ease-in-out !important;
             }
-            [data-testid="stForm"] button:hover {
-                background-color: #001f3f;
-                box-shadow: 0px 4px 10px rgba(0,0,0,0.3);
-            }
-            
-            /* 5. Căn chỉnh ô nhập liệu */
-            [data-testid="stForm"] input {
-                border-radius: 6px;
-                border: 1px solid #ccc;
+            [data-testid="stFormSubmitButton"] > button:hover {
+                background-color: #001f3f !important;
+                box-shadow: 0px 4px 15px rgba(0,0,0,0.4) !important;
+                transform: translateY(-2px) !important;
             }
             
-            /* Căn giữa dòng cảnh báo vàng mặc định */
+            /* Căn giữa dòng cảnh báo vàng mặc định (nếu có) */
             div[data-testid="stVerticalBlock"] > div:has(div[data-testid="stMarkdownContainer"]) {
                 display: flex;
                 justify-content: center;
@@ -129,11 +144,10 @@ if st.session_state.get("authentication_status") != True:
         </style>
     """, unsafe_allow_html=True)
 
-# Khởi chạy form đăng nhập với Tiếng Việt
 authenticator.login(
     location='main',
     fields={
-        'Form name': 'CÔNG CỤ VĂN PHÒNG THÔNG MINH',
+        'Form name': 'CÔNG CỤ VĂN PHÒNG',
         'Username': 'Tên đăng nhập',
         'Password': 'Mật khẩu',
         'Login': 'ĐĂNG NHẬP'
@@ -171,7 +185,7 @@ st.markdown("""
             margin-bottom: 5px; 
         }
         
-        /* CSS cho bảng Nguyên tắc để chữ tràn ngang, không bị lộn xộn */
+        /* CSS cho bảng Nguyên tắc để chữ tràn ngang, không bị thụt lề */
         .custom-alert {
             background-color: #f8d7da;
             color: #842029;
@@ -212,7 +226,7 @@ app_mode = st.sidebar.radio(
 
 st.sidebar.markdown("---") 
 
-# 4. Bảng nguyên tắc sử dụng (Ép sát lề, trải ngang chữ)
+# 4. Bảng nguyên tắc sử dụng
 st.sidebar.markdown("""
     <div class="custom-alert">
         <b>⚠️ NGUYÊN TẮC SỬ DỤNG:</b><br>
