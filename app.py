@@ -101,8 +101,7 @@ if st.session_state.get("authentication_status") != True:
                 width: 100% !important;
                 max-width: 100% !important;
             }
-            [data-testid="stForm"] .stTextInput, 
-            [data-testid="stForm"] .stButton {
+            [data-testid="stForm"] .stTextInput {
                 width: 100% !important;
                 min-width: 100% !important;
             }
@@ -126,26 +125,34 @@ if st.session_state.get("authentication_status") != True:
                 color: #333 !important;
             }
             
-            /* 5. Nút bấm Đăng nhập: Ép rộng 100% bằng ô nhập liệu */
-            [data-testid="stFormSubmitButton"] {
+            /* 5. NÚT BẤM ĐĂNG NHẬP: ÉP RỘNG 100% VÀ IN ĐẬM CHỮ */
+            [data-testid="stForm"] div[data-testid="stFormSubmitButton"] {
                 width: 100% !important;
-                display: flex !important;
-                justify-content: center !important;
+                max-width: 100% !important;
+                display: block !important;
             }
-            [data-testid="stFormSubmitButton"] button {
+            [data-testid="stForm"] div[data-testid="stFormSubmitButton"] button {
                 width: 100% !important;
+                min-width: 100% !important;
                 background-color: #003366 !important;
                 color: white !important;
-                font-weight: bold !important;
                 font-size: 16px !important;
+                letter-spacing: 1px !important;
                 border-radius: 8px !important;
                 padding: 12px 0 !important;
                 border: none !important;
-                margin-top: 10px !important;
+                margin-top: 15px !important;
                 display: block !important;
+                transition: all 0.3s ease-in-out !important;
             }
-            [data-testid="stFormSubmitButton"] button:hover {
+            /* Ép mạnh phần chữ bên trong nút phải IN ĐẬM */
+            [data-testid="stForm"] div[data-testid="stFormSubmitButton"] button p {
+                font-weight: 900 !important;
+                margin: 0 !important;
+            }
+            [data-testid="stForm"] div[data-testid="stFormSubmitButton"] button:hover {
                 background-color: #001f3f !important;
+                box-shadow: 0px 4px 15px rgba(0,0,0,0.4) !important;
             }
             
             /* Căn giữa dòng cảnh báo vàng mặc định (nếu có) */
@@ -171,7 +178,7 @@ if st.session_state["authentication_status"] == False:
     st.error('Tên đăng nhập hoặc mật khẩu không đúng!')
     st.stop()
 elif st.session_state["authentication_status"] == None:
-    st.warning('Vui lòng đăng nhập để sử dụng hệ thống')
+    st.warning('Vui lòng đăng nhập để sử dụng công cụ')
     st.stop()
 
 # ==========================================
