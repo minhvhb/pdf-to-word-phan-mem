@@ -65,10 +65,13 @@ authenticator = stauth.Authenticate(
 if st.session_state.get("authentication_status") != True:
     st.markdown("""
         <style>
-            /* 1. Xóa khoảng trắng thừa ở trên cùng và ẩn Header để CHỐNG CUỘN TRANG */
-            [data-testid="stHeader"] { display: none !important; }
-            
-            /* 2. Đặt hình nền Mùa thu cho toàn bộ ứng dụng */
+            /* 1. Xóa khoảng trắng khổng lồ trên nóc để CHỐNG CUỘN TRANG */
+            .block-container {
+                padding-top: 2rem !important;
+                padding-bottom: 0rem !important;
+            }
+
+            /* 2. Hình nền Mùa thu */
             .stApp {
                 background-image: url("https://images.unsplash.com/photo-1477414348463-c0eb7f1359b6?q=80&w=2070&auto=format&fit=crop");
                 background-size: cover;
@@ -76,72 +79,85 @@ if st.session_state.get("authentication_status") != True:
                 background-attachment: fixed;
             }
             
-            /* 3. BIẾN BLOCK-CONTAINER THÀNH THẺ KÍNH MỜ DUY NHẤT */
-            /* Điều này giúp gộp Tiêu đề và Form vào chung 1 khối, xóa bỏ tình trạng "Hộp lồng hộp" */
-            .block-container {
-                background-color: rgba(255, 255, 255, 0.95) !important;
-                padding: 40px !important;
-                border-radius: 15px !important;
-                box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3) !important;
-                max-width: 420px !important; 
-                margin-top: 12vh !important; 
-                margin-bottom: 2vh !important;
-            }
-            
-            /* 4. XÓA BỎ KHUNG VIỀN CỦA FORM ẨN BÊN TRONG */
+            /* 3. Ép Form Kính mờ nằm giữa trang */
             [data-testid="stForm"] {
-                border: none !important;
-                background-color: transparent !important;
-                padding: 0 !important;
-                box-shadow: none !important;
+                background-color: rgba(255, 255, 255, 0.92) !important;
+                padding: 30px !important;
+                border-radius: 12px !important;
+                box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3) !important;
+                width: 420px !important;
+                max-width: 90vw !important;
+                margin: 0 auto !important; /* Kéo form lên sát trên */
+                border: 1px solid rgba(255, 255, 255, 0.5) !important;
             }
             
-            /* 5. Căn chỉnh Tiêu đề "CÔNG CỤ VĂN PHÒNG" */
-            h1, h2, h3 {
+            /* 4. Tiêu đề Form */
+            [data-testid="stForm"] h2 {
                 text-align: center !important;
                 color: #003366 !important;
                 font-weight: 900 !important;
                 font-size: 26px !important;
-                padding-bottom: 10px !important;
-                margin-top: 0 !important;
-            }
-            
-            /* 6. Đổi màu ô nhập liệu thành TRẮNG TINH, chữ nhãn (Label) bôi đậm */
-            .stTextInput label p {
-                font-weight: 700 !important;
-                color: #333 !important;
-            }
-            div[data-baseweb="input"] {
-                background-color: #fff !important;
-                border: 1px solid #ccc !important;
-                border-radius: 6px !important;
-            }
-            input {
-                color: #000 !important;
-            }
-            
-            /* 7. ÉP NÚT ĐĂNG NHẬP RỘNG 100% BẰNG Ô CHỮ VÀ IN ĐẬM */
-            [data-testid="stFormSubmitButton"] {
+                margin-bottom: 20px !important;
+                padding-bottom: 0px !important;
                 width: 100% !important;
             }
-            [data-testid="stFormSubmitButton"] button {
+
+            /* LỆNH TỐI THƯỢNG: ÉP CÁC CỘT ẨN BÊN TRONG RỘNG 100% DÀN ĐỀU */
+            [data-testid="stForm"] [data-testid="column"],
+            [data-testid="stForm"] .stTextInput,
+            [data-testid="stForm"] .stButton {
+                width: 100% !important;
+                min-width: 100% !important;
+                max-width: 100% !important;
+                flex: 1 1 100% !important; /* Đập tan cột chia đôi của Streamlit */
+            }
+            
+            /* 5. Đổi màu ô nhập liệu thành TRẮNG TINH, viền rõ */
+            [data-testid="stForm"] div[data-baseweb="input"],
+            [data-testid="stForm"] div[data-baseweb="base-input"] {
+                background-color: #ffffff !important;
+                border: 1px solid #999 !important;
+                border-radius: 6px !important;
+                width: 100% !important;
+            }
+            [data-testid="stForm"] input {
+                background-color: transparent !important;
+                color: #000 !important;
+                font-size: 15px !important;
+            }
+            [data-testid="stForm"] .stTextInput label p {
+                font-size: 14px !important;
+                font-weight: bold !important;
+                color: #333 !important;
+            }
+            
+            /* 6. NÚT BẤM ĐĂNG NHẬP: TO BẰNG Ô CHỮ, IN ĐẬM */
+            [data-testid="stForm"] .stButton > button {
                 width: 100% !important;
                 background-color: #003366 !important;
                 color: white !important;
-                border: none !important;
                 border-radius: 6px !important;
                 padding: 12px 0 !important;
+                border: none !important;
                 margin-top: 10px !important;
+                display: block !important;
             }
-            [data-testid="stFormSubmitButton"] button p {
+            [data-testid="stForm"] .stButton > button p {
                 font-weight: 900 !important;
                 font-size: 16px !important;
-                color: white !important;
                 letter-spacing: 1px !important;
                 margin: 0 !important;
+                text-transform: uppercase !important;
             }
-            [data-testid="stFormSubmitButton"] button:hover {
+            [data-testid="stForm"] .stButton > button:hover {
                 background-color: #001f3f !important;
+            }
+            
+            /* Căn giữa dòng cảnh báo vàng dưới form và bóp gọn nó lại */
+            .stAlert {
+                max-width: 420px !important;
+                margin: 15px auto !important;
+                padding: 10px !important;
             }
         </style>
     """, unsafe_allow_html=True)
@@ -156,16 +172,15 @@ authenticator.login(
     }
 )
 
-# Kiểm tra trạng thái đăng nhập
 if st.session_state["authentication_status"] == False:
     st.error('Tên đăng nhập hoặc mật khẩu không đúng!')
     st.stop()
 elif st.session_state["authentication_status"] == None:
-    # Đã xóa lệnh in cảnh báo màu vàng ở đây để tiết kiệm 100% khoảng trống cuối trang!
+    st.warning('Vui lòng đăng nhập để sử dụng công cụ')
     st.stop()
 
 # ==========================================
-# 3. GIAO DIỆN THANH BÊN (SIDEBAR) TỐI ƯU 1 TRANG (KHI ĐÃ ĐĂNG NHẬP)
+# 3. GIAO DIỆN THANH BÊN (SIDEBAR) TỐI ƯU 1 TRANG
 # ==========================================
 st.markdown("""
     <style>
@@ -1132,4 +1147,222 @@ def app_excel_expert():
                    4. Click chuột phải vào hình vừa vẽ > Chọn Assign Macro... > Chọn tên Macro vừa dán > OK. Bấm vào hình để chạy!
                 5. Vấn đề Dấu phân cách: Trong công thức, sử dụng dấu chấm phẩy (;) để phân cách các hàm (chuẩn máy tính Việt Nam).
                 6. Tính tương thích: Ưu tiên dùng các hàm phổ biến (INDEX, MATCH, IF, SUMIFS...).
-                7. TUYỆT ĐỐI xuất code trong khối lệnh Markdown (ví dụ ```excel hoặc
+                7. TUYỆT ĐỐI xuất code trong khối lệnh Markdown (ví dụ ```excel hoặc ```vba) để giao diện hiển thị nút Copy.
+                8. Trả lời cực kỳ ngắn gọn, đi thẳng vào vấn đề, không giải thích dài dòng lan man.
+                """
+                
+                try:
+                    response = client.models.generate_content(
+                        model='gemini-3.6-flash',
+                        contents=[prompt]
+                    )
+                    
+                    st.info("💡 Kết quả từ AI (Nhấp vào biểu tượng ở góc phải khung code để sao chép):")
+                    st.markdown(response.text)
+                    
+                except Exception as e:
+                    st.error(f"Đã xảy ra lỗi AI: {e}")
+
+def create_empty_templates():
+    wb = openpyxl.Workbook()
+    
+    ws_tong = wb.active
+    ws_tong.title = "DS_Tong_Nhan_Su"
+    ws_tong.append(["Mã NV (Code)", "Họ và Tên", "Bộ Phận"])
+    ws_tong.append(["0319", "Đặng Chí Hiếu", "PNV"])
+    ws_tong.append(["0546", "Trần Mỹ Vân", "BPB"])
+    
+    ws_cat = wb.create_sheet(title="DS_Cat_Com_Thang")
+    ws_cat.append(["STT", "BP", "Code", "Họ và Tên", "Ghi chú"])
+    ws_cat.append(["1", "PNV", "0319", "Đặng Chí Hiếu", "Mang cơm nhà"])
+    
+    ws_vang = wb.create_sheet(title="DS_Bao_Vang_Hom_Nay")
+    ws_vang.append(["Mã NV (Code)", "Họ và Tên", "Bộ Phận", "Lý do vắng"])
+    ws_vang.append(["0546", "Trần Mỹ Vân", "BPB", "Nghỉ phép"])
+    
+    for ws in wb.worksheets:
+        for cell in ws[1]:
+            cell.font = Font(bold=True)
+            cell.alignment = Alignment(horizontal="center")
+    
+    output = BytesIO()
+    wb.save(output)
+    return output.getvalue()
+
+def dataframe_to_rows(df, index=False, header=True):
+    from openpyxl.utils.dataframe import dataframe_to_rows as dtr
+    return dtr(df, index=index, header=header)
+
+def app_meal_report():
+    st.title("🍱 Tổng hợp Suất ăn Công nghiệp")
+    st.markdown("Tính toán tự động số lượng suất ăn nhà máy, trừ hao người cắt cơm tháng và xử lý biến động đột xuất trong ngày.")
+
+    with st.expander("📥 Tải File Excel Mẫu (Template) cho 4 Phòng ban"):
+        st.markdown("Dùng file chuẩn này để làm Danh sách Tổng, Danh sách Cắt cơm tháng và phát cho 4 phòng ban điền danh sách Báo vắng hàng ngày.")
+        st.download_button(
+            label="⬇️ Tải File Mẫu (.xlsx)",
+            data=create_empty_templates(),
+            file_name="Template_Quan_Ly_Suat_An.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            key="download_template"
+        )
+
+    st.markdown("---")
+
+    st.subheader("1. Nạp Dữ Liệu Đầu Vào")
+    col1, col2 = st.columns(2)
+    with col1:
+        file_tong = st.file_uploader("Tải lên File 'Danh sách Tổng & Cắt Cơm Tháng'", type=["xlsx", "xls"], key=f"app7_f1_{st.session_state.uploader_key}")
+    with col2:
+        file_vangs = st.file_uploader("Tải lên File(s) 'Báo vắng hôm nay' (Kéo thả nhiều file cùng lúc)", type=["xlsx", "xls"], accept_multiple_files=True, key=f"app7_f2_{st.session_state.uploader_key}")
+
+    st.subheader("2. Điều chỉnh Đột Xuất (Trực tiếp)")
+    
+    st.markdown("🔻 **Người nghỉ ngang / Cắt cơm đột xuất (Giảm suất):**")
+    df_giam_init = pd.DataFrame([{"Mã NV (Code)": "", "Họ và Tên": "", "Bộ Phận": "", "Lý do": ""}] * 2)
+    edited_df_giam = st.data_editor(df_giam_init, num_rows="dynamic", key="editor_giam", use_container_width=True)
+    
+    st.markdown("🔺 **Khách đối tác / Tăng cường (Tăng suất):**")
+    df_tang_init = pd.DataFrame([{"Đoàn khách/Người": "", "Bộ Phận đón": "", "Số lượng": 0, "Ghi chú": ""}] * 2)
+    edited_df_tang = st.data_editor(df_tang_init, num_rows="dynamic", key="editor_tang", use_container_width=True)
+
+    if st.button("📊 Chốt Số Lượng Suất Ăn Hôm Nay", type="primary"):
+        if not file_tong:
+            st.error("⚠️ Vui lòng tải File Danh sách Tổng để hệ thống tính toán.")
+            return
+
+        with st.spinner("Đang tính toán chốt số..."):
+            try:
+                xls_tong = pd.ExcelFile(file_tong)
+                df_tong = pd.read_excel(xls_tong, sheet_name=0) 
+                df_cat_thang = pd.read_excel(xls_tong, sheet_name=1) 
+                
+                def normalize_cols(df):
+                    df.columns = [str(c).strip().lower() for c in df.columns]
+                    bp_col = next((c for c in df.columns if 'bộ phận' in c or c == 'bp'), None)
+                    return df, bp_col
+
+                df_tong, bp_col_tong = normalize_cols(df_tong)
+                df_cat_thang, bp_col_cat = normalize_cols(df_cat_thang)
+
+                if not bp_col_tong:
+                    st.error("Không tìm thấy cột 'Bộ Phận' hoặc 'BP' trong file Tổng.")
+                    return
+
+                tong_dict = df_tong.groupby(bp_col_tong).size().to_dict()
+                cat_dict = df_cat_thang.groupby(bp_col_cat).size().to_dict() if bp_col_cat else {}
+
+                df_vang = pd.DataFrame()
+                bp_col_vang = None
+                vang_dict = {}
+                
+                if file_vangs:
+                    df_vang_list = [pd.read_excel(fv) for fv in file_vangs]
+                    df_vang_raw = pd.concat(df_vang_list, ignore_index=True)
+                    df_vang, bp_col_vang = normalize_cols(df_vang_raw)
+                    if bp_col_vang:
+                        vang_dict = df_vang.groupby(bp_col_vang).size().to_dict()
+
+                df_giam_clean = edited_df_giam[edited_df_giam["Bộ Phận"].str.strip() != ""]
+                giam_dict = df_giam_clean.groupby("Bộ Phận").size().to_dict()
+
+                df_tang_clean = edited_df_tang[(edited_df_tang["Bộ Phận đón"].str.strip() != "") & (edited_df_tang["Số lượng"] > 0)]
+                tang_dict = df_tang_clean.groupby("Bộ Phận đón")["Số lượng"].sum().to_dict()
+
+                all_bps = set(list(tong_dict.keys()) + list(cat_dict.keys()) + list(vang_dict.keys()) + list(giam_dict.keys()) + list(tang_dict.keys()))
+
+                summary_data = []
+                total_final = 0
+                
+                for bp in sorted(all_bps):
+                    t = tong_dict.get(bp, 0)
+                    c = cat_dict.get(bp, 0)
+                    v = vang_dict.get(bp, 0)
+                    g = giam_dict.get(bp, 0)
+                    kh = tang_dict.get(bp, 0)
+                    
+                    thuc_te = t - c - v - g + kh
+                    total_final += thuc_te
+                    
+                    summary_data.append({
+                        "Bộ Phận": str(bp).upper(),
+                        "Tổng NS": t,
+                        "Cắt Tháng (-)": c,
+                        "Vắng Hôm Nay (-)": v,
+                        "Đột Xuất Giảm (-)": g,
+                        "Khách Tăng (+)": kh,
+                        "THỰC TẾ ĐẶT": thuc_te
+                    })
+
+                df_summary = pd.DataFrame(summary_data)
+
+                st.success("✅ Đã chốt số lượng thành công!")
+                
+                st.markdown("### 📋 BẢNG CHỐT SỐ LƯỢNG HÔM NAY")
+                st.dataframe(df_summary, use_container_width=True)
+
+                zalo_msg = "🍱 *CHỐT SUẤT ĂN HÔM NAY:*\n\n"
+                for index, row in df_summary.iterrows():
+                    if row['THỰC TẾ ĐẶT'] > 0:
+                        zalo_msg += f"- {row['Bộ Phận']}: {row['THỰC TẾ ĐẶT']} suất\n"
+                zalo_msg += f"\n👉 **TỔNG CỘNG: {total_final} suất.**"
+
+                st.info("💬 Copy tin nhắn này để gửi Zalo cho nhà bếp:")
+                st.code(zalo_msg, language="markdown")
+
+                wb = openpyxl.Workbook()
+                
+                ws1 = wb.active
+                ws1.title = "1_Chot_So_Luong"
+                for r in dataframe_to_rows(df_summary, index=False, header=True):
+                    ws1.append(r)
+                
+                ws2 = wb.create_sheet(title="2_DS_Khach_Tang")
+                for r in dataframe_to_rows(df_tang_clean, index=False, header=True):
+                    ws2.append(r)
+                    
+                ws3 = wb.create_sheet(title="3_DS_Giam_Dot_Xuat")
+                for r in dataframe_to_rows(df_giam_clean, index=False, header=True):
+                    ws3.append(r)
+                    
+                ws4 = wb.create_sheet(title="4_DS_Vang_Hom_Nay")
+                if not df_vang.empty:
+                    for r in dataframe_to_rows(df_vang, index=False, header=True):
+                        ws4.append(r)
+
+                for ws in wb.worksheets:
+                    for cell in ws[1]:
+                        cell.font = Font(bold=True)
+                        cell.alignment = Alignment(horizontal="center")
+                        
+                output_excel = BytesIO()
+                wb.save(output_excel)
+                
+                st.download_button(
+                    label="📥 TẢI FILE EXCEL CHỐT ĐỐI SOÁT CUỐI THÁNG",
+                    data=output_excel.getvalue(),
+                    file_name="Chot_Com_Hom_Nay.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    type="primary"
+                )
+
+            except Exception as e:
+                st.error(f"Đã xảy ra lỗi trong quá trình xử lý file: {e}")
+
+# ==========================================
+# 5. KÍCH HOẠT ỨNG DỤNG THEO LỰA CHỌN MENU
+# ==========================================
+if app_mode == "📄 1. PDF sang Word":
+    app_pdf_to_word()
+elif app_mode == "🖨️ 2. Chuyển PDF về khổ A4":
+    app_number_2()
+elif app_mode == "📊 3. PDF/Ảnh sang Excel":
+    app_number_3()
+elif app_mode == "🔍 4. So sánh Văn bản / Hợp đồng":
+    app_document_compare()
+elif app_mode == "✂️ 5. Cắt & Ghép PDF":
+    app_pdf_split_merge()
+elif app_mode == "💻 6. Chuyên gia Công thức & VBA":
+    app_excel_expert()
+elif app_mode == "🍱 7. Tổng hợp Suất ăn Công nghiệp":
+    app_meal_report()
