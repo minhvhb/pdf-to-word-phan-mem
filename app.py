@@ -45,7 +45,7 @@ def clear_file():
     st.session_state.uploader_key += 1
 
 # ==========================================
-# 1. ĐỌC DỮ LIỆU TÀI KHOẢN
+# 1. ĐỌC DỮ LIỆU TÀI KHOẢN VÀ ĐĂNG NHẬP
 # ==========================================
 with open('config.yaml', 'r', encoding='utf-8') as file:
     config = yaml.load(file, Loader=SafeLoader)
@@ -62,11 +62,11 @@ authenticator = stauth.Authenticate(
 # ==========================================
 # 2. GIAO DIỆN TRANG ĐĂNG NHẬP (KIỂU KÍNH MỜ CHUYÊN NGHIỆP)
 # ==========================================
-# Lệnh này kiểm tra xem người dùng đã đăng nhập chưa. Nếu CHƯA, máy sẽ áp dụng giao diện hình nền
+# Áp dụng giao diện hình nền và form kính mờ khi chưa đăng nhập
 if st.session_state.get("authentication_status") != True:
     st.markdown("""
         <style>
-            /* 1. Hình nền Mùa thu (Bạn có thể thay URL ảnh khác vào phần url(...) bên dưới) */
+            /* 1. Hình nền Mùa thu */
             .stApp {
                 background-image: url("https://images.unsplash.com/photo-1477414348463-c0eb7f1359b6?q=80&w=2070&auto=format&fit=crop");
                 background-size: cover;
@@ -114,13 +114,13 @@ if st.session_state.get("authentication_status") != True:
                 box-shadow: 0px 4px 10px rgba(0,0,0,0.3);
             }
             
-            /* 5. Căn chỉnh ô nhập liệu cho tinh tế hơn */
+            /* 5. Căn chỉnh ô nhập liệu */
             [data-testid="stForm"] input {
                 border-radius: 6px;
                 border: 1px solid #ccc;
             }
             
-            /* Căn giữa dòng cảnh báo vàng mặc định để không bị lệch */
+            /* Căn giữa dòng cảnh báo vàng mặc định */
             div[data-testid="stVerticalBlock"] > div:has(div[data-testid="stMarkdownContainer"]) {
                 display: flex;
                 justify-content: center;
@@ -129,7 +129,7 @@ if st.session_state.get("authentication_status") != True:
         </style>
     """, unsafe_allow_html=True)
 
-# Khởi chạy form đăng nhập với Tiêu đề và nội dung tiếng Việt
+# Khởi chạy form đăng nhập với Tiếng Việt
 authenticator.login(
     location='main',
     fields={
@@ -144,11 +144,11 @@ if st.session_state["authentication_status"] == False:
     st.error('Tên đăng nhập hoặc mật khẩu không đúng!')
     st.stop()
 elif st.session_state["authentication_status"] == None:
-    st.warning('Vui lòng đăng nhập để sử dụng hệ thống')
+    st.warning('Vui lòng đăng nhập để sử dụng công cụ')
     st.stop()
 
 # ==========================================
-# 3. GIAO DIỆN THANH BÊN (SIDEBAR) TỐI ƯU 1 TRANG (KHI ĐÃ ĐĂNG NHẬP)
+# 3. GIAO DIỆN THANH BÊN (SIDEBAR) TỐI ƯU 1 TRANG
 # ==========================================
 st.markdown("""
     <style>
@@ -171,7 +171,7 @@ st.markdown("""
             margin-bottom: 5px; 
         }
         
-        /* CSS cho bảng Nguyên tắc để chữ tràn ngang, không bị thụt lề */
+        /* CSS cho bảng Nguyên tắc để chữ tràn ngang, không bị lộn xộn */
         .custom-alert {
             background-color: #f8d7da;
             color: #842029;
@@ -184,17 +184,17 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# Nút Đăng xuất canh giữa
+# 1. Nút Đăng xuất đưa LÊN TRÊN CÙNG (canh giữa)
 col1, col2, col3 = st.sidebar.columns([1, 2, 1])
 with col2:
     authenticator.logout('Đăng xuất', 'main')
 
-# Lời chào
+# 2. Lời chào nằm DƯỚI nút Đăng xuất
 st.sidebar.markdown(f"<h5 style='text-align: center; margin-top: 5px; margin-bottom: 0px;'>Chào mừng {st.session_state['name']}!</h5>", unsafe_allow_html=True)
 
 st.sidebar.markdown("---")
 
-# Menu Ứng dụng
+# 3. Menu Ứng dụng
 st.sidebar.markdown("### 📌 Menu Công Cụ")
 app_mode = st.sidebar.radio(
     "Vui lòng chọn ứng dụng:",
@@ -212,7 +212,7 @@ app_mode = st.sidebar.radio(
 
 st.sidebar.markdown("---") 
 
-# Bảng nguyên tắc sử dụng
+# 4. Bảng nguyên tắc sử dụng (Ép sát lề, trải ngang chữ)
 st.sidebar.markdown("""
     <div class="custom-alert">
         <b>⚠️ NGUYÊN TẮC SỬ DỤNG:</b><br>
