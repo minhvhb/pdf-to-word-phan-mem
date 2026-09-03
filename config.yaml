@@ -1,0 +1,16 @@
+credentials:
+  usernames:
+    admin:
+      email: admin@congty.com
+      name: Quản trị viên
+      password: '$2b$12$EixZaYVK1fsbw1ZfbX3OXePaWxn96p36WQoeG6Lruj3vjPGga31lW'
+      recovery_pin: '1234'
+
+cookie:
+  expiry_days: 30
+  key: key_bi_mat_cua_ban
+  name: app_dang_nhap
+
+pre-authorized:
+  emails:
+  - admin@congty.com
