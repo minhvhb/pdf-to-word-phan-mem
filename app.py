@@ -7,10 +7,10 @@ import streamlit as st
 with open('config.yaml', 'r', encoding='utf-8') as file:
     config = yaml.load(file, Loader=SafeLoader)
 
-# BĂM MẬT KHẨU TỰ ĐỘNG (Dòng này cực kỳ quan trọng để không bị lỗi sai Pass)
+# 2. BĂM MẬT KHẨU TỰ ĐỘNG
 stauth.Hasher.hash_passwords(config['credentials'])
 
-# 2. Cài đặt công cụ đăng nhập
+# 3. Cài đặt công cụ đăng nhập
 authenticator = stauth.Authenticate(
     config['credentials'],
     config['cookie']['name'],
@@ -18,10 +18,10 @@ authenticator = stauth.Authenticate(
     config['cookie']['expiry_days']
 )
 
-# 3. Mở khung đăng nhập
+# 4. Mở khung đăng nhập
 authenticator.login()
 
-# 4. Kiểm tra trạng thái
+# 5. Kiểm tra trạng thái
 if st.session_state["authentication_status"] == False:
     st.error('Tên đăng nhập hoặc mật khẩu không đúng!')
     st.stop()
@@ -30,28 +30,36 @@ elif st.session_state["authentication_status"] == None:
     st.stop()
 
 # ==========================================
-# KHI ĐĂNG NHẬP THÀNH CÔNG -> TẠO BỐ CỤC 1 TRÊN THANH BÊN
+# GIAO DIỆN THANH BÊN KHI ĐĂNG NHẬP THÀNH CÔNG
 # ==========================================
-# 1. Đưa Lời chào và Nút đăng xuất lên CÙNG 1 HÀNG ngang
-    col1, col2 = st.sidebar.columns([5, 5])
-    with col1:
-        st.write(f'Chào **{st.session_state["name"]}**!')
-    with col2:
-        # Lệnh 'main' ở đây giúp nút nằm vừa vặn trong cột, không bị bung ra ngoài
-        authenticator.logout('Đăng xuất', 'main')
 
-    # 2. Vẽ đường kẻ ngang
-    st.sidebar.markdown("---")
+# 1. Hiển thị Lời chào và nút Đăng xuất (An toàn, không bị lỗi mất nút)
+st.sidebar.write(f'Chào mừng **{st.session_state["name"]}**!')
+authenticator.logout('Đăng xuất', 'sidebar')
 
-    # 3. Đoạn mã CSS ẩn giúp bóp nhỏ toàn bộ khoảng trống thừa trên thanh bên
-    st.markdown("""
-        <style>
-            /* Kéo đường kẻ ngang và Menu xích lại gần nhau */
-            [data-testid="stSidebar"] hr {margin-top: -10px; margin-bottom: 0px;}
-            /* Kéo bảng chọn chức năng lên cao hơn */
-            [data-testid="stSidebar"] .stRadio {margin-top: -15px;}
-        </style>
-    """, unsafe_allow_html=True)
+# 2. Dùng CSS ẩn để kéo gọn toàn bộ khoảng trống (Chống cuộn trang)
+st.markdown("""
+    <style>
+        /* Kéo nút đăng xuất sát lên Lời chào */
+        [data-testid="stSidebar"] div.stButton {margin-top: -15px; margin-bottom: -10px;}
+        /* Thu gọn khoảng cách đường kẻ ngang */
+        [data-testid="stSidebar"] hr {margin-top: -5px; margin-bottom: 0px;}
+    </style>
+""", unsafe_allow_html=True)
+
+# 3. Vẽ đường kẻ ngang số 1
+st.sidebar.markdown("---")
+
+# 4. Nút gập "Nguyên tắc sử dụng" siêu gọn (Thay thế cho bảng cảnh báo to cũ)
+with st.sidebar.expander("⚠️ NGUYÊN TẮC SỬ DỤNG (Bấm để xem)"):
+    st.error("- **Bảo mật:** KHÔNG tải lên tài liệu MẬT, TỐI MẬT, dữ liệu tài chính chưa công khai.\n\n- **Tối ưu:** Chỉ tải file PDF **dưới 30 trang/lần**.")
+
+# 5. Vẽ đường kẻ ngang số 2
+st.sidebar.markdown("---")
+
+# ==========================================
+# --- CODE MENU VÀ XỬ LÝ PDF CỦA BẠN SẼ BẮT ĐẦU TỪ ĐÂY VÀ GIỮ NGUYÊN ---
+# ==========================================
 
 # --- TỪ DÒNG NÀY TRỞ XUỐNG LÀ CODE APP PDF CŨ CỦA BẠN (GIỮ NGUYÊN) ---
 
