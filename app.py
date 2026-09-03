@@ -4,7 +4,7 @@ import streamlit_authenticator as stauth
 import streamlit as st
 
 # --- BẮT ĐẦU ĐOẠN LẤY MÃ ---
-mk = stauth.Hasher(['Cns@2026@']).generate()
+mk = stauth.Hasher(['Cns@2026@']).hash_passwords()
 st.error(f"Hãy Copy đoạn mã này: {mk[0]}")
 st.stop()
 # --- KẾT THÚC ĐOẠN LẤY MÃ ---
