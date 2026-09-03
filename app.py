@@ -60,7 +60,7 @@ authenticator = stauth.Authenticate(
 )
 
 # ==========================================
-# 2. GIAO DIỆN TRANG ĐĂNG NHẬP (ÉP CSS TỐI ĐA ĐỂ KHÔNG BỊ VỠ LAYOUT)
+# 2. GIAO DIỆN TRANG ĐĂNG NHẬP (ÉP CSS TỐI ĐA ĐỂ CÂN ĐỐI 100%)
 # ==========================================
 if st.session_state.get("authentication_status") != True:
     st.markdown("""
@@ -75,7 +75,7 @@ if st.session_state.get("authentication_status") != True:
             
             /* 2. Ép Form Kính mờ nằm giữa trang */
             [data-testid="stForm"] {
-                background-color: rgba(255, 255, 255, 0.85) !important;
+                background-color: rgba(255, 255, 255, 0.95) !important;
                 padding: 40px !important;
                 border-radius: 15px !important;
                 box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3) !important;
@@ -83,30 +83,42 @@ if st.session_state.get("authentication_status") != True:
                 max-width: 90vw !important;
                 margin: 10vh auto 0 auto !important;
                 border: 1px solid rgba(255, 255, 255, 0.5) !important;
-                backdrop-filter: blur(10px) !important;
-                -webkit-backdrop-filter: blur(10px) !important;
             }
             
             /* 3. Tiêu đề Form */
             [data-testid="stForm"] h2 {
                 text-align: center !important;
-                width: 100% !important;
                 color: #003366 !important;
                 font-weight: 900 !important;
-                font-size: 24px !important;
+                font-size: 26px !important;
                 margin-bottom: 25px !important;
                 padding-bottom: 0px !important;
+                width: 100% !important;
+            }
+
+            /* LỆNH ÉP BUỘC CÁC CỘT VÀ KHỐI TRONG FORM PHẢI RỘNG 100% */
+            [data-testid="stForm"] [data-testid="stVerticalBlock"] > div {
+                width: 100% !important;
+                max-width: 100% !important;
+            }
+            [data-testid="stForm"] .stTextInput, 
+            [data-testid="stForm"] .stButton {
+                width: 100% !important;
+                min-width: 100% !important;
             }
             
-            /* 4. Đổi màu ô nhập liệu thành trắng tinh, viền rõ để không bị chìm */
-            [data-testid="stForm"] div[data-baseweb="input"] {
+            /* 4. Đổi màu ô nhập liệu thành trắng tinh, viền rõ */
+            [data-testid="stForm"] div[data-baseweb="input"],
+            [data-testid="stForm"] div[data-baseweb="base-input"] {
                 background-color: #ffffff !important;
-                border: 1px solid #999999 !important;
+                border: 1px solid #ccc !important;
                 border-radius: 6px !important;
+                width: 100% !important;
             }
-            [data-testid="stForm"] div[data-baseweb="input"] input {
+            [data-testid="stForm"] input {
                 background-color: transparent !important;
-                color: #000000 !important;
+                color: #000 !important;
+                font-size: 15px !important;
             }
             [data-testid="stForm"] .stTextInput label p {
                 font-size: 14px !important;
@@ -115,11 +127,12 @@ if st.session_state.get("authentication_status") != True:
             }
             
             /* 5. Nút bấm Đăng nhập: Ép rộng 100% bằng ô nhập liệu */
-            [data-testid="stForm"] div[data-testid="stFormSubmitButton"] {
+            [data-testid="stFormSubmitButton"] {
                 width: 100% !important;
-                display: block !important;
+                display: flex !important;
+                justify-content: center !important;
             }
-            [data-testid="stForm"] div[data-testid="stFormSubmitButton"] button {
+            [data-testid="stFormSubmitButton"] button {
                 width: 100% !important;
                 background-color: #003366 !important;
                 color: white !important;
@@ -128,14 +141,11 @@ if st.session_state.get("authentication_status") != True:
                 border-radius: 8px !important;
                 padding: 12px 0 !important;
                 border: none !important;
-                margin-top: 15px !important;
-                transition: all 0.3s ease-in-out !important;
+                margin-top: 10px !important;
                 display: block !important;
             }
-            [data-testid="stForm"] div[data-testid="stFormSubmitButton"] button:hover {
+            [data-testid="stFormSubmitButton"] button:hover {
                 background-color: #001f3f !important;
-                box-shadow: 0px 4px 15px rgba(0,0,0,0.4) !important;
-                transform: translateY(-2px) !important;
             }
             
             /* Căn giữa dòng cảnh báo vàng mặc định (nếu có) */
@@ -161,7 +171,7 @@ if st.session_state["authentication_status"] == False:
     st.error('Tên đăng nhập hoặc mật khẩu không đúng!')
     st.stop()
 elif st.session_state["authentication_status"] == None:
-    st.warning('Vui lòng đăng nhập để sử dụng công cụ')
+    st.warning('Vui lòng đăng nhập để sử dụng hệ thống')
     st.stop()
 
 # ==========================================
