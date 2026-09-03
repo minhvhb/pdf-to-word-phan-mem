@@ -1,3 +1,40 @@
+import yaml
+from yaml.loader import SafeLoader
+import streamlit_authenticator as stauth
+import streamlit as st
+
+# 1. Đọc dữ liệu tài khoản từ file config
+with open('config.yaml') as file:
+    config = yaml.load(file, Loader=SafeLoader)
+
+# 2. Cài đặt công cụ đăng nhập
+authenticator = stauth.Authenticate(
+    config['credentials'],
+    config['cookie']['name'],
+    config['cookie']['key'],
+    config['cookie']['expiry_days'],
+    config['pre-authorized']
+)
+
+# 3. Tạo khung đăng nhập
+name, authentication_status, username = authenticator.login('main')
+
+# 4. Kiểm tra trạng thái
+if authentication_status == False:
+    st.error('Tên đăng nhập hoặc mật khẩu không đúng!')
+    st.stop() # Dừng toàn bộ app, không cho hiển thị phần chuyển PDF nếu nhập sai
+elif authentication_status == None:
+    st.warning('Vui lòng đăng nhập để sử dụng công cụ')
+    st.stop() # Dừng toàn bộ app nếu chưa nhập gì
+
+# Nếu code chạy đến dòng này tức là đã đăng nhập thành công
+authenticator.logout('Đăng xuất', 'main')
+st.write(f'Chào mừng **{name}**!')
+st.divider()
+
+# --- TỪ DÒNG NÀY TRỞ XUỐNG LÀ CODE APP PDF CŨ CỦA BẠN (GIỮ NGUYÊN) ---
+
+
 import streamlit as st
 import os
 import re
