@@ -60,18 +60,12 @@ authenticator = stauth.Authenticate(
 )
 
 # ==========================================
-# 2. GIAO DIỆN TRANG ĐĂNG NHẬP (ÉP CSS TỐI ĐA ĐỂ CÂN ĐỐI 100%)
+# 2. GIAO DIỆN TRANG ĐĂNG NHẬP (ÉP CSS TỐI ĐA TRỰC TIẾP VÀO COMPONENT)
 # ==========================================
 if st.session_state.get("authentication_status") != True:
     st.markdown("""
         <style>
-            /* 1. Xóa khoảng trắng khổng lồ trên nóc để CHỐNG CUỘN TRANG */
-            .block-container {
-                padding-top: 2rem !important;
-                padding-bottom: 0rem !important;
-            }
-
-            /* 2. Hình nền Mùa thu */
+            /* 1. Hình nền Mùa thu */
             .stApp {
                 background-image: url("https://images.unsplash.com/photo-1477414348463-c0eb7f1359b6?q=80&w=2070&auto=format&fit=crop");
                 background-size: cover;
@@ -79,85 +73,83 @@ if st.session_state.get("authentication_status") != True:
                 background-attachment: fixed;
             }
             
-            /* 3. Ép Form Kính mờ nằm giữa trang */
-            [data-testid="stForm"] {
-                background-color: rgba(255, 255, 255, 0.92) !important;
-                padding: 30px !important;
-                border-radius: 12px !important;
-                box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3) !important;
-                width: 420px !important;
-                max-width: 90vw !important;
-                margin: 0 auto !important; /* Kéo form lên sát trên */
+            /* 2. Biến toàn bộ khung chính thành Khung kính mờ */
+            .block-container {
+                background-color: rgba(255, 255, 255, 0.95) !important;
+                padding: 40px !important;
+                border-radius: 15px !important;
+                box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3) !important;
+                max-width: 450px !important;
+                margin-top: 10vh !important;
                 border: 1px solid rgba(255, 255, 255, 0.5) !important;
             }
             
-            /* 4. Tiêu đề Form */
-            [data-testid="stForm"] h2 {
+            /* 3. Tiêu đề Form */
+            h1, h2, h3 {
                 text-align: center !important;
                 color: #003366 !important;
                 font-weight: 900 !important;
                 font-size: 26px !important;
                 margin-bottom: 20px !important;
                 padding-bottom: 0px !important;
-                width: 100% !important;
-            }
-
-            /* LỆNH TỐI THƯỢNG: ÉP CÁC CỘT ẨN BÊN TRONG RỘNG 100% DÀN ĐỀU */
-            [data-testid="stForm"] [data-testid="column"],
-            [data-testid="stForm"] .stTextInput,
-            [data-testid="stForm"] .stButton {
-                width: 100% !important;
-                min-width: 100% !important;
-                max-width: 100% !important;
-                flex: 1 1 100% !important; /* Đập tan cột chia đôi của Streamlit */
             }
             
-            /* 5. Đổi màu ô nhập liệu thành TRẮNG TINH, viền rõ */
-            [data-testid="stForm"] div[data-baseweb="input"],
-            [data-testid="stForm"] div[data-baseweb="base-input"] {
+            /* 4. Đổi màu ô nhập liệu thành TRẮNG TINH */
+            div[data-baseweb="input"],
+            div[data-baseweb="base-input"] {
                 background-color: #ffffff !important;
-                border: 1px solid #999 !important;
+                border: 1px solid #ccc !important;
                 border-radius: 6px !important;
-                width: 100% !important;
             }
-            [data-testid="stForm"] input {
+            input {
                 background-color: transparent !important;
                 color: #000 !important;
                 font-size: 15px !important;
             }
-            [data-testid="stForm"] .stTextInput label p {
+            
+            /* Tùy chỉnh chữ Tiêu đề (Label) của ô nhập liệu */
+            .stTextInput label p {
                 font-size: 14px !important;
                 font-weight: bold !important;
                 color: #333 !important;
             }
             
-            /* 6. NÚT BẤM ĐĂNG NHẬP: TO BẰNG Ô CHỮ, IN ĐẬM */
-            [data-testid="stForm"] .stButton > button {
+            /* 5. NÚT BẤM ĐĂNG NHẬP: Ép rộng 100% bằng ô nhập liệu và in đậm chữ */
+            div[data-testid="stButton"] {
+                width: 100% !important;
+                display: flex !important;
+                justify-content: center !important;
+                margin-top: 10px !important;
+            }
+            div[data-testid="stButton"] > button {
                 width: 100% !important;
                 background-color: #003366 !important;
                 color: white !important;
                 border-radius: 6px !important;
-                padding: 12px 0 !important;
+                padding: 10px 0 !important;
                 border: none !important;
-                margin-top: 10px !important;
                 display: block !important;
             }
-            [data-testid="stForm"] .stButton > button p {
+            /* Chữ trong nút Đăng nhập */
+            div[data-testid="stButton"] > button p {
                 font-weight: 900 !important;
-                font-size: 16px !important;
+                font-size: 18px !important;
                 letter-spacing: 1px !important;
                 margin: 0 !important;
-                text-transform: uppercase !important;
+                color: #ffffff !important;
             }
-            [data-testid="stForm"] .stButton > button:hover {
+            div[data-testid="stButton"] > button:hover {
                 background-color: #001f3f !important;
+                box-shadow: 0px 4px 12px rgba(0,0,0,0.3) !important;
+                color: white !important;
+                border-color: transparent !important;
             }
             
-            /* Căn giữa dòng cảnh báo vàng dưới form và bóp gọn nó lại */
-            .stAlert {
-                max-width: 420px !important;
-                margin: 15px auto !important;
-                padding: 10px !important;
+            /* Căn giữa dòng cảnh báo vàng mặc định */
+            div[data-testid="stVerticalBlock"] > div:has(div[data-testid="stMarkdownContainer"]) {
+                display: flex;
+                justify-content: center;
+                margin-top: 15px;
             }
         </style>
     """, unsafe_allow_html=True)
