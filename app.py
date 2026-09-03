@@ -32,15 +32,26 @@ elif st.session_state["authentication_status"] == None:
 # ==========================================
 # KHI ĐĂNG NHẬP THÀNH CÔNG -> TẠO BỐ CỤC 1 TRÊN THANH BÊN
 # ==========================================
-# Lệnh đẩy Lời chào và nút Đăng xuất sang thanh bên (sidebar)
-st.sidebar.write(f'Chào mừng **{st.session_state["name"]}**!')
-authenticator.logout('Đăng xuất', 'sidebar')
+# 1. Đưa Lời chào và Nút đăng xuất lên CÙNG 1 HÀNG ngang
+    col1, col2 = st.sidebar.columns([5, 5])
+    with col1:
+        st.write(f'Chào **{st.session_state["name"]}**!')
+    with col2:
+        # Lệnh 'main' ở đây giúp nút nằm vừa vặn trong cột, không bị bung ra ngoài
+        authenticator.logout('Đăng xuất', 'main')
 
-# Vẽ đường kẻ ngang số 1
-st.sidebar.divider() 
+    # 2. Vẽ đường kẻ ngang
+    st.sidebar.markdown("---")
 
-# Dòng chữ dưới đây chỉ là ghi chú, máy sẽ tự động bỏ qua
-# --- TỪ DÒNG NÀY TRỞ XUỐNG LÀ CODE APP PDF CŨ CỦA BẠN (GIỮ NGUYÊN) ---
+    # 3. Đoạn mã CSS ẩn giúp bóp nhỏ toàn bộ khoảng trống thừa trên thanh bên
+    st.markdown("""
+        <style>
+            /* Kéo đường kẻ ngang và Menu xích lại gần nhau */
+            [data-testid="stSidebar"] hr {margin-top: -10px; margin-bottom: 0px;}
+            /* Kéo bảng chọn chức năng lên cao hơn */
+            [data-testid="stSidebar"] .stRadio {margin-top: -15px;}
+        </style>
+    """, unsafe_allow_html=True)
 
 # --- TỪ DÒNG NÀY TRỞ XUỐNG LÀ CODE APP PDF CŨ CỦA BẠN (GIỮ NGUYÊN) ---
 
