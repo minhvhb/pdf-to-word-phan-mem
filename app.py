@@ -71,32 +71,37 @@ elif st.session_state["authentication_status"] == None:
 # ==========================================
 # 2. GIAO DIỆN THANH BÊN (SIDEBAR) SAU KHI ĐĂNG NHẬP
 # ==========================================
+
+# CSS tối ưu ép khoảng cách để không bị cuộn trang khi bung Bảng cảnh báo
 st.markdown("""
     <style>
-        /* Ép toàn bộ thanh bên đẩy lên sát trần trên cùng */
-        section[data-testid="stSidebar"] > div { padding-top: 0rem !important; }
-        [data-testid="stSidebarUserContent"] { padding-top: 0rem !important; }
+        /* Đẩy nội dung thanh bên lên trên một chút cho cân đối, không bị dính nóc */
+        [data-testid="stSidebarUserContent"] { padding-top: 1rem !important; padding-bottom: 0rem !important; }
         
-        /* Canh giữa nút Đăng xuất và kéo sát lên trên */
-        [data-testid="stSidebar"] div.stButton { 
-            display: flex; 
-            justify-content: center; 
-            margin-top: -10px; 
-            margin-bottom: -10px;
-        }
+        /* Thu hẹp khoảng cách giữa các dòng trong Menu radio */
+        [data-testid="stSidebarUserContent"] div[role="radiogroup"] > label { margin-bottom: -5px !important; }
         
-        /* Thu hẹp khoảng cách đường kẻ ngang */
-        [data-testid="stSidebar"] hr { margin-top: 10px; margin-bottom: 0px; }
+        /* Thu hẹp đường kẻ ngang */
+        [data-testid="stSidebarUserContent"] hr { margin-top: 10px; margin-bottom: 10px; }
+        
+        /* Ép bảng cảnh báo nhỏ gọn lại */
+        [data-testid="stSidebarUserContent"] div[data-testid="stAlert"] { padding: 10px !important; }
     </style>
 """, unsafe_allow_html=True)
 
-# Lời chào và Nút đăng xuất (canh giữa)
-st.sidebar.markdown(f"<p style='text-align: center; margin-bottom: 0px;'>Chào mừng <b>{st.session_state['name']}</b>!</p>", unsafe_allow_html=True)
-authenticator.logout('Đăng xuất', 'sidebar')
+# Lời chào 
+st.sidebar.markdown(f"<h4 style='text-align: center; margin-bottom: 10px;'>Chào mừng {st.session_state['name']}!</h4>", unsafe_allow_html=True)
+
+# Canh giữa nút Đăng xuất bằng thủ thuật chia cột
+col1, col2, col3 = st.sidebar.columns([1, 2, 1])
+with col2:
+    # Lệnh 'main' kết hợp với with col2 sẽ ép nút vào chính giữa thanh bên
+    authenticator.logout('Đăng xuất', 'main')
+
 st.sidebar.markdown("---")
 
-st.sidebar.title("📌 Menu Công Cụ")
-
+# Menu Ứng dụng
+st.sidebar.markdown("### 📌 Menu Công Cụ")
 app_mode = st.sidebar.radio(
     "Vui lòng chọn ứng dụng:",
     [
@@ -107,19 +112,21 @@ app_mode = st.sidebar.radio(
         "✂️ 5. Cắt & Ghép PDF",
         "💻 6. Chuyên gia Công thức & VBA",
         "🍱 7. Tổng hợp Suất ăn Công nghiệp"
-    ]
+    ],
+    label_visibility="collapsed" # Ẩn chữ "Vui lòng chọn ứng dụng" để tiết kiệm thêm chiều cao
 )
 
 st.sidebar.markdown("---") 
 
-with st.sidebar.expander("⚠️ NGUYÊN TẮC SỬ DỤNG (Bấm để xem)"):
-    st.error(
-        "- **Bảo mật:** KHÔNG tải lên tài liệu MẬT, TỐI MẬT, dữ liệu tài chính chưa công khai và thông tin nhạy cảm của khách hàng.\n\n"
-        "- **Tối ưu:** Chỉ tải file PDF **dưới 30 trang/lần**."
-    )
+# Bảng nguyên tắc mở bung ra (như yêu cầu của bạn)
+st.sidebar.error(
+    "⚠️ **NGUYÊN TẮC SỬ DỤNG:**\n\n"
+    "- **Bảo mật:** KHÔNG tải lên tài liệu MẬT, TỐI MẬT, dữ liệu tài chính chưa công khai.\n\n"
+    "- **Tối ưu:** Chỉ tải file PDF **dưới 30 trang/lần**."
+)
 
 # ==========================================
-# 3. CÁC HÀM XỬ LÝ CHỨC NĂNG (GỘP TỪ CODE CŨ CỦA BẠN)
+# 3. CÁC HÀM XỬ LÝ CHỨC NĂNG 
 # ==========================================
 def parse_and_add_runs(paragraph, text):
     parts_bold = re.split(r'\*\*(.*?)\*\*', text)
