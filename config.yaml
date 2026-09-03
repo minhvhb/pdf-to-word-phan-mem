@@ -3,7 +3,7 @@ credentials:
     admin:
       email: admin@congty.com
       name: Quản trị viên
-      password: '$2b$12$EixZaYVK1fsbw1ZfbX3OXePaWxn96p36WQoeG6Lruj3vjPGga31lW'
+      password: 'Cns@2026@'
       recovery_pin: '1234'
 
 cookie:
