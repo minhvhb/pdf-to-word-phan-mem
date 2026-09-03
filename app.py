@@ -73,7 +73,7 @@ if st.session_state.get("authentication_status") != True:
                 background-attachment: fixed;
             }
             
-            /* 2. Ép Form Kính mờ nằm giữa trang, đổ bóng chuyên nghiệp */
+            /* 2. Ép Form Kính mờ nằm giữa trang */
             [data-testid="stForm"] {
                 background-color: rgba(255, 255, 255, 0.85) !important;
                 padding: 40px !important;
@@ -87,7 +87,7 @@ if st.session_state.get("authentication_status") != True:
                 -webkit-backdrop-filter: blur(10px) !important;
             }
             
-            /* 3. Tiêu đề Form: Canh giữa tuyệt đối, không rớt dòng bừa bãi */
+            /* 3. Tiêu đề Form */
             [data-testid="stForm"] h2 {
                 text-align: center !important;
                 width: 100% !important;
@@ -98,12 +98,15 @@ if st.session_state.get("authentication_status") != True:
                 padding-bottom: 0px !important;
             }
             
-            /* 4. Ép 2 ô nhập liệu rộng 100% */
-            [data-testid="stForm"] .stTextInput {
-                width: 100% !important;
+            /* 4. Đổi màu ô nhập liệu thành trắng tinh, viền rõ để không bị chìm */
+            [data-testid="stForm"] div[data-baseweb="input"] {
+                background-color: #ffffff !important;
+                border: 1px solid #999999 !important;
+                border-radius: 6px !important;
             }
-            [data-testid="stForm"] .stTextInput > div {
-                width: 100% !important;
+            [data-testid="stForm"] div[data-baseweb="input"] input {
+                background-color: transparent !important;
+                color: #000000 !important;
             }
             [data-testid="stForm"] .stTextInput label p {
                 font-size: 14px !important;
@@ -111,14 +114,12 @@ if st.session_state.get("authentication_status") != True:
                 color: #333 !important;
             }
             
-            /* 5. Nút bấm Đăng nhập: Tràn viền 100%, canh giữa, màu nổi bật */
-            [data-testid="stFormSubmitButton"] {
+            /* 5. Nút bấm Đăng nhập: Ép rộng 100% bằng ô nhập liệu */
+            [data-testid="stForm"] div[data-testid="stFormSubmitButton"] {
                 width: 100% !important;
-                display: flex !important;
-                justify-content: center !important;
-                margin-top: 15px !important;
+                display: block !important;
             }
-            [data-testid="stFormSubmitButton"] > button {
+            [data-testid="stForm"] div[data-testid="stFormSubmitButton"] button {
                 width: 100% !important;
                 background-color: #003366 !important;
                 color: white !important;
@@ -127,9 +128,11 @@ if st.session_state.get("authentication_status") != True:
                 border-radius: 8px !important;
                 padding: 12px 0 !important;
                 border: none !important;
+                margin-top: 15px !important;
                 transition: all 0.3s ease-in-out !important;
+                display: block !important;
             }
-            [data-testid="stFormSubmitButton"] > button:hover {
+            [data-testid="stForm"] div[data-testid="stFormSubmitButton"] button:hover {
                 background-color: #001f3f !important;
                 box-shadow: 0px 4px 15px rgba(0,0,0,0.4) !important;
                 transform: translateY(-2px) !important;
