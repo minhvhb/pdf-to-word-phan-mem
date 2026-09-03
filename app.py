@@ -65,7 +65,7 @@ authenticator = stauth.Authenticate(
 if st.session_state.get("authentication_status") != True:
     st.markdown("""
         <style>
-            /* Hình nền Mùa thu */
+            /* 1. Hình nền Mùa thu */
             .stApp {
                 background-image: url("https://images.unsplash.com/photo-1477414348463-c0eb7f1359b6?q=80&w=2070&auto=format&fit=crop");
                 background-size: cover;
@@ -73,10 +73,10 @@ if st.session_state.get("authentication_status") != True:
                 background-attachment: fixed;
             }
             
-            /* Ép Form Kính mờ nằm giữa trang */
+            /* 2. Ép Form Kính mờ nằm giữa trang */
             [data-testid="stForm"] {
                 background-color: rgba(255, 255, 255, 0.95) !important;
-                padding: 40px 30px !important;
+                padding: 40px !important;
                 border-radius: 15px !important;
                 box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3) !important;
                 width: 450px !important;
@@ -85,7 +85,7 @@ if st.session_state.get("authentication_status") != True:
                 border: 1px solid rgba(255, 255, 255, 0.5) !important;
             }
             
-            /* Tiêu đề Form */
+            /* 3. Tiêu đề Form */
             [data-testid="stForm"] h2 {
                 text-align: center !important;
                 color: #003366 !important;
@@ -96,53 +96,63 @@ if st.session_state.get("authentication_status") != True:
                 width: 100% !important;
             }
 
-            /* Đổi màu ô nhập liệu thành TRẮNG TINH */
-            [data-testid="stForm"] div[data-baseweb="input"], 
+            /* LỆNH ÉP BUỘC CÁC CỘT VÀ KHỐI TRONG FORM PHẢI RỘNG 100% */
+            [data-testid="stForm"] [data-testid="stVerticalBlock"] > div {
+                width: 100% !important;
+                max-width: 100% !important;
+            }
+            [data-testid="stForm"] .stTextInput {
+                width: 100% !important;
+                min-width: 100% !important;
+            }
+            
+            /* 4. Đổi màu ô nhập liệu thành trắng tinh, viền rõ */
+            [data-testid="stForm"] div[data-baseweb="input"],
             [data-testid="stForm"] div[data-baseweb="base-input"] {
                 background-color: #ffffff !important;
+                border: 1px solid #ccc !important;
+                border-radius: 6px !important;
+                width: 100% !important;
             }
-            /* Ép viền và bo góc ô nhập liệu */
-            [data-testid="stForm"] .stTextInput div[data-baseweb="input"] {
-                border: 1px solid #a0a0a0 !important;
-                border-radius: 5px !important;
+            [data-testid="stForm"] input {
+                background-color: transparent !important;
+                color: #000 !important;
+                font-size: 15px !important;
             }
-            /* Căn chỉnh text nhãn (Label) */
             [data-testid="stForm"] .stTextInput label p {
                 font-size: 14px !important;
-                font-weight: 700 !important;
+                font-weight: bold !important;
                 color: #333 !important;
             }
             
-            /* LỆNH ÉP NÚT ĐĂNG NHẬP RỘNG 100% XUYÊN QUA MỌI LỚP BỌC */
-            [data-testid="stForm"] div[data-testid="stFormSubmitButton"],
-            [data-testid="stForm"] div[data-testid="stFormSubmitButton"] > button {
+            /* 5. NÚT BẤM ĐĂNG NHẬP: ÉP RỘNG 100% VÀ IN ĐẬM CHỮ */
+            [data-testid="stForm"] div[data-testid="stFormSubmitButton"] {
                 width: 100% !important;
                 max-width: 100% !important;
-                min-width: 100% !important;
                 display: block !important;
             }
-            
-            [data-testid="stForm"] div[data-testid="stFormSubmitButton"] > button {
+            [data-testid="stForm"] div[data-testid="stFormSubmitButton"] button {
+                width: 100% !important;
+                min-width: 100% !important;
                 background-color: #003366 !important;
                 color: white !important;
-                border-radius: 6px !important;
-                padding: 10px 0 !important;
-                border: none !important;
-                margin-top: 15px !important;
-                transition: all 0.3s ease-in-out !important;
-            }
-            
-            /* In đậm chữ bên trong nút Đăng nhập */
-            [data-testid="stForm"] div[data-testid="stFormSubmitButton"] > button p {
-                font-weight: 900 !important;
                 font-size: 16px !important;
                 letter-spacing: 1px !important;
+                border-radius: 8px !important;
+                padding: 12px 0 !important;
+                border: none !important;
+                margin-top: 15px !important;
+                display: block !important;
+                transition: all 0.3s ease-in-out !important;
+            }
+            /* Ép mạnh phần chữ bên trong nút phải IN ĐẬM */
+            [data-testid="stForm"] div[data-testid="stFormSubmitButton"] button p {
+                font-weight: 900 !important;
                 margin: 0 !important;
             }
-
-            [data-testid="stForm"] div[data-testid="stFormSubmitButton"] > button:hover {
+            [data-testid="stForm"] div[data-testid="stFormSubmitButton"] button:hover {
                 background-color: #001f3f !important;
-                box-shadow: 0px 4px 12px rgba(0,0,0,0.3) !important;
+                box-shadow: 0px 4px 15px rgba(0,0,0,0.4) !important;
             }
             
             /* Căn giữa dòng cảnh báo vàng mặc định (nếu có) */
