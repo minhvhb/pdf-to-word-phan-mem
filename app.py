@@ -45,7 +45,7 @@ def clear_file():
     st.session_state.uploader_key += 1
 
 # ==========================================
-# 1. ĐỌC DỮ LIỆU TÀI KHOẢN VÀ ĐĂNG NHẬP
+# 1. ĐỌC DỮ LIỆU TÀI KHOẢN
 # ==========================================
 with open('config.yaml', 'r', encoding='utf-8') as file:
     config = yaml.load(file, Loader=SafeLoader)
@@ -59,14 +59,84 @@ authenticator = stauth.Authenticate(
     config['cookie']['expiry_days']
 )
 
-# === ĐÃ THÊM LỆNH VIỆT HÓA KHUNG ĐĂNG NHẬP ===
+# ==========================================
+# 2. GIAO DIỆN TRANG ĐĂNG NHẬP (KIỂU KÍNH MỜ CHUYÊN NGHIỆP)
+# ==========================================
+# Lệnh này kiểm tra xem người dùng đã đăng nhập chưa. Nếu CHƯA, máy sẽ áp dụng giao diện hình nền
+if st.session_state.get("authentication_status") != True:
+    st.markdown("""
+        <style>
+            /* 1. Hình nền Mùa thu (Bạn có thể thay URL ảnh khác vào phần url(...) bên dưới) */
+            .stApp {
+                background-image: url("https://images.unsplash.com/photo-1477414348463-c0eb7f1359b6?q=80&w=2070&auto=format&fit=crop");
+                background-size: cover;
+                background-position: center;
+                background-attachment: fixed;
+            }
+            
+            /* 2. Ép Form thành dạng Kính mờ (Glassmorphism) nằm giữa trang */
+            [data-testid="stForm"] {
+                background-color: rgba(255, 255, 255, 0.92);
+                padding: 40px 30px;
+                border-radius: 12px;
+                box-shadow: 0px 8px 24px rgba(0, 0, 0, 0.5);
+                max-width: 400px !important;
+                margin: 8vh auto 0 auto;
+                border: 1px solid rgba(255, 255, 255, 0.3);
+            }
+            
+            /* 3. Tùy chỉnh Tiêu đề của Form */
+            [data-testid="stForm"] h2 {
+                text-align: center;
+                color: #003366;
+                font-weight: 900;
+                font-size: 24px;
+                padding-bottom: 25px;
+                text-transform: uppercase;
+                letter-spacing: 1px;
+            }
+            
+            /* 4. Nút bấm Đăng nhập to, xanh, tràn viền */
+            [data-testid="stForm"] button {
+                width: 100%;
+                background-color: #003366;
+                color: white !important;
+                font-weight: bold;
+                font-size: 16px;
+                border-radius: 6px;
+                padding: 12px 0;
+                border: none;
+                margin-top: 15px;
+                text-transform: uppercase;
+            }
+            [data-testid="stForm"] button:hover {
+                background-color: #001f3f;
+                box-shadow: 0px 4px 10px rgba(0,0,0,0.3);
+            }
+            
+            /* 5. Căn chỉnh ô nhập liệu cho tinh tế hơn */
+            [data-testid="stForm"] input {
+                border-radius: 6px;
+                border: 1px solid #ccc;
+            }
+            
+            /* Căn giữa dòng cảnh báo vàng mặc định để không bị lệch */
+            div[data-testid="stVerticalBlock"] > div:has(div[data-testid="stMarkdownContainer"]) {
+                display: flex;
+                justify-content: center;
+                margin-top: 15px;
+            }
+        </style>
+    """, unsafe_allow_html=True)
+
+# Khởi chạy form đăng nhập với Tiêu đề và nội dung tiếng Việt
 authenticator.login(
     location='main',
     fields={
-        'Form name': 'Đăng nhập',
+        'Form name': 'CÔNG CỤ VĂN PHÒNG THÔNG MINH',
         'Username': 'Tên đăng nhập',
         'Password': 'Mật khẩu',
-        'Login': 'Đăng nhập'
+        'Login': 'ĐĂNG NHẬP'
     }
 )
 
@@ -74,11 +144,11 @@ if st.session_state["authentication_status"] == False:
     st.error('Tên đăng nhập hoặc mật khẩu không đúng!')
     st.stop()
 elif st.session_state["authentication_status"] == None:
-    st.warning('Vui lòng đăng nhập để sử dụng công cụ')
+    st.warning('Vui lòng đăng nhập để sử dụng hệ thống')
     st.stop()
 
 # ==========================================
-# 2. GIAO DIỆN THANH BÊN (SIDEBAR) TỐI ƯU 1 TRANG
+# 3. GIAO DIỆN THANH BÊN (SIDEBAR) TỐI ƯU 1 TRANG (KHI ĐÃ ĐĂNG NHẬP)
 # ==========================================
 st.markdown("""
     <style>
@@ -114,17 +184,17 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# 1. Nút Đăng xuất đưa LÊN TRÊN (canh giữa)
+# Nút Đăng xuất canh giữa
 col1, col2, col3 = st.sidebar.columns([1, 2, 1])
 with col2:
     authenticator.logout('Đăng xuất', 'main')
 
-# 2. Lời chào đưa XUỐNG DƯỚI
+# Lời chào
 st.sidebar.markdown(f"<h5 style='text-align: center; margin-top: 5px; margin-bottom: 0px;'>Chào mừng {st.session_state['name']}!</h5>", unsafe_allow_html=True)
 
 st.sidebar.markdown("---")
 
-# 3. Menu Ứng dụng
+# Menu Ứng dụng
 st.sidebar.markdown("### 📌 Menu Công Cụ")
 app_mode = st.sidebar.radio(
     "Vui lòng chọn ứng dụng:",
@@ -142,7 +212,7 @@ app_mode = st.sidebar.radio(
 
 st.sidebar.markdown("---") 
 
-# 4. Bảng nguyên tắc sử dụng (Ép sát lề, trải ngang chữ)
+# Bảng nguyên tắc sử dụng
 st.sidebar.markdown("""
     <div class="custom-alert">
         <b>⚠️ NGUYÊN TẮC SỬ DỤNG:</b><br>
@@ -153,7 +223,7 @@ st.sidebar.markdown("""
 
 
 # ==========================================
-# 3. CÁC HÀM XỬ LÝ CHỨC NĂNG CỦA ỨNG DỤNG
+# 4. CÁC HÀM XỬ LÝ CHỨC NĂNG CỦA ỨNG DỤNG
 # ==========================================
 def parse_and_add_runs(paragraph, text):
     parts_bold = re.split(r'\*\*(.*?)\*\*', text)
@@ -1248,7 +1318,7 @@ def app_meal_report():
                 st.error(f"Đã xảy ra lỗi trong quá trình xử lý file: {e}")
 
 # ==========================================
-# 4. KÍCH HOẠT ỨNG DỤNG THEO LỰA CHỌN MENU
+# 5. KÍCH HOẠT ỨNG DỤNG THEO LỰA CHỌN MENU
 # ==========================================
 if app_mode == "📄 1. PDF sang Word":
     app_pdf_to_word()
