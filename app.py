@@ -1,70 +1,13 @@
+import streamlit as st
+
+# ==========================================
+# CẤU HÌNH TRANG CHỦ ĐẠO (BẮT BUỘC PHẢI Ở DÒNG ĐẦU TIÊN)
+# ==========================================
+st.set_page_config(page_title="Hệ thống Công cụ AI", page_icon="⚙️", layout="centered", initial_sidebar_state="expanded")
+
 import yaml
 from yaml.loader import SafeLoader
 import streamlit_authenticator as stauth
-import streamlit as st
-
-# 1. Đọc dữ liệu tài khoản
-with open('config.yaml', 'r', encoding='utf-8') as file:
-    config = yaml.load(file, Loader=SafeLoader)
-
-# 2. BĂM MẬT KHẨU TỰ ĐỘNG
-stauth.Hasher.hash_passwords(config['credentials'])
-
-# 3. Cài đặt công cụ đăng nhập
-authenticator = stauth.Authenticate(
-    config['credentials'],
-    config['cookie']['name'],
-    config['cookie']['key'],
-    config['cookie']['expiry_days']
-)
-
-# 4. Mở khung đăng nhập
-authenticator.login()
-
-# 5. Kiểm tra trạng thái
-if st.session_state["authentication_status"] == False:
-    st.error('Tên đăng nhập hoặc mật khẩu không đúng!')
-    st.stop()
-elif st.session_state["authentication_status"] == None:
-    st.warning('Vui lòng đăng nhập để sử dụng công cụ')
-    st.stop()
-
-# ==========================================
-# GIAO DIỆN THANH BÊN KHI ĐĂNG NHẬP THÀNH CÔNG
-# ==========================================
-
-# 1. Hiển thị Lời chào và nút Đăng xuất (An toàn, không bị lỗi mất nút)
-st.sidebar.write(f'Chào mừng **{st.session_state["name"]}**!')
-authenticator.logout('Đăng xuất', 'sidebar')
-
-# 2. Dùng CSS ẩn để kéo gọn toàn bộ khoảng trống (Chống cuộn trang)
-st.markdown("""
-    <style>
-        /* Kéo nút đăng xuất sát lên Lời chào */
-        [data-testid="stSidebar"] div.stButton {margin-top: -15px; margin-bottom: -10px;}
-        /* Thu gọn khoảng cách đường kẻ ngang */
-        [data-testid="stSidebar"] hr {margin-top: -5px; margin-bottom: 0px;}
-    </style>
-""", unsafe_allow_html=True)
-
-# 3. Vẽ đường kẻ ngang số 1
-st.sidebar.markdown("---")
-
-# 4. Nút gập "Nguyên tắc sử dụng" siêu gọn (Thay thế cho bảng cảnh báo to cũ)
-with st.sidebar.expander("⚠️ NGUYÊN TẮC SỬ DỤNG (Bấm để xem)"):
-    st.error("- **Bảo mật:** KHÔNG tải lên tài liệu MẬT, TỐI MẬT, dữ liệu tài chính chưa công khai.\n\n- **Tối ưu:** Chỉ tải file PDF **dưới 30 trang/lần**.")
-
-# 5. Vẽ đường kẻ ngang số 2
-st.sidebar.markdown("---")
-
-# ==========================================
-# --- CODE MENU VÀ XỬ LÝ PDF CỦA BẠN SẼ BẮT ĐẦU TỪ ĐÂY VÀ GIỮ NGUYÊN ---
-# ==========================================
-
-# --- TỪ DÒNG NÀY TRỞ XUỐNG LÀ CODE APP PDF CŨ CỦA BẠN (GIỮ NGUYÊN) ---
-
-
-import streamlit as st
 import os
 import re
 import pandas as pd
@@ -84,10 +27,7 @@ from PIL import Image
 from pypdf import PdfReader, PdfWriter, Transformation
 import difflib
 
-# ==========================================
-# 1. CẤU HÌNH TRANG CHỦ ĐẠO
-# ==========================================
-st.set_page_config(page_title="Hệ thống Công cụ AI", page_icon="⚙️", layout="centered", initial_sidebar_state="expanded")
+# Ẩn nút gập thanh bên mặc định của Streamlit
 st.markdown(
     """
     <style>
@@ -105,7 +45,81 @@ def clear_file():
     st.session_state.uploader_key += 1
 
 # ==========================================
-# 2. KHU VỰC APP 1: CHUYỂN PDF SANG WORD
+# 1. ĐỌC DỮ LIỆU TÀI KHOẢN VÀ ĐĂNG NHẬP
+# ==========================================
+with open('config.yaml', 'r', encoding='utf-8') as file:
+    config = yaml.load(file, Loader=SafeLoader)
+
+stauth.Hasher.hash_passwords(config['credentials'])
+
+authenticator = stauth.Authenticate(
+    config['credentials'],
+    config['cookie']['name'],
+    config['cookie']['key'],
+    config['cookie']['expiry_days']
+)
+
+authenticator.login()
+
+if st.session_state["authentication_status"] == False:
+    st.error('Tên đăng nhập hoặc mật khẩu không đúng!')
+    st.stop()
+elif st.session_state["authentication_status"] == None:
+    st.warning('Vui lòng đăng nhập để sử dụng công cụ')
+    st.stop()
+
+# ==========================================
+# 2. GIAO DIỆN THANH BÊN (SIDEBAR) SAU KHI ĐĂNG NHẬP
+# ==========================================
+st.markdown("""
+    <style>
+        /* Ép toàn bộ thanh bên đẩy lên sát trần trên cùng */
+        section[data-testid="stSidebar"] > div { padding-top: 0rem !important; }
+        [data-testid="stSidebarUserContent"] { padding-top: 0rem !important; }
+        
+        /* Canh giữa nút Đăng xuất và kéo sát lên trên */
+        [data-testid="stSidebar"] div.stButton { 
+            display: flex; 
+            justify-content: center; 
+            margin-top: -10px; 
+            margin-bottom: -10px;
+        }
+        
+        /* Thu hẹp khoảng cách đường kẻ ngang */
+        [data-testid="stSidebar"] hr { margin-top: 10px; margin-bottom: 0px; }
+    </style>
+""", unsafe_allow_html=True)
+
+# Lời chào và Nút đăng xuất (canh giữa)
+st.sidebar.markdown(f"<p style='text-align: center; margin-bottom: 0px;'>Chào mừng <b>{st.session_state['name']}</b>!</p>", unsafe_allow_html=True)
+authenticator.logout('Đăng xuất', 'sidebar')
+st.sidebar.markdown("---")
+
+st.sidebar.title("📌 Menu Công Cụ")
+
+app_mode = st.sidebar.radio(
+    "Vui lòng chọn ứng dụng:",
+    [
+        "📄 1. PDF sang Word", 
+        "🖨️ 2. Chuyển PDF về khổ A4", 
+        "📊 3. PDF/Ảnh sang Excel", 
+        "🔍 4. So sánh Văn bản / Hợp đồng",
+        "✂️ 5. Cắt & Ghép PDF",
+        "💻 6. Chuyên gia Công thức & VBA",
+        "🍱 7. Tổng hợp Suất ăn Công nghiệp"
+    ]
+)
+
+st.sidebar.markdown("---") 
+
+with st.sidebar.expander("⚠️ NGUYÊN TẮC SỬ DỤNG (Bấm để xem)"):
+    st.error(
+        "- **Bảo mật:** KHÔNG tải lên tài liệu MẬT, TỐI MẬT, dữ liệu tài chính chưa công khai và thông tin nhạy cảm của khách hàng.\n\n"
+        "- **Tối ưu:** Chỉ tải file PDF **dưới 30 trang/lần**."
+    )
+
+# ==========================================
+# 3. CÁC HÀM XỬ LÝ CHỨC NĂNG (GỘP TỪ CODE CŨ CỦA BẠN)
 # ==========================================
 def parse_and_add_runs(paragraph, text):
     parts_bold = re.split(r'\*\*(.*?)\*\*', text)
@@ -344,9 +358,6 @@ def app_pdf_to_word():
                 except Exception as e:
                     st.error(f"Đã xảy ra lỗi: {e}")
 
-# ==========================================
-# 3. KHU VỰC APP 2: CHUYỂN PDF VỀ KHỔ A4
-# ==========================================
 def app_number_2():
     st.title("🖨️ Chuyển PDF về khổ A4")
     st.markdown("Xóa bỏ mọi khung ẩn của bản vẽ cũ, ép lại chính xác thành khổ A4 tiêu chuẩn.")
@@ -419,9 +430,6 @@ def app_number_2():
                 except Exception as e:
                     st.error(f"Đã xảy ra lỗi: {e}")
 
-# ==========================================
-# 4. KHU VỰC APP 3: BÓC TÁCH ĐẦY ĐỦ VÀ SẠCH SẼ SANG EXCEL
-# ==========================================
 def parse_rich_text(text_val, font_name="Times New Roman", size=12):
     text_str = str(text_val) if text_val is not None else ""
     parts = re.split(r'\*\*(.*?)\*\*', text_str)
@@ -479,7 +487,7 @@ def app_number_3():
                     {
                       "title": "Dòng tiêu đề trên cùng",
                       "info_lines": [
-                        "Dòng thông্বরূপ tin 1",
+                        "Dòng thông tin 1",
                         "Dòng thông tin 2"
                       ],
                       "headers": ["Cột 1", "Cột 2", "Cột 3"],
@@ -613,9 +621,6 @@ def app_number_3():
                 except Exception as e:
                     st.error(f"Đã xảy ra lỗi hệ thống: {e}")
 
-# ==========================================
-# 5. KHU VỰC APP 4: SO SÁNH VĂN BẢN / HỢP ĐỒNG (TỐI ƯU PYPDF & GEMINI)
-# ==========================================
 def extract_text_from_file(uploaded_file, client):
     text = ""
     file_ext = uploaded_file.name.split('.')[-1].lower()
@@ -832,16 +837,12 @@ def app_document_compare():
                 except Exception as e:
                     st.error(f"Đã xảy ra lỗi: {e}")
 
-# ==========================================
-# 6. KHU VỰC APP 5: CẮT & GHÉP PDF (SPLIT & MERGE)
-# ==========================================
 def app_pdf_split_merge():
     st.title("✂️ Cắt & Ghép PDF")
     st.markdown("Xử lý nhanh các tác vụ chia nhỏ một file PDF hoặc gộp nhiều file lại thành một.")
 
     tab1, tab2 = st.tabs(["✂️ Cắt PDF (Split)", "🔗 Ghép PDF (Merge)"])
 
-    # Tab 1: Cắt PDF
     with tab1:
         st.subheader("Cắt lấy trang cụ thể từ PDF")
         uploaded_split = st.file_uploader("Tải lên 1 file PDF cần cắt:", type=["pdf"], key=f"app5_split_{st.session_state.uploader_key}")
@@ -910,7 +911,6 @@ def app_pdf_split_merge():
             except Exception as e:
                 st.error(f"Lỗi khi đọc file PDF: {e}")
 
-    # Tab 2: Ghép PDF
     with tab2:
         st.subheader("Gộp nhiều file PDF thành 1 file duy nhất")
         uploaded_merges = st.file_uploader(
@@ -951,9 +951,6 @@ def app_pdf_split_merge():
                         except Exception as e:
                             st.error(f"Lỗi trong quá trình gộp file: {e}")
 
-# ==========================================
-# 7. KHU VỰC APP 6: CHUYÊN GIA CÔNG THỨC & VBA EXCEL
-# ==========================================
 def app_excel_expert():
     try:
         api_key_input = st.secrets["GEMINI_API_KEY"]
@@ -1030,9 +1027,6 @@ def app_excel_expert():
                 except Exception as e:
                     st.error(f"Đã xảy ra lỗi AI: {e}")
 
-# ==========================================
-# 8. KHU VỰC APP 7: TỔNG HỢP SUẤT ĂN CÔNG NGHIỆP
-# ==========================================
 def create_empty_templates():
     wb = openpyxl.Workbook()
     
@@ -1059,6 +1053,10 @@ def create_empty_templates():
     wb.save(output)
     return output.getvalue()
 
+def dataframe_to_rows(df, index=False, header=True):
+    from openpyxl.utils.dataframe import dataframe_to_rows as dtr
+    return dtr(df, index=index, header=header)
+
 def app_meal_report():
     st.title("🍱 Tổng hợp Suất ăn Công nghiệp")
     st.markdown("Tính toán tự động số lượng suất ăn nhà máy, trừ hao người cắt cơm tháng và xử lý biến động đột xuất trong ngày.")
@@ -1080,7 +1078,6 @@ def app_meal_report():
     with col1:
         file_tong = st.file_uploader("Tải lên File 'Danh sách Tổng & Cắt Cơm Tháng'", type=["xlsx", "xls"], key=f"app7_f1_{st.session_state.uploader_key}")
     with col2:
-        # TÍNH NĂNG MỚI: CHO PHÉP UPLOAD NHIỀU FILE BÁO VẮNG CÙNG LÚC
         file_vangs = st.file_uploader("Tải lên File(s) 'Báo vắng hôm nay' (Kéo thả nhiều file cùng lúc)", type=["xlsx", "xls"], accept_multiple_files=True, key=f"app7_f2_{st.session_state.uploader_key}")
 
     st.subheader("2. Điều chỉnh Đột Xuất (Trực tiếp)")
@@ -1119,7 +1116,6 @@ def app_meal_report():
                 tong_dict = df_tong.groupby(bp_col_tong).size().to_dict()
                 cat_dict = df_cat_thang.groupby(bp_col_cat).size().to_dict() if bp_col_cat else {}
 
-                # XỬ LÝ GỘP NHIỀU FILE BÁO VẮNG
                 df_vang = pd.DataFrame()
                 bp_col_vang = None
                 vang_dict = {}
@@ -1217,40 +1213,8 @@ def app_meal_report():
             except Exception as e:
                 st.error(f"Đã xảy ra lỗi trong quá trình xử lý file: {e}")
 
-def dataframe_to_rows(df, index=False, header=True):
-    from openpyxl.utils.dataframe import dataframe_to_rows as dtr
-    return dtr(df, index=index, header=header)
-
 # ==========================================
-# 9. THANH MENU BÊN TRÁI ĐIỀU HƯỚNG CÁC APP
-# ==========================================
-st.sidebar.title("📌 Menu Công Cụ")
-
-app_mode = st.sidebar.radio(
-    "Vui lòng chọn ứng dụng:",
-    [
-        "📄 1. PDF sang Word", 
-        "🖨️ 2. Chuyển PDF về khổ A4", 
-        "📊 3. PDF/Ảnh sang Excel", 
-        "🔍 4. So sánh Văn bản / Hợp đồng",
-        "✂️ 5. Cắt & Ghép PDF",
-        "💻 6. Chuyên gia Công thức & VBA",
-        "🍱 7. Tổng hợp Suất ăn Công nghiệp"
-    ]
-)
-
-st.sidebar.markdown("---") 
-
-st.sidebar.error("""
-:red[**⚠️ NGUYÊN TẮC SỬ DỤNG:**]
-
-:red[- **Bảo mật:** KHÔNG tải lên tài liệu MẬT, TỐI MẬT, dữ liệu tài chính chưa công khai và thông tin nhạy cảm của khách hàng.]
-
-:red[- **Tối ưu:** Chỉ tải file PDF **dưới 30 trang/lần**.]
-""")
-
-# ==========================================
-# 10. KÍCH HOẠT ỨNG DỤNG DỰA TRÊN LỰA CHỌN
+# 4. KÍCH HOẠT ỨNG DỤNG THEO LỰA CHỌN MENU
 # ==========================================
 if app_mode == "📄 1. PDF sang Word":
     app_pdf_to_word()
