@@ -3,39 +3,17 @@ from yaml.loader import SafeLoader
 import streamlit_authenticator as stauth
 import streamlit as st
 
-# --- BẮT ĐẦU ĐOẠN LẤY MÃ ---
-mk = stauth.Hasher.hash_passwords(['Cns@2026@'])
-st.error(f"Hãy Copy đoạn mã này: {mk[0]}")
-st.stop()
-# --- KẾT THÚC ĐOẠN LẤY MÃ ---
-
-# 1. Đọc dữ liệu tài khoản từ file config
+# Đọc file config.yaml (lúc này đang chứa mật khẩu Cns@2026@)
 with open('config.yaml') as file:
     config = yaml.load(file, Loader=SafeLoader)
 
-# 2. Cài đặt công cụ đăng nhập (đã xóa pre-authorized theo bản cập nhật mới)
-authenticator = stauth.Authenticate(
-    config['credentials'],
-    config['cookie']['name'],
-    config['cookie']['key'],
-    config['cookie']['expiry_days']
-)
+# Lệnh mới: Yêu cầu thư viện tự băm tất cả mật khẩu có trong file config
+stauth.Hasher.hash_passwords(config['credentials'])
 
-# 3. Tạo khung đăng nhập
-authenticator.login()
-
-# 4. Kiểm tra trạng thái đăng nhập
-if st.session_state["authentication_status"] == False:
-    st.error('Tên đăng nhập hoặc mật khẩu không đúng!')
-    st.stop()
-elif st.session_state["authentication_status"] == None:
-    st.warning('Vui lòng đăng nhập để sử dụng công cụ')
-    st.stop()
-
-# Đăng nhập thành công
-authenticator.logout('Đăng xuất', 'main')
-st.write(f'Chào mừng **{st.session_state["name"]}**!')
-st.divider()
+# In đoạn mã băm ra màn hình cho bạn copy
+ma_bam = config['credentials']['usernames']['admin']['password']
+st.error(f"Hãy Copy đoạn mã này: {ma_bam}")
+st.stop()
 
 # --- TỪ DÒNG NÀY TRỞ XUỐNG LÀ CODE APP PDF CŨ CỦA BẠN (GIỮ NGUYÊN) ---
 
