@@ -79,7 +79,7 @@ if st.session_state.get("authentication_status") != True:
                 padding: 40px !important;
                 border-radius: 15px !important;
                 box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3) !important;
-                width: 550px !important; /* ĐÃ MỞ RỘNG ĐỂ CHỨA VỪA TIÊU ĐỀ */
+                width: 700px !important; /* ĐÃ NỚI RỘNG FORM LÊN 700PX ĐỂ CHỨA VỪA TIÊU ĐỀ TRÊN 1 DÒNG */
                 max-width: 95vw !important;
                 margin: 10vh auto 0 auto !important;
                 border: 1px solid rgba(255, 255, 255, 0.5) !important;
@@ -90,7 +90,7 @@ if st.session_state.get("authentication_status") != True:
                 text-align: center !important;
                 color: #003366 !important;
                 font-weight: 900 !important;
-                font-size: 24px !important; /* ĐÃ CHỈNH NHỎ LẠI MỘT CHÚT */
+                font-size: 24px !important; 
                 white-space: nowrap !important; /* ÉP KHÔNG XUỐNG DÒNG */
                 margin-bottom: 25px !important;
                 padding-bottom: 0px !important;
@@ -107,13 +107,15 @@ if st.session_state.get("authentication_status") != True:
                 min-width: 100% !important;
             }
             
-            /* 4. Đổi màu ô nhập liệu thành trắng tinh, VIỀN ĐEN ĐẬM */
-            [data-testid="stForm"] div[data-baseweb="input"],
-            [data-testid="stForm"] div[data-baseweb="base-input"] {
+            /* 4. Đổi màu ô nhập liệu thành trắng tinh, VIỀN ĐEN ĐẬM 2PX */
+            [data-testid="stForm"] div[data-baseweb="input"] {
                 background-color: #ffffff !important;
-                border: 2px solid #000000 !important; /* VIỀN ĐEN DÀY LÊN 2PX */
+                border: 2px solid #000000 !important; /* VIỀN ĐEN ĐẬM RÕ RÀNG */
                 border-radius: 6px !important;
                 width: 100% !important;
+            }
+            [data-testid="stForm"] div[data-baseweb="input"]:focus-within {
+                border-color: #003366 !important; /* Đổi màu viền khi đang gõ chữ */
             }
             [data-testid="stForm"] input {
                 background-color: transparent !important;
@@ -229,7 +231,7 @@ st.sidebar.markdown(f"<h5 style='text-align: center; margin-top: 5px; margin-bot
 
 st.sidebar.markdown("---")
 
-# 3. Menu Ứng dụng (ĐÃ XÓA APP 7)
+# 3. Menu Ứng dụng
 st.sidebar.markdown("### 📌 Menu Công Cụ")
 app_mode = st.sidebar.radio(
     "Vui lòng chọn ứng dụng:",
@@ -255,14 +257,15 @@ st.sidebar.markdown("""
     </div>
 """, unsafe_allow_html=True)
 
-# 5. Thông tin phần mềm (ĐẶT Ở ĐÁY THANH BÊN LÀ ĐẸP NHẤT)
+# 5. Thông tin phần mềm (ĐÃ SỬA THEO YÊU CẦU MỚI NHẤT)
 st.sidebar.markdown("---")
 st.sidebar.markdown("""
     <div style="text-align: center; font-size: 12px; color: #666; margin-top: 10px; line-height: 1.5;">
-        <b>HỆ THỐNG CÔNG CỤ VĂN PHÒNG</b><br>
+        <b>BỘ CÔNG CỤ VĂN PHÒNG</b><br>
         Phiên bản: 1.0.0<br>
-        Phát triển: Vũ Huỳnh Bình Minh (IT - Operations Dept)<br>
-        <i>© 2026 NMTLBT Craven "A"</i>
+        Phát triển: Vũ Huỳnh Bình Minh<br>
+        Nhân viên nghiệp vụ - Phòng Nghiệp vụ<br>
+        © 2026 NMTLBT Craven "A"
     </div>
 """, unsafe_allow_html=True)
 
