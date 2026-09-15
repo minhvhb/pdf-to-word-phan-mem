@@ -60,44 +60,37 @@ authenticator = stauth.Authenticate(
 )
 
 # ==========================================
-# 2. GIAO DIỆN TRANG ĐĂNG NHẬP (ÉP CSS TỐI ĐA ĐỂ CÂN ĐỐI 100%)
+# 2. GIAO DIỆN TRANG ĐĂNG NHẬP
 # ==========================================
 if st.session_state.get("authentication_status") != True:
     st.markdown("""
         <style>
-            /* 1. Hình nền Mùa thu */
             .stApp {
                 background-image: url("https://images.unsplash.com/photo-1477414348463-c0eb7f1359b6?q=80&w=2070&auto=format&fit=crop");
                 background-size: cover;
                 background-position: center;
                 background-attachment: fixed;
             }
-            
-            /* 2. Ép Form Kính mờ nằm giữa trang */
             [data-testid="stForm"] {
                 background-color: rgba(255, 255, 255, 0.95) !important;
                 padding: 40px !important;
                 border-radius: 15px !important;
                 box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3) !important;
-                width: 700px !important; /* ĐÃ NỚI RỘNG FORM LÊN 700PX ĐỂ CHỨA VỪA TIÊU ĐỀ TRÊN 1 DÒNG */
+                width: 700px !important; 
                 max-width: 95vw !important;
                 margin: 10vh auto 0 auto !important;
                 border: 1px solid rgba(255, 255, 255, 0.5) !important;
             }
-            
-            /* 3. Tiêu đề Form */
             [data-testid="stForm"] h2 {
                 text-align: center !important;
                 color: #003366 !important;
                 font-weight: 900 !important;
                 font-size: 24px !important; 
-                white-space: nowrap !important; /* ÉP KHÔNG XUỐNG DÒNG */
+                white-space: nowrap !important;
                 margin-bottom: 25px !important;
                 padding-bottom: 0px !important;
                 width: 100% !important;
             }
-
-            /* LỆNH ÉP BUỘC CÁC CỘT VÀ KHỐI TRONG FORM PHẢI RỘNG 100% */
             [data-testid="stForm"] [data-testid="stVerticalBlock"] > div {
                 width: 100% !important;
                 max-width: 100% !important;
@@ -106,16 +99,14 @@ if st.session_state.get("authentication_status") != True:
                 width: 100% !important;
                 min-width: 100% !important;
             }
-            
-            /* 4. Đổi màu ô nhập liệu thành trắng tinh, VIỀN ĐEN ĐẬM 2PX */
             [data-testid="stForm"] div[data-baseweb="input"] {
                 background-color: #ffffff !important;
-                border: 2px solid #000000 !important; /* VIỀN ĐEN ĐẬM RÕ RÀNG */
+                border: 2px solid #000000 !important;
                 border-radius: 6px !important;
                 width: 100% !important;
             }
             [data-testid="stForm"] div[data-baseweb="input"]:focus-within {
-                border-color: #003366 !important; /* Đổi màu viền khi đang gõ chữ */
+                border-color: #003366 !important; 
             }
             [data-testid="stForm"] input {
                 background-color: transparent !important;
@@ -127,8 +118,6 @@ if st.session_state.get("authentication_status") != True:
                 font-weight: bold !important;
                 color: #333 !important;
             }
-            
-            /* 5. NÚT BẤM ĐĂNG NHẬP: ÉP RỘNG 100% VÀ IN ĐẬM CHỮ */
             [data-testid="stForm"] div[data-testid="stFormSubmitButton"] {
                 width: 100% !important;
                 max-width: 100% !important;
@@ -148,7 +137,6 @@ if st.session_state.get("authentication_status") != True:
                 display: block !important;
                 transition: all 0.3s ease-in-out !important;
             }
-            /* Ép mạnh phần chữ bên trong nút phải IN ĐẬM */
             [data-testid="stForm"] div[data-testid="stFormSubmitButton"] button p {
                 font-weight: 900 !important;
                 margin: 0 !important;
@@ -157,8 +145,6 @@ if st.session_state.get("authentication_status") != True:
                 background-color: #001f3f !important;
                 box-shadow: 0px 4px 15px rgba(0,0,0,0.4) !important;
             }
-            
-            /* Căn giữa dòng cảnh báo vàng mặc định (nếu có) */
             div[data-testid="stVerticalBlock"] > div:has(div[data-testid="stMarkdownContainer"]) {
                 display: flex;
                 justify-content: center;
@@ -185,30 +171,23 @@ elif st.session_state["authentication_status"] == None:
     st.stop()
 
 # ==========================================
-# 3. GIAO DIỆN THANH BÊN (SIDEBAR) TỐI ƯU 1 TRANG
+# 3. GIAO DIỆN THANH BÊN (SIDEBAR) TỐI ƯU
 # ==========================================
 st.markdown("""
     <style>
-        /* Đẩy nội dung thanh bên lên sát nóc và mở rộng 2 bên lề */
         [data-testid="stSidebarUserContent"] { 
             padding-top: 1rem !important; 
             padding-bottom: 0rem !important; 
             padding-left: 1rem !important; 
             padding-right: 1rem !important;
         }
-        
-        /* Thu hẹp khoảng cách giữa các dòng trong Menu radio */
         [data-testid="stSidebarUserContent"] div[role="radiogroup"] > label { 
             margin-bottom: -6px !important; 
         }
-        
-        /* Thu hẹp đường kẻ ngang */
         [data-testid="stSidebarUserContent"] hr { 
             margin-top: 5px; 
             margin-bottom: 5px; 
         }
-        
-        /* CSS cho bảng Nguyên tắc để chữ tràn ngang, không bị thụt lề */
         .custom-alert {
             background-color: #f8d7da;
             color: #842029;
@@ -221,17 +200,13 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# 1. Nút Đăng xuất đưa LÊN TRÊN CÙNG (canh giữa)
 col1, col2, col3 = st.sidebar.columns([1, 2, 1])
 with col2:
     authenticator.logout('Đăng xuất', 'main')
 
-# 2. Lời chào nằm DƯỚI nút Đăng xuất
 st.sidebar.markdown(f"<h5 style='text-align: center; margin-top: 5px; margin-bottom: 0px;'>Chào mừng {st.session_state['name']}!</h5>", unsafe_allow_html=True)
-
 st.sidebar.markdown("---")
 
-# 3. Menu Ứng dụng
 st.sidebar.markdown("### 📌 Menu Công Cụ")
 app_mode = st.sidebar.radio(
     "Vui lòng chọn ứng dụng:",
@@ -248,7 +223,6 @@ app_mode = st.sidebar.radio(
 
 st.sidebar.markdown("---") 
 
-# 4. Bảng nguyên tắc sử dụng
 st.sidebar.markdown("""
     <div class="custom-alert">
         <b>⚠️ NGUYÊN TẮC SỬ DỤNG:</b><br>
@@ -257,7 +231,6 @@ st.sidebar.markdown("""
     </div>
 """, unsafe_allow_html=True)
 
-# 5. Thông tin phần mềm (ĐÃ SỬA THEO YÊU CẦU MỚI NHẤT)
 st.sidebar.markdown("---")
 st.sidebar.markdown("""
     <div style="text-align: center; font-size: 12px; color: #666; margin-top: 10px; line-height: 1.5;">
@@ -321,7 +294,7 @@ def app_pdf_to_word():
         st.success(f"Đã tải lên file: **{uploaded_file.name}**")
         
         if st.button("🚀 Bắt đầu Chuyển đổi", type="primary"):
-            with st.spinner("🤖 Đang phân tích lề và vẽ lại trang Word khổ A4..."):
+            with st.spinner("🤖 Đang phân tích lề và vẽ lại bảng biểu phức tạp..."):
                 try:
                     temp_input_path = f"temp_{uploaded_file.name}"
                     with open(temp_input_path, "wb") as f:
@@ -332,32 +305,36 @@ def app_pdf_to_word():
                         file_bytes = f.read()
                     mime_type = "application/pdf" if uploaded_file.name.endswith(".pdf") else "image/jpeg"
                     
+                    # PROMPT ĐÃ ĐƯỢC NÂNG CẤP VỚI CƠ CHẾ GỘP Ô THÔNG MINH
                     prompt = """
                     NHIỆM VỤ OCR - BẮT BUỘC TUÂN THỦ NGHIÊM NGẶT CÁC QUY TẮC SAU:
 
                     1. THỂ THỨC VĂN BẢN (QUỐC HIỆU & CHỮ KÝ):
-                       - Phần Quốc hiệu trên cùng (hoặc các khối chữ ký nằm song song ngang nhau): BẮT BUỘC dùng [HEADER_TABLE] (bảng tàng hình 2 cột) để chia tỷ lệ.
-                       - TUYỆT ĐỐI KHÔNG dùng thẻ HTML (như <td>, <colspan>...).
-                       - TUYỆT ĐỐI KHÔNG vẽ bảng cho phần Footer (ví dụ: BM/66-VPCQ, Lần ban hành, Trang). Hãy viết thành văn bản thường trên 1 dòng.
+                       - Phần Quốc hiệu trên cùng (hoặc các khối chữ ký ngang nhau): BẮT BUỘC dùng [HEADER_TABLE] (bảng tàng hình 2 cột) để chia tỷ lệ.
+                       - Không dùng bảng cho Footer.
 
-                    2. CANH LỀ ĐOẠN VĂN (Sử dụng Tag):
-                       - Ghi [CENTER] ở đầu MỌI dòng cần canh giữa.
-                       - Ghi [RIGHT] ở đầu MỌI dòng lệch phải.
-                       - (Không cần ghi tag cho nội dung chính, hệ thống sẽ tự Canh đều 2 bên - Justify).
+                    2. CANH LỀ ĐOẠN VĂN:
+                       - Ghi [CENTER] ở đầu dòng cần canh giữa.
+                       - Ghi [RIGHT] ở đầu dòng lệch phải.
 
-                    3. ĐỊNH DẠNG CHỮ TỪNG PHẦN: 
-                       - Chữ in đậm -> bọc trong ** (VD: **THÔNG BÁO**). 
-                       - Chữ in nghiêng -> bọc trong * (VD: *Nơi nhận:*).
-                       - Chữ có dòng kẻ/gạch chân bên dưới -> bọc trong <u> và </u>.
+                    3. ĐỊNH DẠNG CHỮ: 
+                       - In đậm -> bọc trong ** (VD: **THÔNG BÁO**). 
+                       - In nghiêng -> bọc trong * (VD: *Nơi nhận:*).
+                       - Gạch chân -> bọc trong <u> và </u>.
 
-                    4. BẢNG BIỂU THÔNG THƯỜNG: 
-                       - CHỈ vẽ bảng Markdown (|...|) KHI văn bản gốc THỰC SỰ CÓ KHUNG VIỀN KẺ Ô.
-                       - TUYỆT ĐỐI KHÔNG tự ý cho nội dung văn bản thường vào trong bảng.
-                       - Dùng `<br>` để xuống dòng trong ô.
+                    4. BẢNG BIỂU PHỨC TẠP (QUAN TRỌNG NHẤT):
+                       - Bắt buộc vẽ bằng Markdown (|...|).
+                       - TẤT CẢ các dòng trong cùng 1 bảng PHẢI CÓ SỐ LƯỢNG CỘT BẰNG NHAU (cùng số lượng ký tự `|`).
+                       - XỬ LÝ Ô GỘP (MERGED CELLS) TRONG BẢN GỐC:
+                         + Gộp ngang (kéo dài sang phải): Ghi chữ vào ô trái cùng, các ô bị gộp phía sau điền CHÍNH XÁC chữ: `[MERGE_LEFT]`
+                         + Gộp dọc (kéo dài xuống dưới): Ghi chữ vào ô trên cùng, các ô bị gộp phía dưới điền CHÍNH XÁC chữ: `[MERGE_UP]`
+                       - Ví dụ bảng có tiêu đề gộp:
+                         | STT | TÊN VĂN BẢN | TÌNH TRẠNG HỒ SƠ | [MERGE_LEFT] | [MERGE_LEFT] | [MERGE_LEFT] |
+                         | [MERGE_UP] | [MERGE_UP] | Có | [MERGE_LEFT] | [MERGE_LEFT] | Không có |
+                         | [MERGE_UP] | [MERGE_UP] | Bản chính | Bản sao | Bản photo | [MERGE_UP] |
+                       - TUYỆT ĐỐI không để ô trống làm lệch số lượng cột. Dùng `<br>` để xuống dòng trong ô.
 
-                    5. XỬ LÝ KÝ TỰ VÀ PHÂN TRANG (QUAN TRỌNG):
-                       - TUYỆT ĐỐI KHÔNG sinh ra các dòng đánh dấu trang (ví dụ: ==Start of Page 1==, ==End of Page==). Hãy xuất văn bản liền mạch.
-                       - TUYỆT ĐỐI KHÔNG dùng mã Toán học (như $\ge$, $\rightarrow$). Phải dùng trực tiếp ký tự thông thường (như ≥, →, ≤).
+                    5. KHÔNG sinh ra mã phân trang (Start of Page). KHÔNG dùng mã LaTeX toán học.
                     """
 
                     response = client.models.generate_content(
@@ -401,51 +378,63 @@ def app_pdf_to_word():
                     font.name = 'Times New Roman'
                     font.size = Pt(13)
                     
+                    # THUẬT TOÁN VẼ VÀ GỘP BẢNG MỚI HOÀN TOÀN
                     def build_docx_table(doc_obj, buffer, is_header_table=False):
                         if not buffer: return
                         num_cols = max(len(row) for row in buffer)
-                        current_table = doc_obj.add_table(rows=len(buffer), cols=num_cols)
+                        
+                        # Chuẩn hóa ma trận bảng: Đảm bảo mọi hàng đều có đủ số cột
+                        normalized_buffer = []
+                        for row in buffer:
+                            new_row = list(row)
+                            while len(new_row) < num_cols:
+                                new_row.append('')
+                            normalized_buffer.append(new_row)
+                            
+                        current_table = doc_obj.add_table(rows=len(normalized_buffer), cols=num_cols)
                         
                         if not is_header_table:
                             current_table.style = 'Table Grid'
+                            current_table.autofit = True
                         else:
                             current_table.autofit = False
-                        
-                        for row_idx, row_data in enumerate(buffer):
+
+                        # BƯỚC 1: Điền dữ liệu vào các ô (Bỏ qua ô chứa mã gộp)
+                        for row_idx, row_data in enumerate(normalized_buffer):
                             row_cells = current_table.rows[row_idx].cells
                             
                             if is_header_table and num_cols == 2:
                                 row_cells[0].width = Cm(6.0)
                                 row_cells[1].width = Cm(10.0)
 
-                            is_group_header = False
-                            if num_cols > 1 and not is_header_table:
-                                if len(row_data) > 0 and row_data[0].strip() != '' and all(c.strip() == '' for c in row_data[1:]):
-                                    is_group_header = True
-                                    
-                            if is_group_header:
-                                main_cell = row_cells[0]
-                                main_cell.merge(row_cells[-1])
-                                main_cell.text = ""
-                                cell_lines = row_data[0].split('<br>')
-                                for idx, c_line in enumerate(cell_lines):
-                                    p = main_cell.paragraphs[0] if idx == 0 else main_cell.add_paragraph()
-                                    p.paragraph_format.space_after = Pt(0)
-                                    clean_text = clean_tags_and_align(c_line.strip(), p, WD_ALIGN_PARAGRAPH.LEFT)
-                                    parse_and_add_runs(p, clean_text)
-                            else:
-                                for col_idx, cell_data in enumerate(row_data):
-                                    if col_idx < len(row_cells):
-                                        cell = row_cells[col_idx]
-                                        cell.text = ""
-                                        cell_lines = cell_data.split('<br>')
-                                        for idx, c_line in enumerate(cell_lines):
-                                            p = cell.paragraphs[0] if idx == 0 else cell.add_paragraph()
-                                            p.paragraph_format.space_after = Pt(0)
-                                            
-                                            default_al = WD_ALIGN_PARAGRAPH.CENTER if is_header_table else (WD_ALIGN_PARAGRAPH.CENTER if row_idx == 0 else WD_ALIGN_PARAGRAPH.LEFT)
-                                            clean_text = clean_tags_and_align(c_line.strip(), p, default_al)
-                                            parse_and_add_runs(p, clean_text)
+                            for col_idx, cell_data in enumerate(row_data):
+                                cell_text = cell_data.strip()
+                                # Chỉ đổ chữ vào nếu không phải là mã gộp
+                                if cell_text not in ['[MERGE_LEFT]', '[MERGE_UP]']:
+                                    cell = row_cells[col_idx]
+                                    cell.text = ""
+                                    cell_lines = cell_text.split('<br>')
+                                    for idx, c_line in enumerate(cell_lines):
+                                        p = cell.paragraphs[0] if idx == 0 else cell.add_paragraph()
+                                        p.paragraph_format.space_after = Pt(0)
+                                        
+                                        default_al = WD_ALIGN_PARAGRAPH.CENTER if (is_header_table or row_idx == 0) else WD_ALIGN_PARAGRAPH.LEFT
+                                        clean_text = clean_tags_and_align(c_line.strip(), p, default_al)
+                                        parse_and_add_runs(p, clean_text)
+                                        
+                        # BƯỚC 2: Thực hiện gộp ô (Merge) bằng thư viện python-docx
+                        for row_idx in range(len(normalized_buffer)):
+                            for col_idx in range(num_cols):
+                                cell_text = normalized_buffer[row_idx][col_idx].strip()
+                                try:
+                                    if cell_text == '[MERGE_LEFT]' and col_idx > 0:
+                                        # Nối ô hiện tại vào ô bên trái
+                                        current_table.cell(row_idx, col_idx - 1).merge(current_table.cell(row_idx, col_idx))
+                                    elif cell_text == '[MERGE_UP]' and row_idx > 0:
+                                        # Nối ô hiện tại vào ô phía trên
+                                        current_table.cell(row_idx - 1, col_idx).merge(current_table.cell(row_idx, col_idx))
+                                except Exception:
+                                    pass
 
                     response_text = response.text
                     table_buffer = []
@@ -496,7 +485,7 @@ def app_pdf_to_word():
                     output_docx_path = "ket_qua.docx"
                     doc.save(output_docx_path)
 
-                    st.success("🎉 Chuyển đổi thành công! Ký hiệu lạ và lỗi phân trang đã được quét sạch.")
+                    st.success("🎉 Chuyển đổi thành công! Bảng biểu phức tạp đã được gộp ô chính xác.")
 
                     with open(output_docx_path, "rb") as file_download:
                         st.download_button(
