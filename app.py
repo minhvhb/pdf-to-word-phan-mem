@@ -56,8 +56,7 @@ def call_gemini_smart(client, contents_payload):
     models_to_try = [
         "gemini-3.6-flash",
         "gemini-2.5-flash",
-        "gemini-1.5-pro",
-        "gemini-1.5-flash"
+        "gemini-1.5-pro"
     ]
     last_err = None
     for model_name in models_to_try:
