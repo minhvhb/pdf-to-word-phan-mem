@@ -2,7 +2,7 @@ credentials:
   usernames:
     admin:
       email: admin@congty.com
-      name: Quản trị viên
+      name: Bạn
       password: 'Cns@2026@'
       recovery_pin: '1234'
 cookie:
