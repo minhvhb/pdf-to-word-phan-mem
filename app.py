@@ -10,6 +10,7 @@ from yaml.loader import SafeLoader
 import streamlit_authenticator as stauth
 import os
 import re
+import time
 import pandas as pd
 from io import BytesIO
 import json
@@ -45,6 +46,40 @@ def clear_file():
     st.session_state.uploader_key += 1
 
 # ==========================================
+# 0. HÀM GỌI AI THÔNG MINH (TỰ ĐỘNG CHUYỂN MODEL KHI QUÁ TẢI)
+# ==========================================
+def call_gemini_smart(client, contents_payload):
+    """
+    Tự động thử lần lượt các model theo thứ tự yêu cầu.
+    Nếu bị lỗi 503 (quá tải) hoặc 429 (hết hạn mức), tự động nhảy sang model tiếp theo.
+    """
+    models_to_try = [
+        "gemini-3.6-flash",
+        "gemini-2.5-flash",
+        "gemini-1.5-pro",
+        "gemini-1.5-flash"
+    ]
+    last_err = None
+    for model_name in models_to_try:
+        try:
+            response = client.models.generate_content(
+                model=model_name,
+                contents=contents_payload
+            )
+            return response
+        except Exception as e:
+            err_msg = str(e)
+            last_err = e
+            # Nếu gặp lỗi quá tải 503, 429 hoặc Unavailable, thử tiếp model khác
+            if any(x in err_msg for x in ["503", "429", "UNAVAILABLE", "high demand", "RESOURCE_EXHAUSTED", "overloaded"]):
+                time.sleep(1) # Nghỉ 1 giây trước khi đổi model
+                continue
+            else:
+                # Nếu là lỗi khác (ví dụ sai định dạng file), văng lỗi ngay
+                raise e
+    raise last_err
+
+# ==========================================
 # 1. ĐỌC DỮ LIỆU TÀI KHOẢN VÀ ĐĂNG NHẬP
 # ==========================================
 with open('config.yaml', 'r', encoding='utf-8') as file:
@@ -66,7 +101,7 @@ if st.session_state.get("authentication_status") != True:
     st.markdown("""
         <style>
             .stApp {
-                background-image: url("[https://images.unsplash.com/photo-1477414348463-c0eb7f1359b6?q=80&w=2070&auto=format&fit=crop](https://images.unsplash.com/photo-1477414348463-c0eb7f1359b6?q=80&w=2070&auto=format&fit=crop)");
+                background-image: url("https://images.unsplash.com/photo-1477414348463-c0eb7f1359b6?q=80&w=2070&auto=format&fit=crop");
                 background-size: cover;
                 background-position: center;
                 background-attachment: fixed;
@@ -336,9 +371,9 @@ def app_pdf_to_word():
                     5. KHÔNG sinh ra mã phân trang (Start of Page). KHÔNG dùng mã LaTeX toán học.
                     """
 
-                    response = client.models.generate_content(
-                        model='gemini-3.6-flash',
-                        contents=[types.Part.from_bytes(data=file_bytes, mime_type=mime_type), prompt]
+                    response = call_gemini_smart(
+                        client, 
+                        [types.Part.from_bytes(data=file_bytes, mime_type=mime_type), prompt]
                     )
                     
                     is_landscape = False
@@ -377,12 +412,10 @@ def app_pdf_to_word():
                     font.name = 'Times New Roman'
                     font.size = Pt(13)
                     
-                    # THUẬT TOÁN VẼ VÀ GỘP BẢNG MỚI HOÀN TOÀN
                     def build_docx_table(doc_obj, buffer, is_header_table=False):
                         if not buffer: return
                         num_cols = max(len(row) for row in buffer)
                         
-                        # Chuẩn hóa ma trận bảng: Đảm bảo mọi hàng đều có đủ số cột
                         normalized_buffer = []
                         for row in buffer:
                             new_row = list(row)
@@ -398,7 +431,6 @@ def app_pdf_to_word():
                         else:
                             current_table.autofit = False
 
-                        # BƯỚC 1: Điền dữ liệu vào các ô (Bỏ qua ô chứa mã gộp)
                         for row_idx, row_data in enumerate(normalized_buffer):
                             row_cells = current_table.rows[row_idx].cells
                             
@@ -408,7 +440,6 @@ def app_pdf_to_word():
 
                             for col_idx, cell_data in enumerate(row_data):
                                 cell_text = cell_data.strip()
-                                # Chỉ đổ chữ vào nếu không phải là mã gộp
                                 if cell_text not in ['[MERGE_LEFT]', '[MERGE_UP]']:
                                     cell = row_cells[col_idx]
                                     cell.text = ""
@@ -421,16 +452,13 @@ def app_pdf_to_word():
                                         clean_text = clean_tags_and_align(c_line.strip(), p, default_al)
                                         parse_and_add_runs(p, clean_text)
                                         
-                        # BƯỚC 2: Thực hiện gộp ô (Merge) bằng thư viện python-docx
                         for row_idx in range(len(normalized_buffer)):
                             for col_idx in range(num_cols):
                                 cell_text = normalized_buffer[row_idx][col_idx].strip()
                                 try:
                                     if cell_text == '[MERGE_LEFT]' and col_idx > 0:
-                                        # Nối ô hiện tại vào ô bên trái
                                         current_table.cell(row_idx, col_idx - 1).merge(current_table.cell(row_idx, col_idx))
                                     elif cell_text == '[MERGE_UP]' and row_idx > 0:
-                                        # Nối ô hiện tại vào ô phía trên
                                         current_table.cell(row_idx - 1, col_idx).merge(current_table.cell(row_idx, col_idx))
                                 except Exception:
                                     pass
@@ -637,9 +665,9 @@ def app_number_3():
                     }
                     """
 
-                    response = client.models.generate_content(
-                        model='gemini-3.6-flash',
-                        contents=[types.Part.from_bytes(data=file_bytes, mime_type=mime_type), prompt]
+                    response = call_gemini_smart(
+                        client, 
+                        [types.Part.from_bytes(data=file_bytes, mime_type=mime_type), prompt]
                     )
                     
                     is_landscape = False
@@ -781,18 +809,18 @@ def extract_text_from_file(uploaded_file, client):
         uploaded_file.seek(0) 
         file_bytes = uploaded_file.getbuffer()
         prompt = "Hãy trích xuất TOÀN BỘ nội dung văn bản trong tài liệu này một cách chính xác nhất. Trả về plain text."
-        response = client.models.generate_content(
-            model='gemini-3.6-flash',
-            contents=[types.Part.from_bytes(data=file_bytes, mime_type="application/pdf"), prompt]
+        response = call_gemini_smart(
+            client, 
+            [types.Part.from_bytes(data=file_bytes, mime_type="application/pdf"), prompt]
         )
         text = response.text
         
     elif file_ext in ["png", "jpg", "jpeg"]:
         file_bytes = uploaded_file.getbuffer()
         prompt = "Hãy trích xuất TOÀN BỘ nội dung văn bản trong tài liệu này một cách chính xác nhất. Trả về plain text."
-        response = client.models.generate_content(
-            model='gemini-3.6-flash',
-            contents=[types.Part.from_bytes(data=file_bytes, mime_type=f"image/{file_ext}"), prompt]
+        response = call_gemini_smart(
+            client, 
+            [types.Part.from_bytes(data=file_bytes, mime_type=f"image/{file_ext}"), prompt]
         )
         text = response.text
     
@@ -858,9 +886,9 @@ def app_document_compare():
                     1. TUYỆT ĐỐI KHÔNG dùng ký tự đặc biệt như dấu sao (*), thăng (#), gạch ngang (-), hay bảng biểu (|). 
                     2. Trả lời bằng văn bản thuần túy (plain text) để đưa trực tiếp vào Word.
                     """
-                    summary_response = client.models.generate_content(
-                        model='gemini-3.6-flash',
-                        contents=[summary_prompt]
+                    summary_response = call_gemini_smart(
+                        client, 
+                        [summary_prompt]
                     )
                     ai_text = summary_response.text.replace('*', '').replace('#', '').replace('`', '').strip()
 
@@ -1094,7 +1122,7 @@ def app_excel_expert():
     try:
         api_key_input = st.secrets["GEMINI_API_KEY"]
     except KeyError:
-        st.error("⚠️ Hệ thống chưa được cấu hình API Key. Vui lòng liên hệ Quản trị viên!")
+        st.error("⚠️️ Hệ thống chưa được cấu hình API Key. Vui lòng liên hệ Quản trị viên!")
         st.stop()
 
     st.title("💻 Chuyên gia Công thức & VBA Excel")
@@ -1155,9 +1183,9 @@ def app_excel_expert():
                 """
                 
                 try:
-                    response = client.models.generate_content(
-                        model='gemini-3.6-flash',
-                        contents=[prompt]
+                    response = call_gemini_smart(
+                        client, 
+                        [prompt]
                     )
                     
                     st.info("💡 Kết quả từ AI (Nhấp vào biểu tượng ở góc phải khung code để sao chép):")
