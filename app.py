@@ -11,6 +11,7 @@ import streamlit_authenticator as stauth
 import os
 import re
 import time
+import zipfile
 import pandas as pd
 from io import BytesIO
 import json
@@ -250,7 +251,8 @@ app_mode = st.sidebar.radio(
         "📊 3. PDF/Ảnh sang Excel", 
         "🔍 4. So sánh Văn bản / Hợp đồng",
         "✂️ 5. Cắt & Ghép PDF",
-        "💻 6. Chuyên gia Công thức & VBA"
+        "💻 6. Chuyên gia Công thức & VBA",
+        "🗜️ 7. Nén & Đóng Gói ZIP Gửi Mail"
     ],
     label_visibility="collapsed"
 )
@@ -317,7 +319,7 @@ def app_pdf_to_word():
     try:
         api_key_input = st.secrets["GEMINI_API_KEY"]
     except KeyError:
-        st.error("⚠️ Hệ thống chưa được cấu hình API Key. Vui lòng liên hệ Quản trị viên!")
+        st.error("⚠️️ Hệ thống chưa được cấu hình API Key. Vui lòng liên hệ Quản trị viên!")
         st.stop()
 
     st.title("📄 Ứng dụng Chuyển đổi PDF & Ảnh sang Word")
@@ -1121,7 +1123,7 @@ def app_excel_expert():
     try:
         api_key_input = st.secrets["GEMINI_API_KEY"]
     except KeyError:
-        st.error("⚠️️ Hệ thống chưa được cấu hình API Key. Vui lòng liên hệ Quản trị viên!")
+        st.error("⚠️ Hệ thống chưa được cấu hình API Key. Vui lòng liên hệ Quản trị viên!")
         st.stop()
 
     st.title("💻 Chuyên gia Công thức & VBA Excel")
@@ -1194,6 +1196,134 @@ def app_excel_expert():
                     st.error(f"Đã xảy ra lỗi AI: {e}")
 
 # ==========================================
+# APP 7: NÉN DUNG LƯỢNG & ĐÓNG GÓI ZIP GỬI MAIL (2 TRONG 1)
+# ==========================================
+def compress_single_image(img_bytes, quality=65):
+    img = Image.open(BytesIO(img_bytes))
+    if img.mode in ("RGBA", "P"):
+        img = img.convert("RGB")
+    out = BytesIO()
+    img.save(out, format="JPEG", quality=quality, optimize=True)
+    return out.getvalue()
+
+def compress_single_pdf(pdf_bytes, quality=65):
+    reader = PdfReader(BytesIO(pdf_bytes))
+    writer = PdfWriter()
+    for page in reader.pages:
+        for img_obj in page.images:
+            try:
+                comp_img = compress_single_image(img_obj.data, quality=quality)
+                img_obj.replace(Image.open(BytesIO(comp_img)), quality=quality)
+            except Exception:
+                continue
+        writer.add_page(page)
+    for page in writer.pages:
+        page.compress_content_streams()
+    out = BytesIO()
+    writer.write(out)
+    return out.getvalue()
+
+def app_compress_and_zip():
+    st.title("🗜️ Nén Dung Lượng & Đóng Gói ZIP Gửi Mail")
+    st.markdown("Tối ưu hóa các file PDF/Ảnh scan nặng, tự động đóng gói toàn bộ vào 1 file **.ZIP** để gửi email công ty không bị vượt trần 25MB.")
+
+    uploaded_files = st.file_uploader(
+        "Tải lên một hoặc nhiều file cần nén và đóng gói (PDF, JPG, PNG, DOCX, XLSX...):",
+        accept_multiple_files=True,
+        key=f"app7_{st.session_state.uploader_key}"
+    )
+
+    if uploaded_files:
+        total_orig_bytes = sum(len(f.getvalue()) for f in uploaded_files)
+        total_orig_mb = total_orig_bytes / (1024 * 1024)
+        st.info(f"📁 Đã chọn **{len(uploaded_files)} file** | Tổng dung lượng gốc: **{total_orig_mb:.2f} MB**")
+
+        quality = st.slider(
+            "Mức chất lượng nén ảnh và PDF scan (Mặc định 65% - cân bằng tốt nhất):",
+            min_value=30,
+            max_value=90,
+            value=65,
+            step=5,
+            help="Áp dụng cho các file PDF scan và file hình ảnh. Các file Word, Excel sẽ được giữ nguyên chất lượng và gom vào file ZIP."
+        )
+
+        zip_filename = st.text_input("Tên file ZIP xuất ra:", value="Tai_Lieu_Gui_Mail.zip")
+        if not zip_filename.lower().endswith(".zip"):
+            zip_filename += ".zip"
+
+        if st.button("🚀 Bắt đầu Nén & Đóng Gói ZIP", type="primary"):
+            progress_bar = st.progress(0)
+            status_text = st.empty()
+
+            zip_buffer = BytesIO()
+            report_rows = []
+
+            with zipfile.ZipFile(zip_buffer, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
+                for idx, file in enumerate(uploaded_files):
+                    fname = file.name
+                    fext = fname.split('.')[-1].lower()
+                    raw_bytes = file.getvalue()
+                    orig_len = len(raw_bytes)
+
+                    status_text.text(f"Đang xử lý ({idx+1}/{len(uploaded_files)}): {fname}...")
+
+                    # Nén chuyên sâu đối với PDF và ảnh
+                    if fext == "pdf":
+                        try:
+                            processed_bytes = compress_single_pdf(raw_bytes, quality=quality)
+                        except Exception:
+                            processed_bytes = raw_bytes
+                    elif fext in ["jpg", "jpeg", "png"]:
+                        try:
+                            processed_bytes = compress_single_image(raw_bytes, quality=quality)
+                            if not fname.lower().endswith(".jpg") and not fname.lower().endswith(".jpeg"):
+                                fname = f"{fname.rsplit('.', 1)[0]}.jpg"
+                        except Exception:
+                            processed_bytes = raw_bytes
+                    else:
+                        processed_bytes = raw_bytes
+
+                    new_len = len(processed_bytes)
+                    zf.writestr(fname, processed_bytes)
+
+                    saved_pct = ((orig_len - new_len) / orig_len * 100) if orig_len > 0 else 0
+                    report_rows.append({
+                        "Tên file": fname,
+                        "Gốc (MB)": f"{orig_len / (1024*1024):.2f}",
+                        "Sau nén (MB)": f"{new_len / (1024*1024):.2f}",
+                        "Tiết kiệm": f"{saved_pct:.1f}%"
+                    })
+
+                    progress_bar.progress((idx + 1) / len(uploaded_files))
+
+            final_zip_bytes = zip_buffer.getvalue()
+            final_zip_mb = len(final_zip_bytes) / (1024 * 1024)
+            total_saved_pct = ((total_orig_bytes - len(final_zip_bytes)) / total_orig_bytes * 100) if total_orig_bytes > 0 else 0
+
+            status_text.empty()
+            progress_bar.empty()
+
+            col1, col2, col3 = st.columns(3)
+            col1.metric("Tổng dung lượng gốc", f"{total_orig_mb:.2f} MB")
+            col2.metric("File ZIP hoàn thành", f"{final_zip_mb:.2f} MB")
+            col3.metric("Tiết kiệm được", f"{total_saved_pct:.1f}%")
+
+            if final_zip_mb <= 25.0:
+                st.success(f"🎉 Đã đóng gói thành công! File ZIP nặng **{final_zip_mb:.2f} MB**, hoàn toàn đủ điều kiện gửi qua hệ thống email công ty (giới hạn 25MB).")
+            else:
+                st.warning(f"⚠️ File ZIP hiện tại nặng **{final_zip_mb:.2f} MB** (vẫn vượt 25MB). Bạn hãy hạ thanh trượt chất lượng xuống 40-50% hoặc tách bớt số lượng file để nén lại.")
+
+            st.dataframe(pd.DataFrame(report_rows), use_container_width=True)
+
+            st.download_button(
+                label=f"📥 Tải xuống {zip_filename}",
+                data=final_zip_bytes,
+                file_name=zip_filename,
+                mime="application/zip",
+                on_click=clear_file
+            )
+
+# ==========================================
 # 5. KÍCH HOẠT ỨNG DỤNG THEO LỰA CHỌN MENU
 # ==========================================
 if app_mode == "📄 1. PDF sang Word":
@@ -1208,3 +1338,5 @@ elif app_mode == "✂️ 5. Cắt & Ghép PDF":
     app_pdf_split_merge()
 elif app_mode == "💻 6. Chuyên gia Công thức & VBA":
     app_excel_expert()
+elif app_mode == "🗜️ 7. Nén & Đóng Gói ZIP Gửi Mail":
+    app_compress_and_zip()
