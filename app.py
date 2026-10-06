@@ -258,8 +258,6 @@ app_mode = st.sidebar.radio(
     ],
     label_visibility="collapsed"
 )
-)
-
 st.sidebar.markdown("---") 
 
 st.sidebar.markdown("""
