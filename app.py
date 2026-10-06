@@ -254,7 +254,8 @@ app_mode = st.sidebar.radio(
         "✂️ 5. Cắt & Ghép PDF",
         "💻 6. Chuyên gia Công thức & VBA",
         "🗜️ 7. Nén & Đóng Gói ZIP Gửi Mail",
-        "🔄 8. Xoay Trang PDF"
+        "🔄 8. Xoay Trang PDF",
+        "🛡️ 9. Xóa Siêu Dữ Liệu Bảo Mật"
     ],
     label_visibility="collapsed"
 )
@@ -1472,6 +1473,147 @@ def app_rotate_pdf():
                 except Exception as e:
                     st.error(f"Có lỗi trong quá trình ghép file: {e}")
 # ==========================================
+# ==========================================
+# APP 9: XÓA SIÊU DỮ LIỆU (METADATA CLEANER) BẢO MẬT TÀI LIỆU
+# ==========================================
+def clean_pdf_metadata(pdf_bytes):
+    import fitz
+    from io import BytesIO
+    doc = fitz.open("pdf", pdf_bytes)
+    # Gán trắng toàn bộ từ điển Metadata ẩn
+    doc.set_metadata({})
+    out = BytesIO()
+    doc.save(out, garbage=4, deflate=True)
+    return out.getvalue()
+
+def clean_docx_metadata(docx_bytes):
+    from docx import Document
+    from io import BytesIO
+    doc = Document(BytesIO(docx_bytes))
+    props = doc.core_properties
+    props.author = ""
+    props.last_modified_by = ""
+    props.comments = ""
+    props.title = ""
+    props.subject = ""
+    props.category = ""
+    props.keywords = ""
+    out = BytesIO()
+    doc.save(out)
+    return out.getvalue()
+
+def clean_xlsx_metadata(xlsx_bytes):
+    import openpyxl
+    from io import BytesIO
+    wb = openpyxl.load_workbook(BytesIO(xlsx_bytes))
+    props = wb.properties
+    props.creator = ""
+    props.lastModifiedBy = ""
+    props.title = ""
+    props.subject = ""
+    props.description = ""
+    props.keywords = ""
+    props.category = ""
+    props.company = ""
+    out = BytesIO()
+    wb.save(out)
+    return out.getvalue()
+
+def app_metadata_cleaner():
+    import zipfile
+    from io import BytesIO
+
+    st.title("🛡️ Xóa Siêu Dữ Liệu (Metadata) Bảo Mật Tài Liệu")
+    st.markdown("Tự động xóa sạch tên tác giả, người chỉnh sửa cuối cùng, thông tin máy in, phần mềm và lịch sử ẩn bên trong file **PDF, Word (.docx), Excel (.xlsx)** trước khi gửi ra ngoài.")
+
+    uploaded_files = st.file_uploader(
+        "Tải lên các file cần tẩy sạch dữ liệu ẩn (Hỗ trợ PDF, DOCX, XLSX):",
+        type=["pdf", "docx", "xlsx"],
+        accept_multiple_files=True,
+        key=f"app9_{st.session_state.uploader_key}"
+    )
+
+    if uploaded_files:
+        st.info(f"📁 Đã chọn **{len(uploaded_files)} file** sẵn sàng làm sạch dữ liệu bảo mật.")
+
+        if st.button("🚀 Bắt đầu Tẩy Sạch Dữ Liệu Ẩn", type="primary"):
+            progress_bar = st.progress(0)
+            status_text = st.empty()
+
+            # Trường hợp 1: Tải lên 1 file -> Trả về đúng định dạng gốc
+            if len(uploaded_files) == 1:
+                file = uploaded_files[0]
+                fname = file.name
+                fext = fname.split('.')[-1].lower()
+                raw_bytes = file.getvalue()
+
+                status_text.text(f"Đang làm sạch file: {fname}...")
+                try:
+                    if fext == "pdf":
+                        cleaned_bytes = clean_pdf_metadata(raw_bytes)
+                        mime_type = "application/pdf"
+                    elif fext == "docx":
+                        cleaned_bytes = clean_docx_metadata(raw_bytes)
+                        mime_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                    elif fext == "xlsx":
+                        cleaned_bytes = clean_xlsx_metadata(raw_bytes)
+                        mime_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    else:
+                        cleaned_bytes = raw_bytes
+                        mime_type = "application/octet-stream"
+
+                    progress_bar.progress(100)
+                    status_text.empty()
+                    st.success(f"🎉 Đã tẩy sạch toàn bộ metadata của file **{fname}**!")
+
+                    st.download_button(
+                        label=f"📥 Tải xuống {fname} (Bản sạch)",
+                        data=cleaned_bytes,
+                        file_name=f"Cleaned_{fname}",
+                        mime=mime_type,
+                        on_click=clear_file
+                    )
+                except Exception as e:
+                    st.error(f"Lỗi khi xử lý file: {e}")
+
+            # Trường hợp 2: Tải lên nhiều file -> Làm sạch và đóng gói ZIP
+            else:
+                zip_buffer = BytesIO()
+                with zipfile.ZipFile(zip_buffer, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
+                    for idx, file in enumerate(uploaded_files):
+                        fname = file.name
+                        fext = fname.split('.')[-1].lower()
+                        raw_bytes = file.getvalue()
+
+                        status_text.text(f"Đang xử lý ({idx+1}/{len(uploaded_files)}): {fname}...")
+                        try:
+                            if fext == "pdf":
+                                cleaned_bytes = clean_pdf_metadata(raw_bytes)
+                            elif fext == "docx":
+                                cleaned_bytes = clean_docx_metadata(raw_bytes)
+                            elif fext == "xlsx":
+                                cleaned_bytes = clean_xlsx_metadata(raw_bytes)
+                            else:
+                                cleaned_bytes = raw_bytes
+
+                            zf.writestr(f"Cleaned_{fname}", cleaned_bytes)
+                        except Exception:
+                            zf.writestr(f"Loi_{fname}", raw_bytes)
+
+                        progress_bar.progress((idx + 1) / len(uploaded_files))
+
+                progress_bar.progress(100)
+                status_text.empty()
+                st.success("🎉 Đã làm sạch toàn bộ metadata và đóng gói thành công!")
+
+                st.download_button(
+                    label="📥 Tải xuống File ZIP đã làm sạch",
+                    data=zip_buffer.getvalue(),
+                    file_name="Tai_Lieu_Da_Lam_Sach.zip",
+                    mime="application/zip",
+                    on_click=clear_file
+                )
+# ==========================================
 # 5. KÍCH HOẠT ỨNG DỤNG THEO LỰA CHỌN MENU
 # ==========================================
 if "1. PDF sang Word" in app_mode:
@@ -1490,3 +1632,5 @@ elif "7. Nén & Đóng Gói" in app_mode:
     app_compress_and_zip()
 elif "8. Xoay Trang PDF" in app_mode:
     app_rotate_pdf()
+elif "9. Xóa Siêu Dữ Liệu" in app_mode:
+    app_metadata_cleaner()
