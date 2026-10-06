@@ -1197,16 +1197,19 @@ def app_excel_expert():
                     st.error(f"Đã xảy ra lỗi AI: {e}")
 
 # ==========================================
-# APP 7: NÉN DUNG LƯỢNG & ĐÓNG GÓI ZIP GỬI MAIL (CỐT LÕI PYMUPDF)
+# APP 7: NÉN DUNG LƯỢNG & ĐÓNG GÓI ZIP GỬI MAIL (CỐT LÕI PYMUPDF - TỐI ƯU MÀU SẮC)
 # ==========================================
-def compress_single_image(img_bytes, quality=50, sieu_nen=False):
+def compress_single_image(img_bytes, quality=50, is_color=True):
     try:
         img = Image.open(BytesIO(img_bytes))
-        if sieu_nen:
+        
+        # Xử lý hệ màu theo lựa chọn của người dùng
+        if not is_color:
             img = img.convert("L")
         elif img.mode != "RGB":
             img = img.convert("RGB")
             
+        # Thu nhỏ khung hình nếu ảnh quá lớn
         max_dim = int(800 + (quality - 30) * (1600 - 800) / (90 - 30))
         if max(img.width, img.height) > max_dim:
             ratio = max_dim / float(max(img.width, img.height))
@@ -1219,28 +1222,27 @@ def compress_single_image(img_bytes, quality=50, sieu_nen=False):
     except Exception:
         return img_bytes
 
-def compress_pdf_extreme(pdf_bytes, quality=50, sieu_nen=False):
-    """Sử dụng PyMuPDF để 'cào bằng' toàn bộ trang PDF thành ảnh nén, triệt tiêu mọi lớp mã hóa rác"""
+def compress_pdf_extreme(pdf_bytes, quality=50, is_color=True):
+    """Sử dụng PyMuPDF cào bằng trang PDF, tối ưu hóa DPI và giữ nguyên hệ màu RGB"""
     try:
         doc = fitz.open("pdf", pdf_bytes)
         new_pdf = fitz.open()
         
-        # Ép DPI từ 100 (rất nhẹ) đến 200 (sắc nét) dựa theo thanh trượt
+        # Ép DPI từ 100 (siêu nhẹ) đến 200 (sắc nét) dựa trên thanh trượt
         dpi = int(100 + (quality - 30) * (200 - 100) / (90 - 30))
         
         for page in doc:
             zoom = dpi / 72.0
             mat = fitz.Matrix(zoom, zoom)
             
-            # Render trang thành hình ảnh hoàn toàn mới
-            if sieu_nen:
-                pix = page.get_pixmap(matrix=mat, colorspace=fitz.csGRAY)
-            else:
-                pix = page.get_pixmap(matrix=mat, colorspace=fitz.csRGB)
+            # Khởi tạo bản vẽ với RGB (Màu) hoặc GRAY (Đen trắng)
+            c_space = fitz.csRGB if is_color else fitz.csGRAY
+            pix = page.get_pixmap(matrix=mat, colorspace=c_space)
             
+            # Ép nén bằng thuật toán phân tích hạt JPEG
             img_bytes = pix.tobytes("jpeg", jpg_quality=quality)
             
-            # Gói lại vào trang PDF mới
+            # Gói lại vào trang PDF mới tinh (loại bỏ hoàn toàn rác mã hóa của máy scan)
             imgdoc = fitz.open("jpeg", img_bytes)
             pdfbytes = imgdoc.convert_to_pdf()
             imgpdf = fitz.open("pdf", pdfbytes)
@@ -1267,15 +1269,26 @@ def app_compress_and_zip():
         total_orig_mb = total_orig_bytes / (1024 * 1024)
         st.info(f"📁 Đã chọn **{len(uploaded_files)} file** | Tổng dung lượng gốc: **{total_orig_mb:.2f} MB**")
 
-        sieu_nen = st.checkbox("⚡ Kích hoạt chế độ CÀO BẰNG & ĐEN TRẮNG (Khuyên dùng cho PDF Scan)", value=True, help="Biến mọi thứ thành ảnh đen trắng nén chặt, triệt tiêu cấu trúc ẩn của file gốc.")
-
-        quality = st.slider(
-            "Mức chất lượng nén ảnh và PDF scan (Mặc định 50 - Siêu nhẹ):",
-            min_value=30,
-            max_value=90,
-            value=50,
-            step=5
-        )
+        # Giao diện điều khiển mới chia làm 2 cột
+        col1, col2 = st.columns(2)
+        with col1:
+            che_do_mau = st.radio(
+                "Chế độ màu sắc:",
+                ["🌈 Giữ nguyên màu gốc", "🔲 Chuyển Đen Trắng"],
+                help="Chế độ Giữ Màu vẫn ép nén rất tốt. Chỉ dùng Đen Trắng khi bạn cần file đạt mức siêu nhẹ gọn."
+            )
+        with col2:
+            quality = st.slider(
+                "Mức chất lượng nén (Mặc định 50):",
+                min_value=30,
+                max_value=90,
+                value=50,
+                step=5,
+                help="Điều chỉnh thanh trượt càng thấp, cả độ phân giải và chất lượng ảnh sẽ càng được tối ưu nhỏ lại."
+            )
+        
+        # Biến boolean kiểm tra chế độ màu
+        is_color = "🌈" in che_do_mau
 
         zip_filename = st.text_input("Tên file ZIP xuất ra:", value="Tai_Lieu_Gui_Mail.zip")
         if not zip_filename.lower().endswith(".zip"):
@@ -1288,6 +1301,7 @@ def app_compress_and_zip():
             zip_buffer = BytesIO()
             report_rows = []
 
+            # Sử dụng thuật toán ZipDeflated cấp độ nén cao nhất
             with zipfile.ZipFile(zip_buffer, mode="w", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as zf:
                 for idx, file in enumerate(uploaded_files):
                     fname = file.name
@@ -1297,13 +1311,16 @@ def app_compress_and_zip():
 
                     status_text.text(f"Đang xử lý ({idx+1}/{len(uploaded_files)}): {fname}...")
 
+                    # Phân luồng nén
                     if fext == "pdf":
-                        processed_bytes = compress_pdf_extreme(raw_bytes, quality=quality, sieu_nen=sieu_nen)
+                        processed_bytes = compress_pdf_extreme(raw_bytes, quality=quality, is_color=is_color)
                     elif fext in ["jpg", "jpeg", "png"]:
-                        processed_bytes = compress_single_image(raw_bytes, quality=quality, sieu_nen=sieu_nen)
+                        processed_bytes = compress_single_image(raw_bytes, quality=quality, is_color=is_color)
+                        # Đồng nhất định dạng ảnh đầu ra thành JPG để nhẹ gọn nhất
                         if not fname.lower().endswith(".jpg") and not fname.lower().endswith(".jpeg"):
                             fname = f"{fname.rsplit('.', 1)[0]}.jpg"
                     else:
+                        # Giữ nguyên bản gốc đối với các file Word, Excel
                         processed_bytes = raw_bytes
 
                     new_len = len(processed_bytes)
@@ -1326,15 +1343,16 @@ def app_compress_and_zip():
             status_text.empty()
             progress_bar.empty()
 
+            # Hiển thị số liệu trực quan
             col1, col2, col3 = st.columns(3)
             col1.metric("Tổng dung lượng gốc", f"{total_orig_mb:.2f} MB")
             col2.metric("File ZIP hoàn thành", f"{final_zip_mb:.2f} MB")
             col3.metric("Tiết kiệm được", f"{total_saved_pct:.1f}%")
 
             if final_zip_mb <= 25.0:
-                st.success(f"🎉 Siêu nén thành công! File ZIP nặng **{final_zip_mb:.2f} MB**, đủ điều kiện gửi email.")
+                st.success(f"🎉 Siêu nén thành công! File ZIP nặng **{final_zip_mb:.2f} MB**, hoàn toàn đủ điều kiện gửi email công ty.")
             else:
-                st.warning(f"⚠️ File ZIP hiện tại nặng **{final_zip_mb:.2f} MB** (vẫn vượt 25MB).")
+                st.warning(f"⚠️ File ZIP hiện tại nặng **{final_zip_mb:.2f} MB** (vẫn vượt 25MB). Hãy thử giảm mức chất lượng xuống 30-40% hoặc chọn Đen trắng.")
 
             st.dataframe(pd.DataFrame(report_rows), use_container_width=True)
 
