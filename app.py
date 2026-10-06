@@ -1365,4 +1365,3 @@ elif "6. Chuyên gia Công thức" in app_mode:
     app_excel_expert()
 elif "7. Nén & Đóng Gói" in app_mode:
     app_compress_and_zip()
-    app_compress_and_zip()
