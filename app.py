@@ -252,7 +252,7 @@ app_mode = st.sidebar.radio(
         "🔍 4. So sánh Văn bản / Hợp đồng",
         "✂️ 5. Cắt & Ghép PDF",
         "💻 6. Chuyên gia Công thức & VBA",
-        "🗜️ 7. Nén & Đóng Gói ZIP Gửi Mail"
+        "🗜️️ 7. Nén & Đóng Gói ZIP Gửi Mail"
     ],
     label_visibility="collapsed"
 )
@@ -319,7 +319,7 @@ def app_pdf_to_word():
     try:
         api_key_input = st.secrets["GEMINI_API_KEY"]
     except KeyError:
-        st.error("⚠️️ Hệ thống chưa được cấu hình API Key. Vui lòng liên hệ Quản trị viên!")
+        st.error("⚠️ Hệ thống chưa được cấu hình API Key. Vui lòng liên hệ Quản trị viên!")
         st.stop()
 
     st.title("📄 Ứng dụng Chuyển đổi PDF & Ảnh sang Word")
@@ -621,7 +621,7 @@ def app_number_3():
     try:
         api_key_input = st.secrets["GEMINI_API_KEY"]
     except KeyError:
-        st.error("⚠️ Hệ thống chưa được cấu hình API Key. Vui lòng liên hệ Quản trị viên!")
+        st.error("⚠️️ Hệ thống chưa được cấu hình API Key. Vui lòng liên hệ Quản trị viên!")
         st.stop()
 
     st.title("📊 Bóc tách PDF/Ảnh sang Excel (Chuẩn A4 & Giữ Định Dạng)")
@@ -1199,29 +1199,54 @@ def app_excel_expert():
 # APP 7: NÉN DUNG LƯỢNG & ĐÓNG GÓI ZIP GỬI MAIL (2 TRONG 1)
 # ==========================================
 def compress_single_image(img_bytes, quality=65):
-    img = Image.open(BytesIO(img_bytes))
-    if img.mode in ("RGBA", "P"):
-        img = img.convert("RGB")
-    out = BytesIO()
-    img.save(out, format="JPEG", quality=quality, optimize=True)
-    return out.getvalue()
+    try:
+        img = Image.open(BytesIO(img_bytes))
+        
+        # 1. Chuyển đổi hệ màu chuẩn để nén tốt nhất
+        if img.mode != "RGB":
+            img = img.convert("RGB")
+        
+        # 2. Thuật toán Ép Kích Thước (Downscaling) - Điểm mấu chốt để giảm dung lượng
+        # Giới hạn chiều dài/rộng tối đa là 1600 pixel (Đủ sắc nét cho in A4)
+        max_dim = 1600
+        if max(img.width, img.height) > max_dim:
+            ratio = max_dim / float(max(img.width, img.height))
+            new_size = (int(img.width * ratio), int(img.height * ratio))
+            # Resampling chống vỡ hạt
+            if hasattr(Image, 'Resampling'):
+                img = img.resize(new_size, Image.Resampling.LANCZOS)
+            else:
+                img = img.resize(new_size, Image.LANCZOS)
+                
+        out = BytesIO()
+        img.save(out, format="JPEG", quality=quality, optimize=True)
+        return out.getvalue()
+    except Exception:
+        return img_bytes
 
 def compress_single_pdf(pdf_bytes, quality=65):
-    reader = PdfReader(BytesIO(pdf_bytes))
-    writer = PdfWriter()
-    for page in reader.pages:
-        for img_obj in page.images:
-            try:
-                comp_img = compress_single_image(img_obj.data, quality=quality)
-                img_obj.replace(Image.open(BytesIO(comp_img)), quality=quality)
-            except Exception:
-                continue
-        writer.add_page(page)
-    for page in writer.pages:
-        page.compress_content_streams()
-    out = BytesIO()
-    writer.write(out)
-    return out.getvalue()
+    try:
+        reader = PdfReader(BytesIO(pdf_bytes))
+        writer = PdfWriter()
+        for page in reader.pages:
+            for img_obj in page.images:
+                try:
+                    comp_img_bytes = compress_single_image(img_obj.data, quality=quality)
+                    # Thay thế ảnh cũ bằng ảnh mới đã resize và giảm chất lượng
+                    img_obj.replace(Image.open(BytesIO(comp_img_bytes)), quality=quality)
+                except Exception:
+                    continue
+            writer.add_page(page)
+            
+        # Nén siêu dữ liệu luồng nội dung của PDF
+        for page in writer.pages:
+            page.compress_content_streams()
+            
+        out = BytesIO()
+        writer.write(out)
+        return out.getvalue()
+    except Exception:
+        return pdf_bytes
 
 def app_compress_and_zip():
     st.title("🗜️ Nén Dung Lượng & Đóng Gói ZIP Gửi Mail")
@@ -1258,7 +1283,8 @@ def app_compress_and_zip():
             zip_buffer = BytesIO()
             report_rows = []
 
-            with zipfile.ZipFile(zip_buffer, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
+            # 3. Ép nén ZIP cấp độ cao nhất (compresslevel=9)
+            with zipfile.ZipFile(zip_buffer, mode="w", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as zf:
                 for idx, file in enumerate(uploaded_files):
                     fname = file.name
                     fext = fname.split('.')[-1].lower()
