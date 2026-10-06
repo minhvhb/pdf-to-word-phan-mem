@@ -253,8 +253,8 @@ app_mode = st.sidebar.radio(
         "🔍 4. So sánh Văn bản / Hợp đồng",
         "✂️ 5. Cắt & Ghép PDF",
         "💻 6. Chuyên gia Công thức & VBA",
-        "🗜️️ 7. Nén & Đóng Gói ZIP Gửi Mail",
-        "📐 8. Xoay & Cắt Viền PDF"
+        "🗜️ 7. Nén & Đóng Gói ZIP Gửi Mail",
+        "🔄 8. Xoay Trang PDF (Có Xem Trước)"
     ],
     label_visibility="collapsed"
 )
@@ -1372,55 +1372,40 @@ def app_compress_and_zip():
             )
 # ==========================================
 # ==========================================
-# APP 8: XOAY & CẮT VIỀN TRẮNG PDF SCAN
+# APP 8: XOAY TRANG PDF (CÓ XEM TRƯỚC TRỰC QUAN)
 # ==========================================
-def process_pdf_rotate_crop(pdf_bytes, rotate_angle=0, auto_crop=True, margin=15):
+def process_pdf_rotate(pdf_bytes, rotate_angle=0):
     import fitz
-    from PIL import Image
     from io import BytesIO
-    
     doc = fitz.open("pdf", pdf_bytes)
-    for page in doc:
-        # 1. Thuật toán tự động gọt viền (Auto Crop)
-        if auto_crop:
-            # Render trang thành ảnh đen trắng độ phân giải thấp để quét vùng pixel
-            pix = page.get_pixmap(matrix=fitz.Matrix(1, 1), colorspace=fitz.csGRAY)
-            img = Image.frombytes("L", [pix.width, pix.height], pix.samples)
-            
-            # Lấy mẫu màu nền ở góc để xác định là viền trắng hay viền đen nhiễu
-            bg_color = img.getpixel((5, 5))
-            if bg_color > 200: # Nền trắng
-                img_eval = Image.eval(img, lambda x: 0 if x > 235 else 255)
-            else: # Nền đen (nhiễu máy scan)
-                img_eval = Image.eval(img, lambda x: 0 if x < 25 else 255)
-                
-            bbox = img_eval.getbbox()
-            if bbox:
-                rect = page.rect
-                # Cắt gọn khung (Cropbox) và cộng thêm một phần lề margin an toàn
-                x0 = max(rect.x0, rect.x0 + bbox[0] - margin)
-                y0 = max(rect.y0, rect.y0 + bbox[1] - margin)
-                x1 = min(rect.x1, rect.x0 + bbox[2] + margin)
-                y1 = min(rect.y1, rect.y0 + bbox[3] + margin)
-                
-                crop_rect = fitz.Rect(x0, y0, x1, y1)
-                page.set_cropbox(crop_rect)
-        
-        # 2. Xoay trang theo chiều kim đồng hồ
-        if rotate_angle != 0:
+    if rotate_angle != 0:
+        for page in doc:
             current_rot = page.rotation
             page.set_rotation((current_rot + rotate_angle) % 360)
-            
     out_stream = BytesIO()
     doc.save(out_stream, garbage=3, deflate=True)
     return out_stream.getvalue()
 
-def app_rotate_and_crop():
-    st.title("📐 Xoay & Cắt Viền Trắng PDF Scan")
-    st.markdown("Khắc phục hàng loạt lỗi máy photocopy: Tự động gọt viền đen/trắng thừa xung quanh và xoay lại đúng chiều tài liệu.")
+def get_pdf_preview(pdf_bytes, rotate_angle):
+    import fitz
+    doc = fitz.open("pdf", pdf_bytes)
+    page = doc[0] # Trích xuất trang 1 làm mẫu xem trước
+    
+    # Ép góc xoay tạm thời để hiển thị
+    current_rot = page.rotation
+    page.set_rotation((current_rot + rotate_angle) % 360)
+    
+    # Dùng matrix thu nhỏ độ phân giải để load ảnh preview thật nhanh
+    mat = fitz.Matrix(0.6, 0.6) 
+    pix = page.get_pixmap(matrix=mat)
+    return pix.tobytes("png")
+
+def app_rotate_pdf():
+    st.title("🔄 Xoay Trang PDF (Có Xem Trước)")
+    st.markdown("Xem trước trực quan tài liệu để xác định chính xác chiều cần xoay. Áp dụng xoay hàng loạt cho nhiều file cùng lúc.")
 
     uploaded_files = st.file_uploader(
-        "Tải lên một hoặc nhiều file PDF cần xử lý:", 
+        "Tải lên các file PDF cần xoay (Hệ thống sẽ lấy trang 1 của file đầu tiên làm mẫu xem trước):", 
         type=["pdf"], 
         accept_multiple_files=True, 
         key=f"app8_{st.session_state.uploader_key}"
@@ -1429,72 +1414,86 @@ def app_rotate_and_crop():
     if uploaded_files:
         st.info(f"📁 Đã chọn **{len(uploaded_files)} file**.")
         
-        col1, col2 = st.columns(2)
-        with col1:
-            rotate_opt = st.radio(
-                "🔄 Xoay toàn bộ trang:", 
-                ["Không xoay", "Xoay phải 90° (Cùng kim đồng hồ)", "Xoay trái 90° (Ngược kim đồng hồ)", "Xoay ngược 180°"]
-            )
-            rotate_angle = 0
-            if "phải 90" in rotate_opt: rotate_angle = 90
-            elif "trái 90" in rotate_opt: rotate_angle = -90
-            elif "180" in rotate_opt: rotate_angle = 180
+        # Bảng chọn góc xoay đặt nằm ngang
+        rotate_opt = st.radio(
+            "Định hướng xoay (Áp dụng cho tất cả các file):", 
+            ["Không xoay (0°)", "Xoay phải (90°)", "Xoay ngược (180°)", "Xoay trái (-90°)"],
+            horizontal=True
+        )
+        
+        rotate_angle = 0
+        if "phải" in rotate_opt: rotate_angle = 90
+        elif "trái" in rotate_opt: rotate_angle = -90
+        elif "ngược" in rotate_opt: rotate_angle = 180
+
+        st.markdown("---")
+        st.markdown("### 👁️ KẾT QUẢ XEM TRƯỚC (Preview)")
+        
+        try:
+            # Tạo bản preview từ file tải lên đầu tiên
+            preview_bytes = get_pdf_preview(uploaded_files[0].getvalue(), rotate_angle)
             
-        with col2:
-            auto_crop = st.checkbox("✂️ Tự động gọt viền (Auto-Crop)", value=True, help="AI sẽ tự động nhận diện vùng có chữ/hình và cắt bỏ phần lề dư thừa.")
-            margin_pt = st.slider("Độ rộng lề chừa lại an toàn (điểm ảnh):", min_value=0, max_value=50, value=15)
-            
-        if st.button("🚀 Bắt đầu Xử lý", type="primary"):
+            # Đặt ảnh vào cột giữa để thu gọn kích thước hiển thị
+            col1, col2, col3 = st.columns([1, 2, 1])
+            with col2:
+                st.image(preview_bytes, caption=f"Mô phỏng góc nhìn khi: {rotate_opt}", use_container_width=True)
+        except Exception as e:
+            st.warning("Không thể tải bản xem trước cho file này, nhưng vẫn có thể tiến hành xoay.")
+
+        st.markdown("---")
+
+        if st.button("🚀 Tiến Hành Xoay & Tải Xuống", type="primary"):
             progress_bar = st.progress(0)
             status_text = st.empty()
             
-            # Xử lý nếu người dùng chỉ tải 1 file
+            # Luồng xử lý nếu tải 1 file
             if len(uploaded_files) == 1:
                 file = uploaded_files[0]
                 status_text.text(f"Đang xử lý: {file.name}...")
                 try:
-                    processed_bytes = process_pdf_rotate_crop(file.getvalue(), rotate_angle, auto_crop, margin_pt)
+                    processed_bytes = process_pdf_rotate(file.getvalue(), rotate_angle)
                     progress_bar.progress(100)
                     status_text.empty()
                     
-                    st.success("🎉 Xử lý thành công!")
+                    st.success("🎉 Xoay thành công!")
                     st.download_button(
-                        label=f"📥 Tải xuống PDF đã xử lý",
+                        label=f"📥 Tải xuống PDF đã xoay",
                         data=processed_bytes,
-                        file_name=f"Da_Got_{file.name}",
+                        file_name=f"Da_Xoay_{file.name}",
                         mime="application/pdf",
                         on_click=clear_file
                     )
                 except Exception as e:
                     st.error(f"Lỗi khi xử lý file: {e}")
                     
-            # Xử lý hàng loạt và đóng gói ZIP nếu tải lên nhiều file
+            # Luồng xử lý hàng loạt và đóng gói ZIP nếu tải nhiều file
             else:
-                zip_buffer = BytesIO()
+                from io import BytesIO
                 import zipfile
+                zip_buffer = BytesIO()
                 with zipfile.ZipFile(zip_buffer, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
                     for idx, file in enumerate(uploaded_files):
                         status_text.text(f"Đang xử lý ({idx+1}/{len(uploaded_files)}): {file.name}...")
                         try:
-                            processed_bytes = process_pdf_rotate_crop(file.getvalue(), rotate_angle, auto_crop, margin_pt)
-                            zf.writestr(f"Da_Got_{file.name}", processed_bytes)
+                            processed_bytes = process_pdf_rotate(file.getvalue(), rotate_angle)
+                            zf.writestr(f"Da_Xoay_{file.name}", processed_bytes)
                         except Exception:
-                            # Trả lại file gốc nếu PDF bị lỗi/bị khóa mật khẩu
                             zf.writestr(f"Loi_Giu_Nguyen_{file.name}", file.getvalue())
                         
                         progress_bar.progress((idx + 1) / len(uploaded_files))
                         
                 progress_bar.progress(100)
                 status_text.empty()
-                st.success("🎉 Đã xử lý và đóng gói thành công tất cả các file!")
+                st.success("🎉 Đã xoay và đóng gói thành công tất cả các file!")
                 
                 st.download_button(
                     label="📥 Tải xuống File ZIP",
                     data=zip_buffer.getvalue(),
-                    file_name="Tai_Lieu_Da_Got_Vien.zip",
+                    file_name="Tai_Lieu_Da_Xoay.zip",
                     mime="application/zip",
                     on_click=clear_file
                 )
+# ==========================================
 # ==========================================
 # 5. KÍCH HOẠT ỨNG DỤNG THEO LỰA CHỌN MENU
 # ==========================================
@@ -1512,5 +1511,5 @@ elif "6. Chuyên gia Công thức" in app_mode:
     app_excel_expert()
 elif "7. Nén & Đóng Gói" in app_mode:
     app_compress_and_zip()
-elif "8. Xoay & Cắt Viền" in app_mode: # Thêm 2 dòng này
-    app_rotate_and_crop()
+elif "8. Xoay Trang PDF" in app_mode:
+    app_rotate_pdf()
