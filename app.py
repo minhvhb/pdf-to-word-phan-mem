@@ -1287,6 +1287,13 @@ def app_compress_and_zip():
                 help="Điều chỉnh thanh trượt càng thấp, cả độ phân giải và chất lượng ảnh sẽ càng được tối ưu nhỏ lại."
             )
         
+        # Bổ sung khung hướng dẫn sử dụng chi tiết
+        st.markdown("""
+        > 💡 **Bạn hoàn toàn làm chủ độ nét thông qua Thanh trượt chất lượng:**
+        > - **Kéo lên mức 70 - 90:** Dành cho các hợp đồng quan trọng, ảnh chụp linh kiện máy móc cần độ nét cao để nghiệm thu (chấp nhận file ZIP đầu ra sẽ nặng hơn một chút).
+        > - **Để mức 40 - 50:** Tối ưu hóa tối đa để đính kèm qua email nội bộ bị giới hạn 25MB.
+        """)
+
         # Biến boolean kiểm tra chế độ màu
         is_color = "🌈" in che_do_mau
 
