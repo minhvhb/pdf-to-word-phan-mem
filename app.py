@@ -1348,13 +1348,12 @@ def app_compress_and_zip():
                 mime="application/zip",
                 on_click=clear_file
             )
-
 # ==========================================
 # 5. KÍCH HOẠT ỨNG DỤNG THEO LỰA CHỌN MENU
 # ==========================================
 if app_mode == "📄 1. PDF sang Word":
     app_pdf_to_word()
-elif app_mode == "🖨️ 2. Chuyển PDF về khổ A4":
+elif app_mode == "🖨️️ 2. Chuyển PDF về khổ A4":
     app_number_2()
 elif app_mode == "📊 3. PDF/Ảnh sang Excel":
     app_number_3()
@@ -1364,5 +1363,5 @@ elif app_mode == "✂️ 5. Cắt & Ghép PDF":
     app_pdf_split_merge()
 elif app_mode == "💻 6. Chuyên gia Công thức & VBA":
     app_excel_expert()
-elif app_mode == "🗜️ 7. Nén & Đóng Gói ZIP Gửi Mail":
+elif app_mode == "🗜 7. Nén & Đóng Gói ZIP Gửi Mail":
     app_compress_and_zip()
