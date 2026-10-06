@@ -28,6 +28,7 @@ from docx.enum.section import WD_ORIENT
 from PIL import Image
 from pypdf import PdfReader, PdfWriter, Transformation
 import difflib
+import fitz
 
 # Ẩn nút gập thanh bên mặc định của Streamlit
 st.markdown(
@@ -1196,30 +1197,21 @@ def app_excel_expert():
                     st.error(f"Đã xảy ra lỗi AI: {e}")
 
 # ==========================================
-# APP 7: NÉN DUNG LƯỢNG & ĐÓNG GÓI ZIP GỬI MAIL (CẬP NHẬT SIÊU NÉN)
+# APP 7: NÉN DUNG LƯỢNG & ĐÓNG GÓI ZIP GỬI MAIL (CỐT LÕI PYMUPDF)
 # ==========================================
-def compress_single_image(img_bytes, quality=65, sieu_nen=False):
+def compress_single_image(img_bytes, quality=50, sieu_nen=False):
     try:
         img = Image.open(BytesIO(img_bytes))
-        
-        # 1. CHUYỂN HỆ MÀU (VŨ KHÍ SIÊU NÉN)
         if sieu_nen:
-            img = img.convert("L") # Chuyển sang Đen Trắng (Grayscale) giúp giảm sâu 60-70% dung lượng
+            img = img.convert("L")
         elif img.mode != "RGB":
             img = img.convert("RGB")
             
-        # 2. ÉP ĐỘ PHÂN GIẢI ĐỘNG (Dựa vào thanh trượt)
-        # Khung hình bị bóp nhỏ linh hoạt từ 800px đến 1600px tùy mức chất lượng
         max_dim = int(800 + (quality - 30) * (1600 - 800) / (90 - 30))
-        
         if max(img.width, img.height) > max_dim:
             ratio = max_dim / float(max(img.width, img.height))
             new_size = (int(img.width * ratio), int(img.height * ratio))
-            # Cắt giảm chống vỡ hạt
-            if hasattr(Image, 'Resampling'):
-                img = img.resize(new_size, Image.Resampling.LANCZOS)
-            else:
-                img = img.resize(new_size, Image.LANCZOS)
+            img = img.resize(new_size, Image.Resampling.LANCZOS if hasattr(Image, 'Resampling') else Image.LANCZOS)
                 
         out = BytesIO()
         img.save(out, format="JPEG", quality=quality, optimize=True)
@@ -1227,28 +1219,37 @@ def compress_single_image(img_bytes, quality=65, sieu_nen=False):
     except Exception:
         return img_bytes
 
-def compress_single_pdf(pdf_bytes, quality=65, sieu_nen=False):
+def compress_pdf_extreme(pdf_bytes, quality=50, sieu_nen=False):
+    """Sử dụng PyMuPDF để 'cào bằng' toàn bộ trang PDF thành ảnh nén, triệt tiêu mọi lớp mã hóa rác"""
     try:
-        reader = PdfReader(BytesIO(pdf_bytes))
-        writer = PdfWriter()
-        for page in reader.pages:
-            for img_obj in page.images:
-                try:
-                    comp_img_bytes = compress_single_image(img_obj.data, quality=quality, sieu_nen=sieu_nen)
-                    # Ép ghi đè ảnh mới đã giảm phân giải và chuyển màu
-                    img_obj.replace(Image.open(BytesIO(comp_img_bytes)), quality=quality)
-                except Exception:
-                    continue
-            writer.add_page(page)
+        doc = fitz.open("pdf", pdf_bytes)
+        new_pdf = fitz.open()
+        
+        # Ép DPI từ 100 (rất nhẹ) đến 200 (sắc nét) dựa theo thanh trượt
+        dpi = int(100 + (quality - 30) * (200 - 100) / (90 - 30))
+        
+        for page in doc:
+            zoom = dpi / 72.0
+            mat = fitz.Matrix(zoom, zoom)
             
-        # Nén siêu dữ liệu luồng nội dung của PDF
-        for page in writer.pages:
-            page.compress_content_streams()
+            # Render trang thành hình ảnh hoàn toàn mới
+            if sieu_nen:
+                pix = page.get_pixmap(matrix=mat, colorspace=fitz.csGRAY)
+            else:
+                pix = page.get_pixmap(matrix=mat, colorspace=fitz.csRGB)
             
-        out = BytesIO()
-        writer.write(out)
-        return out.getvalue()
-    except Exception:
+            img_bytes = pix.tobytes("jpeg", jpg_quality=quality)
+            
+            # Gói lại vào trang PDF mới
+            imgdoc = fitz.open("jpeg", img_bytes)
+            pdfbytes = imgdoc.convert_to_pdf()
+            imgpdf = fitz.open("pdf", pdfbytes)
+            new_pdf.insert_pdf(imgpdf)
+            
+        out_stream = BytesIO()
+        new_pdf.save(out_stream, garbage=4, deflate=True)
+        return out_stream.getvalue()
+    except Exception as e:
         return pdf_bytes
 
 def app_compress_and_zip():
@@ -1266,16 +1267,14 @@ def app_compress_and_zip():
         total_orig_mb = total_orig_bytes / (1024 * 1024)
         st.info(f"📁 Đã chọn **{len(uploaded_files)} file** | Tổng dung lượng gốc: **{total_orig_mb:.2f} MB**")
 
-        # Nút tick kích hoạt chế độ siêu nén Trắng Đen
-        sieu_nen = st.checkbox("⚡ Kích hoạt chế độ SIÊU NÉN (Chuyển Ảnh/PDF Scan sang Đen Trắng)", value=True, help="Loại bỏ toàn bộ dữ liệu màu sắc, giúp giảm dung lượng cực sâu. Rất phù hợp cho hợp đồng/hóa đơn scan.")
+        sieu_nen = st.checkbox("⚡ Kích hoạt chế độ CÀO BẰNG & ĐEN TRẮNG (Khuyên dùng cho PDF Scan)", value=True, help="Biến mọi thứ thành ảnh đen trắng nén chặt, triệt tiêu cấu trúc ẩn của file gốc.")
 
         quality = st.slider(
-            "Mức chất lượng nén ảnh và PDF scan:",
+            "Mức chất lượng nén ảnh và PDF scan (Mặc định 50 - Siêu nhẹ):",
             min_value=30,
             max_value=90,
             value=50,
-            step=5,
-            help="Thanh trượt càng thấp, kích thước khung hình (pixel) càng bị bóp nhỏ lại."
+            step=5
         )
 
         zip_filename = st.text_input("Tên file ZIP xuất ra:", value="Tai_Lieu_Gui_Mail.zip")
@@ -1289,7 +1288,6 @@ def app_compress_and_zip():
             zip_buffer = BytesIO()
             report_rows = []
 
-            # Ép nén ZIP cấp độ cao nhất (compresslevel=9)
             with zipfile.ZipFile(zip_buffer, mode="w", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as zf:
                 for idx, file in enumerate(uploaded_files):
                     fname = file.name
@@ -1299,19 +1297,12 @@ def app_compress_and_zip():
 
                     status_text.text(f"Đang xử lý ({idx+1}/{len(uploaded_files)}): {fname}...")
 
-                    # Nén chuyên sâu đối với PDF và ảnh
                     if fext == "pdf":
-                        try:
-                            processed_bytes = compress_single_pdf(raw_bytes, quality=quality, sieu_nen=sieu_nen)
-                        except Exception:
-                            processed_bytes = raw_bytes
+                        processed_bytes = compress_pdf_extreme(raw_bytes, quality=quality, sieu_nen=sieu_nen)
                     elif fext in ["jpg", "jpeg", "png"]:
-                        try:
-                            processed_bytes = compress_single_image(raw_bytes, quality=quality, sieu_nen=sieu_nen)
-                            if not fname.lower().endswith(".jpg") and not fname.lower().endswith(".jpeg"):
-                                fname = f"{fname.rsplit('.', 1)[0]}.jpg"
-                        except Exception:
-                            processed_bytes = raw_bytes
+                        processed_bytes = compress_single_image(raw_bytes, quality=quality, sieu_nen=sieu_nen)
+                        if not fname.lower().endswith(".jpg") and not fname.lower().endswith(".jpeg"):
+                            fname = f"{fname.rsplit('.', 1)[0]}.jpg"
                     else:
                         processed_bytes = raw_bytes
 
@@ -1341,9 +1332,9 @@ def app_compress_and_zip():
             col3.metric("Tiết kiệm được", f"{total_saved_pct:.1f}%")
 
             if final_zip_mb <= 25.0:
-                st.success(f"🎉 Đã đóng gói thành công! File ZIP nặng **{final_zip_mb:.2f} MB**, hoàn toàn đủ điều kiện gửi qua hệ thống email công ty (giới hạn 25MB).")
+                st.success(f"🎉 Siêu nén thành công! File ZIP nặng **{final_zip_mb:.2f} MB**, đủ điều kiện gửi email.")
             else:
-                st.warning(f"⚠️ File ZIP hiện tại nặng **{final_zip_mb:.2f} MB** (vẫn vượt 25MB). Hãy thử giảm thanh trượt xuống 30-40% hoặc chia nhỏ số lượng file.")
+                st.warning(f"⚠️ File ZIP hiện tại nặng **{final_zip_mb:.2f} MB** (vẫn vượt 25MB).")
 
             st.dataframe(pd.DataFrame(report_rows), use_container_width=True)
 
