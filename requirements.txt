@@ -9,3 +9,4 @@ pandas
 openpyxl
 streamlit-authenticator
 PyYAML
+PyMuPDF
