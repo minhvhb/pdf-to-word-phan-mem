@@ -253,9 +253,11 @@ app_mode = st.sidebar.radio(
         "🔍 4. So sánh Văn bản / Hợp đồng",
         "✂️ 5. Cắt & Ghép PDF",
         "💻 6. Chuyên gia Công thức & VBA",
-        "🗜️️ 7. Nén & Đóng Gói ZIP Gửi Mail"
+        "🗜️️ 7. Nén & Đóng Gói ZIP Gửi Mail",
+        "📐 8. Xoay & Cắt Viền PDF"
     ],
     label_visibility="collapsed"
+)
 )
 
 st.sidebar.markdown("---") 
@@ -1371,6 +1373,131 @@ def app_compress_and_zip():
                 on_click=clear_file
             )
 # ==========================================
+# ==========================================
+# APP 8: XOAY & CẮT VIỀN TRẮNG PDF SCAN
+# ==========================================
+def process_pdf_rotate_crop(pdf_bytes, rotate_angle=0, auto_crop=True, margin=15):
+    import fitz
+    from PIL import Image
+    from io import BytesIO
+    
+    doc = fitz.open("pdf", pdf_bytes)
+    for page in doc:
+        # 1. Thuật toán tự động gọt viền (Auto Crop)
+        if auto_crop:
+            # Render trang thành ảnh đen trắng độ phân giải thấp để quét vùng pixel
+            pix = page.get_pixmap(matrix=fitz.Matrix(1, 1), colorspace=fitz.csGRAY)
+            img = Image.frombytes("L", [pix.width, pix.height], pix.samples)
+            
+            # Lấy mẫu màu nền ở góc để xác định là viền trắng hay viền đen nhiễu
+            bg_color = img.getpixel((5, 5))
+            if bg_color > 200: # Nền trắng
+                img_eval = Image.eval(img, lambda x: 0 if x > 235 else 255)
+            else: # Nền đen (nhiễu máy scan)
+                img_eval = Image.eval(img, lambda x: 0 if x < 25 else 255)
+                
+            bbox = img_eval.getbbox()
+            if bbox:
+                rect = page.rect
+                # Cắt gọn khung (Cropbox) và cộng thêm một phần lề margin an toàn
+                x0 = max(rect.x0, rect.x0 + bbox[0] - margin)
+                y0 = max(rect.y0, rect.y0 + bbox[1] - margin)
+                x1 = min(rect.x1, rect.x0 + bbox[2] + margin)
+                y1 = min(rect.y1, rect.y0 + bbox[3] + margin)
+                
+                crop_rect = fitz.Rect(x0, y0, x1, y1)
+                page.set_cropbox(crop_rect)
+        
+        # 2. Xoay trang theo chiều kim đồng hồ
+        if rotate_angle != 0:
+            current_rot = page.rotation
+            page.set_rotation((current_rot + rotate_angle) % 360)
+            
+    out_stream = BytesIO()
+    doc.save(out_stream, garbage=3, deflate=True)
+    return out_stream.getvalue()
+
+def app_rotate_and_crop():
+    st.title("📐 Xoay & Cắt Viền Trắng PDF Scan")
+    st.markdown("Khắc phục hàng loạt lỗi máy photocopy: Tự động gọt viền đen/trắng thừa xung quanh và xoay lại đúng chiều tài liệu.")
+
+    uploaded_files = st.file_uploader(
+        "Tải lên một hoặc nhiều file PDF cần xử lý:", 
+        type=["pdf"], 
+        accept_multiple_files=True, 
+        key=f"app8_{st.session_state.uploader_key}"
+    )
+
+    if uploaded_files:
+        st.info(f"📁 Đã chọn **{len(uploaded_files)} file**.")
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            rotate_opt = st.radio(
+                "🔄 Xoay toàn bộ trang:", 
+                ["Không xoay", "Xoay phải 90° (Cùng kim đồng hồ)", "Xoay trái 90° (Ngược kim đồng hồ)", "Xoay ngược 180°"]
+            )
+            rotate_angle = 0
+            if "phải 90" in rotate_opt: rotate_angle = 90
+            elif "trái 90" in rotate_opt: rotate_angle = -90
+            elif "180" in rotate_opt: rotate_angle = 180
+            
+        with col2:
+            auto_crop = st.checkbox("✂️ Tự động gọt viền (Auto-Crop)", value=True, help="AI sẽ tự động nhận diện vùng có chữ/hình và cắt bỏ phần lề dư thừa.")
+            margin_pt = st.slider("Độ rộng lề chừa lại an toàn (điểm ảnh):", min_value=0, max_value=50, value=15)
+            
+        if st.button("🚀 Bắt đầu Xử lý", type="primary"):
+            progress_bar = st.progress(0)
+            status_text = st.empty()
+            
+            # Xử lý nếu người dùng chỉ tải 1 file
+            if len(uploaded_files) == 1:
+                file = uploaded_files[0]
+                status_text.text(f"Đang xử lý: {file.name}...")
+                try:
+                    processed_bytes = process_pdf_rotate_crop(file.getvalue(), rotate_angle, auto_crop, margin_pt)
+                    progress_bar.progress(100)
+                    status_text.empty()
+                    
+                    st.success("🎉 Xử lý thành công!")
+                    st.download_button(
+                        label=f"📥 Tải xuống PDF đã xử lý",
+                        data=processed_bytes,
+                        file_name=f"Da_Got_{file.name}",
+                        mime="application/pdf",
+                        on_click=clear_file
+                    )
+                except Exception as e:
+                    st.error(f"Lỗi khi xử lý file: {e}")
+                    
+            # Xử lý hàng loạt và đóng gói ZIP nếu tải lên nhiều file
+            else:
+                zip_buffer = BytesIO()
+                import zipfile
+                with zipfile.ZipFile(zip_buffer, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
+                    for idx, file in enumerate(uploaded_files):
+                        status_text.text(f"Đang xử lý ({idx+1}/{len(uploaded_files)}): {file.name}...")
+                        try:
+                            processed_bytes = process_pdf_rotate_crop(file.getvalue(), rotate_angle, auto_crop, margin_pt)
+                            zf.writestr(f"Da_Got_{file.name}", processed_bytes)
+                        except Exception:
+                            # Trả lại file gốc nếu PDF bị lỗi/bị khóa mật khẩu
+                            zf.writestr(f"Loi_Giu_Nguyen_{file.name}", file.getvalue())
+                        
+                        progress_bar.progress((idx + 1) / len(uploaded_files))
+                        
+                progress_bar.progress(100)
+                status_text.empty()
+                st.success("🎉 Đã xử lý và đóng gói thành công tất cả các file!")
+                
+                st.download_button(
+                    label="📥 Tải xuống File ZIP",
+                    data=zip_buffer.getvalue(),
+                    file_name="Tai_Lieu_Da_Got_Vien.zip",
+                    mime="application/zip",
+                    on_click=clear_file
+                )
+# ==========================================
 # 5. KÍCH HOẠT ỨNG DỤNG THEO LỰA CHỌN MENU
 # ==========================================
 if "1. PDF sang Word" in app_mode:
@@ -1387,3 +1514,5 @@ elif "6. Chuyên gia Công thức" in app_mode:
     app_excel_expert()
 elif "7. Nén & Đóng Gói" in app_mode:
     app_compress_and_zip()
+elif "8. Xoay & Cắt Viền" in app_mode: # Thêm 2 dòng này
+    app_rotate_and_crop()
