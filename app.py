@@ -1372,128 +1372,96 @@ def app_compress_and_zip():
             )
 # ==========================================
 # ==========================================
-# APP 8: XOAY TRANG PDF (CÓ XEM TRƯỚC TRỰC QUAN)
+# APP 8: XOAY TÙY Ý TỪNG TRANG PDF
 # ==========================================
-def process_pdf_rotate(pdf_bytes, rotate_angle=0):
+def app_rotate_pdf():
     import fitz
     from io import BytesIO
-    doc = fitz.open("pdf", pdf_bytes)
-    if rotate_angle != 0:
-        for page in doc:
-            current_rot = page.rotation
-            page.set_rotation((current_rot + rotate_angle) % 360)
-    out_stream = BytesIO()
-    doc.save(out_stream, garbage=3, deflate=True)
-    return out_stream.getvalue()
+    from PIL import Image
 
-def get_pdf_preview(pdf_bytes, rotate_angle):
-    import fitz
-    doc = fitz.open("pdf", pdf_bytes)
-    page = doc[0] # Trích xuất trang 1 làm mẫu xem trước
-    
-    # Ép góc xoay tạm thời để hiển thị
-    current_rot = page.rotation
-    page.set_rotation((current_rot + rotate_angle) % 360)
-    
-    # Dùng matrix thu nhỏ độ phân giải để load ảnh preview thật nhanh
-    mat = fitz.Matrix(0.6, 0.6) 
-    pix = page.get_pixmap(matrix=mat)
-    return pix.tobytes("png")
+    st.title("🔄 Xoay Tùy Ý Từng Trang PDF")
+    st.markdown("Hiển thị toàn bộ các trang trong file PDF. Cung cấp tính năng xem trước và cho phép chọn góc xoay độc lập cho từng trang bị ngược.")
 
-def app_rotate_pdf():
-    st.title("🔄 Xoay Trang PDF (Có Xem Trước)")
-    st.markdown("Xem trước trực quan tài liệu để xác định chính xác chiều cần xoay. Áp dụng xoay hàng loạt cho nhiều file cùng lúc.")
-
-    uploaded_files = st.file_uploader(
-        "Tải lên các file PDF cần xoay (Hệ thống sẽ lấy trang 1 của file đầu tiên làm mẫu xem trước):", 
+    # Chỉ cho phép tải 1 file để trải ra từng trang
+    uploaded_file = st.file_uploader(
+        "Tải lên 1 file PDF cần kiểm tra và xoay:", 
         type=["pdf"], 
-        accept_multiple_files=True, 
+        accept_multiple_files=False, 
         key=f"app8_{st.session_state.uploader_key}"
     )
 
-    if uploaded_files:
-        st.info(f"📁 Đã chọn **{len(uploaded_files)} file**.")
-        
-        # Bảng chọn góc xoay đặt nằm ngang
-        rotate_opt = st.radio(
-            "Định hướng xoay (Áp dụng cho tất cả các file):", 
-            ["Không xoay (0°)", "Xoay phải (90°)", "Xoay ngược (180°)", "Xoay trái (-90°)"],
-            horizontal=True
-        )
-        
-        rotate_angle = 0
-        if "phải" in rotate_opt: rotate_angle = 90
-        elif "trái" in rotate_opt: rotate_angle = -90
-        elif "ngược" in rotate_opt: rotate_angle = 180
-
-        st.markdown("---")
-        st.markdown("### 👁️ KẾT QUẢ XEM TRƯỚC (Preview)")
+    if uploaded_file:
+        pdf_bytes = uploaded_file.getvalue()
         
         try:
-            # Tạo bản preview từ file tải lên đầu tiên
-            preview_bytes = get_pdf_preview(uploaded_files[0].getvalue(), rotate_angle)
+            doc = fitz.open("pdf", pdf_bytes)
+            num_pages = len(doc)
+            st.info(f"📁 Tên file: **{uploaded_file.name}** | Tổng số: **{num_pages} trang**.")
             
-            # Đặt ảnh vào cột giữa để thu gọn kích thước hiển thị
-            col1, col2, col3 = st.columns([1, 2, 1])
-            with col2:
-                st.image(preview_bytes, caption=f"Mô phỏng góc nhìn khi: {rotate_opt}", use_container_width=True)
-        except Exception as e:
-            st.warning("Không thể tải bản xem trước cho file này, nhưng vẫn có thể tiến hành xoay.")
+            # Quản lý bộ nhớ trạng thái để giữ nguyên góc xoay khi người dùng thao tác
+            state_key = f"rotations_{uploaded_file.name}_{st.session_state.uploader_key}"
+            if state_key not in st.session_state:
+                st.session_state[state_key] = {i: 0 for i in range(num_pages)}
 
-        st.markdown("---")
-
-        if st.button("🚀 Tiến Hành Xoay & Tải Xuống", type="primary"):
-            progress_bar = st.progress(0)
-            status_text = st.empty()
+            st.markdown("### 👁️ BẢN ĐIỀU KHIỂN TỪNG TRANG")
             
-            # Luồng xử lý nếu tải 1 file
-            if len(uploaded_files) == 1:
-                file = uploaded_files[0]
-                status_text.text(f"Đang xử lý: {file.name}...")
-                try:
-                    processed_bytes = process_pdf_rotate(file.getvalue(), rotate_angle)
-                    progress_bar.progress(100)
-                    status_text.empty()
+            # Chia giao diện làm 3 cột để hiển thị hình ảnh gọn gàng
+            cols = st.columns(3)
+            
+            for i in range(num_pages):
+                col_idx = i % 3
+                page = doc[i]
+                
+                with cols[col_idx]:
+                    st.markdown(f"<div style='text-align: center; color: #003366; margin-top: 15px;'><b>Trang {i+1}</b></div>", unsafe_allow_html=True)
                     
-                    st.success("🎉 Xoay thành công!")
+                    # Nút chọn góc xoay cá nhân hóa cho từng trang
+                    rot_val = st.selectbox(
+                        "Hướng xoay:",
+                        options=[0, 90, 180, 270],
+                        index=[0, 90, 180, 270].index(st.session_state[state_key][i]),
+                        format_func=lambda x: "✅ Giữ nguyên" if x == 0 else "↪️ Phải 90°" if x == 90 else "🔃 Ngược 180°" if x == 180 else "↩️ Trái 90°",
+                        key=f"select_rot_{i}_{state_key}",
+                        label_visibility="collapsed"
+                    )
+                    st.session_state[state_key][i] = rot_val
+                    
+                    # Mô phỏng góc xoay thực tế trên ảnh Preview
+                    current_rot = page.rotation
+                    page.set_rotation((current_rot + rot_val) % 360)
+                    
+                    # Render ảnh thumbnail ở độ phân giải 30% để load siêu nhanh
+                    mat = fitz.Matrix(0.3, 0.3)
+                    pix = page.get_pixmap(matrix=mat)
+                    img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+                    
+                    # Đóng khung hình ảnh
+                    st.image(img, use_container_width=True)
+                    st.markdown("<br>", unsafe_allow_html=True)
+
+            st.markdown("---")
+            if st.button("🚀 Lưu & Tải Xuống File Mới", type="primary"):
+                with st.spinner("Đang áp dụng góc xoay và kết xuất PDF..."):
+                    # Mở lại doc gốc để áp dụng thay đổi chuẩn xác nhất
+                    out_doc = fitz.open("pdf", pdf_bytes)
+                    for i in range(num_pages):
+                        p = out_doc[i]
+                        p.set_rotation((p.rotation + st.session_state[state_key][i]) % 360)
+                    
+                    out_stream = BytesIO()
+                    out_doc.save(out_stream, garbage=3, deflate=True)
+                    
+                    st.success("🎉 Đã xoay xong toàn bộ trang theo ý muốn!")
                     st.download_button(
-                        label=f"📥 Tải xuống PDF đã xoay",
-                        data=processed_bytes,
-                        file_name=f"Da_Xoay_{file.name}",
+                        label="📥 Tải xuống PDF",
+                        data=out_stream.getvalue(),
+                        file_name=f"Da_Xoay_{uploaded_file.name}",
                         mime="application/pdf",
                         on_click=clear_file
                     )
-                except Exception as e:
-                    st.error(f"Lỗi khi xử lý file: {e}")
-                    
-            # Luồng xử lý hàng loạt và đóng gói ZIP nếu tải nhiều file
-            else:
-                from io import BytesIO
-                import zipfile
-                zip_buffer = BytesIO()
-                with zipfile.ZipFile(zip_buffer, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
-                    for idx, file in enumerate(uploaded_files):
-                        status_text.text(f"Đang xử lý ({idx+1}/{len(uploaded_files)}): {file.name}...")
-                        try:
-                            processed_bytes = process_pdf_rotate(file.getvalue(), rotate_angle)
-                            zf.writestr(f"Da_Xoay_{file.name}", processed_bytes)
-                        except Exception:
-                            zf.writestr(f"Loi_Giu_Nguyen_{file.name}", file.getvalue())
-                        
-                        progress_bar.progress((idx + 1) / len(uploaded_files))
-                        
-                progress_bar.progress(100)
-                status_text.empty()
-                st.success("🎉 Đã xoay và đóng gói thành công tất cả các file!")
-                
-                st.download_button(
-                    label="📥 Tải xuống File ZIP",
-                    data=zip_buffer.getvalue(),
-                    file_name="Tai_Lieu_Da_Xoay.zip",
-                    mime="application/zip",
-                    on_click=clear_file
-                )
-# ==========================================
+
+        except Exception as e:
+            st.error(f"Lỗi khi đọc file PDF: {e}")
 # ==========================================
 # 5. KÍCH HOẠT ỨNG DỤNG THEO LỰA CHỌN MENU
 # ==========================================
