@@ -1008,6 +1008,7 @@ def app_document_compare():
                     st.error(f"Đã xảy ra lỗi: {e}")
 
 # ==========================================
+# ==========================================
 # APP 5: CẮT & GHÉP PDF CHUYÊN NGHIỆP (LÕI PYMUPDF TRỰC QUAN)
 # ==========================================
 def app_pdf_split_merge():
@@ -1056,16 +1057,24 @@ def app_pdf_split_merge():
                         st.rerun()
 
                 st.markdown("---")
-                st.markdown("### 👁️ Danh sách trang (Tick chọn những trang muốn giữ lại)")
+                
+                # Bổ sung thanh trượt chỉnh kích thước xem trước
+                col_view1, col_view2 = st.columns([2, 1])
+                with col_view1:
+                    st.markdown("### 👁️ Danh sách trang")
+                    st.caption("Tick chọn những trang bạn muốn giữ lại để trích xuất.")
+                with col_view2:
+                    grid_cols = st.slider("🔍 Cỡ ảnh (Số trang / hàng):", min_value=1, max_value=4, value=2, help="Kéo về 1 hoặc 2 để phóng to trang giấy, dễ dàng đọc chữ bên trong.")
 
-                # Dàn lưới 4 cột hiển thị thumbnail từng trang
-                cols = st.columns(4)
+                # Điều chỉnh độ nét ma trận dựa trên số cột (ít cột -> render nét hơn để phóng to)
+                zoom_mat = 0.8 if grid_cols <= 2 else 0.4
+                mat = fitz.Matrix(zoom_mat, zoom_mat)
+
+                cols = st.columns(grid_cols)
                 for idx in range(total_pages):
-                    c_idx = idx % 4
+                    c_idx = idx % grid_cols
                     page = doc[idx]
                     with cols[c_idx]:
-                        # Render thumbnail nhanh
-                        mat = fitz.Matrix(0.25, 0.25)
                         pix = page.get_pixmap(matrix=mat)
                         img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
 
