@@ -1038,6 +1038,10 @@ def app_pdf_split_merge():
             align-items: center !important;
             justify-content: center !important;
         }
+        /* In đậm nhãn của checkbox */
+        div[data-testid="stCheckbox"] label p {
+            font-weight: bold !important;
+        }
         </style>
     """, unsafe_allow_html=True)
 
