@@ -1048,9 +1048,12 @@ def app_pdf_split_merge():
     # ----------------------------------------------------
     with tab_split:
         st.subheader("1. Chọn file PDF cần cắt hoặc tách rời")
+        
+        # Thêm accept_multiple_files=False để khóa tuyệt đối tính năng tải nhiều file, loại bỏ dấu (+)
         uploaded_split_file = st.file_uploader(
             "Tải lên 1 file PDF:",
             type=["pdf"],
+            accept_multiple_files=False, 
             key=f"app5_split_{st.session_state.uploader_key}"
         )
 
