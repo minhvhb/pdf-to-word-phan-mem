@@ -1007,119 +1007,211 @@ def app_document_compare():
                 except Exception as e:
                     st.error(f"Đã xảy ra lỗi: {e}")
 
+# ==========================================
+# APP 5: CẮT & GHÉP PDF CHUYÊN NGHIỆP (LÕI PYMUPDF TRỰC QUAN)
+# ==========================================
 def app_pdf_split_merge():
-    st.title("✂️ Cắt & Ghép PDF")
-    st.markdown("Xử lý nhanh các tác vụ chia nhỏ một file PDF hoặc gộp nhiều file lại thành một.")
+    import fitz
+    from PIL import Image
+    from io import BytesIO
+    import zipfile
 
-    tab1, tab2 = st.tabs(["✂️ Cắt PDF (Split)", "🔗 Ghép PDF (Merge)"])
+    st.title("✂️ Cắt, Trích Xuất & Ghép Nối PDF")
+    st.markdown("Công cụ thao tác PDF toàn diện: Cắt trang trực quan qua ảnh xem trước, rã file hàng loạt (Burst), và ghép nối với khả năng tùy chỉnh thứ tự file linh hoạt.")
 
-    with tab1:
-        st.subheader("Cắt lấy trang cụ thể từ PDF")
-        uploaded_split = st.file_uploader("Tải lên 1 file PDF cần cắt:", type=["pdf"], key=f"app5_split_{st.session_state.uploader_key}")
-        
-        if uploaded_split:
+    tab_split, tab_merge = st.tabs(["✂️ Cắt Trang & Tách File (Visual Split)", "📑 Ghép Nhiều File PDF (Reorder Merge)"])
+
+    # ----------------------------------------------------
+    # TAB 1: CẮT TRANG VÀ TÁCH FILE TRỰC QUAN
+    # ----------------------------------------------------
+    with tab_split:
+        st.subheader("1. Chọn file PDF cần cắt hoặc tách rời")
+        uploaded_split_file = st.file_uploader(
+            "Tải lên 1 file PDF:",
+            type=["pdf"],
+            key=f"app5_split_{st.session_state.uploader_key}"
+        )
+
+        if uploaded_split_file:
+            pdf_bytes = uploaded_split_file.getvalue()
             try:
-                reader = PdfReader(uploaded_split)
-                total_pages = len(reader.pages)
-                st.info(f"File tải lên có tổng cộng **{total_pages}** trang.")
+                doc = fitz.open("pdf", pdf_bytes)
+                total_pages = len(doc)
+                st.info(f"📄 Tên file: **{uploaded_split_file.name}** | Tổng số: **{total_pages} trang**")
 
-                pages_to_extract = st.text_input(
-                    "Nhập các trang cần cắt (VD: 1, 3, 5-8):", 
-                    placeholder="Ví dụ: 1, 3, 5-8"
-                )
+                col_btn1, col_btn2 = st.columns([1, 1])
+                
+                # Khởi tạo trạng thái chọn trang trong session_state
+                state_check_key = f"split_selected_{uploaded_split_file.name}_{st.session_state.uploader_key}"
+                if state_check_key not in st.session_state:
+                    st.session_state[state_check_key] = [True] * total_pages
 
-                if st.button("✂️ Tiến hành Cắt", type="primary"):
-                    if not pages_to_extract:
-                        st.warning("Vui lòng nhập số trang bạn muốn cắt!")
-                    else:
-                        with st.spinner("Đang cắt các trang bạn yêu cầu..."):
-                            writer = PdfWriter()
-                            page_numbers = []
-                            
-                            parts = pages_to_extract.replace(" ", "").split(",")
-                            for part in parts:
-                                if "-" in part:
-                                    try:
-                                        start, end = map(int, part.split("-"))
-                                        page_numbers.extend(range(start, end + 1))
-                                    except ValueError:
-                                        st.error(f"Định dạng khoảng trang không hợp lệ: {part}")
-                                        st.stop()
-                                else:
-                                    try:
-                                        page_numbers.append(int(part))
-                                    except ValueError:
-                                        st.error(f"Số trang không hợp lệ: {part}")
-                                        st.stop()
+                with col_btn1:
+                    if st.button("✅ Chọn tất cả trang", key="btn_sel_all"):
+                        st.session_state[state_check_key] = [True] * total_pages
+                        st.rerun()
+                with col_btn2:
+                    if st.button("❌ Bỏ chọn tất cả", key="btn_desel_all"):
+                        st.session_state[state_check_key] = [False] * total_pages
+                        st.rerun()
 
-                            page_numbers = sorted(list(set(page_numbers)))
+                st.markdown("---")
+                st.markdown("### 👁️ Danh sách trang (Tick chọn những trang muốn giữ lại)")
 
-                            extracted_count = 0
-                            for p_num in page_numbers:
-                                if 1 <= p_num <= total_pages:
-                                    writer.add_page(reader.pages[p_num - 1])
-                                    extracted_count += 1
-                                else:
-                                    st.warning(f"Bỏ qua trang {p_num} vì file chỉ có {total_pages} trang.")
+                # Dàn lưới 4 cột hiển thị thumbnail từng trang
+                cols = st.columns(4)
+                for idx in range(total_pages):
+                    c_idx = idx % 4
+                    page = doc[idx]
+                    with cols[c_idx]:
+                        # Render thumbnail nhanh
+                        mat = fitz.Matrix(0.25, 0.25)
+                        pix = page.get_pixmap(matrix=mat)
+                        img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
 
-                            if extracted_count > 0:
-                                output_split_path = "Extracted_Pages.pdf"
-                                with open(output_split_path, "wb") as f:
-                                    writer.write(f)
+                        st.image(img, use_container_width=True)
+                        st.session_state[state_check_key][idx] = st.checkbox(
+                            f"Trang {idx + 1}",
+                            value=st.session_state[state_check_key][idx],
+                            key=f"chk_page_{idx}_{state_check_key}"
+                        )
+                        st.markdown("<br>", unsafe_allow_html=True)
 
-                                st.success(f"🎉 Đã cắt thành công {extracted_count} trang!")
-                                with open(output_split_path, "rb") as f:
-                                    st.download_button(
-                                        label="📥 Tải file PDF đã cắt",
-                                        data=f,
-                                        file_name=f"Cut_{uploaded_split.name}",
-                                        mime="application/pdf",
-                                        key="download_split"
-                                    )
-                            else:
-                                st.error("Không có trang hợp lệ nào được trích xuất.")
+                st.markdown("---")
+                col_act1, col_act2 = st.columns(2)
+
+                # Hành động 1: Trích xuất các trang đã tick chọn
+                with col_act1:
+                    st.markdown("#### 🎯 Trích xuất trang đã chọn")
+                    selected_indices = [i for i, val in enumerate(st.session_state[state_check_key]) if val]
+                    st.caption(f"Đang chọn **{len(selected_indices)}/{total_pages}** trang.")
+
+                    if st.button("🚀 Xuất PDF Đã Chọn", type="primary", disabled=(len(selected_indices) == 0)):
+                        with st.spinner("Đang trích xuất trang đã chọn..."):
+                            out_doc = fitz.open()
+                            out_doc.insert_pdf(doc, from_page=0, to_page=total_pages - 1)
+                            # Giữ lại danh sách các trang đã tick
+                            out_doc.select(selected_indices)
+
+                            out_stream = BytesIO()
+                            out_doc.save(out_stream, garbage=3, deflate=True)
+
+                            base_name = uploaded_split_file.name.rsplit('.', 1)[0]
+                            st.success(f"🎉 Đã trích xuất thành công {len(selected_indices)} trang!")
+                            st.download_button(
+                                label="📥 Tải xuống PDF Đã Cắt",
+                                data=out_stream.getvalue(),
+                                file_name=f"Trich_Xuat_{base_name}.pdf",
+                                mime="application/pdf",
+                                on_click=clear_file
+                            )
+
+                # Hành động 2: Tách file hàng loạt (Burst to ZIP)
+                with col_act2:
+                    st.markdown("#### ⚡ Tách rời toàn bộ trang (Burst)")
+                    st.caption("Rã từng trang thành các file PDF 1 trang riêng biệt và nén vào file ZIP.")
+
+                    if st.button("📦 Rã Từng Trang Sang ZIP"):
+                        with st.spinner(f"Đang bóc tách {total_pages} trang thành các file riêng..."):
+                            zip_buffer = BytesIO()
+                            base_name = uploaded_split_file.name.rsplit('.', 1)[0]
+
+                            with zipfile.ZipFile(zip_buffer, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
+                                for i in range(total_pages):
+                                    single_page_doc = fitz.open()
+                                    single_page_doc.insert_pdf(doc, from_page=i, to_page=i)
+                                    p_stream = BytesIO()
+                                    single_page_doc.save(p_stream, garbage=3, deflate=True)
+                                    zf.writestr(f"{base_name}_Trang_{i+1:02d}.pdf", p_stream.getvalue())
+
+                            st.success("🎉 Đã rã toàn bộ trang và đóng gói ZIP thành công!")
+                            st.download_button(
+                                label="📥 Tải xuống File ZIP (Các trang rời)",
+                                data=zip_buffer.getvalue(),
+                                file_name=f"Tach_Roi_{base_name}.zip",
+                                mime="application/zip",
+                                on_click=clear_file
+                            )
+
             except Exception as e:
                 st.error(f"Lỗi khi đọc file PDF: {e}")
 
-    with tab2:
-        st.subheader("Gộp nhiều file PDF thành 1 file duy nhất")
-        uploaded_merges = st.file_uploader(
-            "Tải lên nhiều file PDF (Thứ tự tải lên sẽ là thứ tự ghép):", 
-            type=["pdf"], 
+    # ----------------------------------------------------
+    # TAB 2: GHÉP NHIỀU FILE VỚI TÍNH NĂNG ĐỔI THỨ TỰ (REORDER)
+    # ----------------------------------------------------
+    with tab_merge:
+        st.subheader("2. Tải lên nhiều file PDF cần ghép nối")
+        uploaded_merge_files = st.file_uploader(
+            "Tải lên các file PDF:",
+            type=["pdf"],
             accept_multiple_files=True,
             key=f"app5_merge_{st.session_state.uploader_key}"
         )
 
-        if uploaded_merges:
-            st.info(f"Đã tải lên **{len(uploaded_merges)}** file sẵn sàng gộp.")
-            for i, f in enumerate(uploaded_merges, 1):
-                st.write(f"{i}. {f.name}")
+        if uploaded_merge_files:
+            merge_state_key = f"merge_order_list_{st.session_state.uploader_key}"
+            
+            # Cập nhật danh sách file vào session state nếu thay đổi
+            current_names = [f.name for f in uploaded_merge_files]
+            if merge_state_key not in st.session_state or [f.name for f in st.session_state[merge_state_key]] != current_names:
+                st.session_state[merge_state_key] = list(uploaded_merge_files)
 
-            if st.button("🔗 Tiến hành Gộp", type="primary"):
-                if len(uploaded_merges) < 2:
-                    st.warning("Bạn cần tải lên ít nhất 2 file để thực hiện gộp.")
-                else:
-                    with st.spinner("Đang gộp các file lại với nhau..."):
-                        try:
-                            merger = PdfWriter()
-                            for pdf_file in uploaded_merges:
-                                merger.append(pdf_file)
-                            
-                            output_merge_path = "Merged_Document.pdf"
-                            with open(output_merge_path, "wb") as f:
-                                merger.write(f)
+            st.info(f"📁 Đã tải lên **{len(st.session_state[merge_state_key])} file**. Bạn có thể bấm các nút mũi tên để điều chỉnh thứ tự ghép:")
 
-                            st.success("🎉 Đã gộp các file thành công!")
-                            with open(output_merge_path, "rb") as f:
-                                st.download_button(
-                                    label="📥 Tải file PDF đã gộp",
-                                    data=f,
-                                    file_name="Gop_Tai_Lieu.pdf",
-                                    mime="application/pdf",
-                                    key="download_merge"
-                                )
-                        except Exception as e:
-                            st.error(f"Lỗi trong quá trình gộp file: {e}")
+            # Bảng điều khiển đổi thứ tự file
+            for i, f in enumerate(st.session_state[merge_state_key]):
+                col_name, col_up, col_down, col_del = st.columns([6, 1.2, 1.2, 1.2])
+                with col_name:
+                    file_mb = len(f.getvalue()) / (1024 * 1024)
+                    st.markdown(f"**Vị trí {i+1}:** 📄 `{f.name}` *({file_mb:.2f} MB)*")
+                with col_up:
+                    if st.button("⬆️ Lên", key=f"up_{i}_{merge_state_key}", disabled=(i == 0)):
+                        st.session_state[merge_state_key][i - 1], st.session_state[merge_state_key][i] = (
+                            st.session_state[merge_state_key][i],
+                            st.session_state[merge_state_key][i - 1]
+                        )
+                        st.rerun()
+                with col_down:
+                    if st.button("⬇️ Xuống", key=f"down_{i}_{merge_state_key}", disabled=(i == len(st.session_state[merge_state_key]) - 1)):
+                        st.session_state[merge_state_key][i + 1], st.session_state[merge_state_key][i] = (
+                            st.session_state[merge_state_key][i],
+                            st.session_state[merge_state_key][i + 1]
+                        )
+                        st.rerun()
+                with col_del:
+                    if st.button("🗑️ Xóa", key=f"del_{i}_{merge_state_key}"):
+                        st.session_state[merge_state_key].pop(i)
+                        st.rerun()
+
+            st.markdown("---")
+            merge_name = st.text_input("Tên file PDF sau khi ghép nối:", value="Tai_Lieu_Ghep_Tong_Hop.pdf")
+            if not merge_name.lower().endswith(".pdf"):
+                merge_name += ".pdf"
+
+            if st.button("🚀 Bắt đầu Ghép Nối Tất Cả", type="primary", disabled=(len(st.session_state[merge_state_key]) == 0)):
+                with st.spinner("Đang tiến hành ghép nối các file PDF theo thứ tự chỉ định..."):
+                    try:
+                        merged_doc = fitz.open()
+                        for file_obj in st.session_state[merge_state_key]:
+                            sub_doc = fitz.open("pdf", file_obj.getvalue())
+                            merged_doc.insert_pdf(sub_doc)
+
+                        out_merged = BytesIO()
+                        merged_doc.save(out_merged, garbage=3, deflate=True)
+
+                        total_pages_merged = len(merged_doc)
+                        merged_size_mb = len(out_merged.getvalue()) / (1024 * 1024)
+
+                        st.success(f"🎉 Ghép thành công **{len(st.session_state[merge_state_key])} file** thành 1 file duy nhất! (Tổng cộng **{total_pages_merged} trang**, nặng **{merged_size_mb:.2f} MB**)")
+                        st.download_button(
+                            label=f"📥 Tải xuống {merge_name}",
+                            data=out_merged.getvalue(),
+                            file_name=merge_name,
+                            mime="application/pdf",
+                            on_click=clear_file
+                        )
+                    except Exception as e:
+                        st.error(f"Lỗi khi ghép các file PDF: {e}")
 
 def app_excel_expert():
     try:
