@@ -1009,6 +1009,7 @@ def app_document_compare():
 
 # ==========================================
 # ==========================================
+# ==========================================
 # APP 5: CẮT & GHÉP PDF CHUYÊN NGHIỆP (LÕI PYMUPDF TRỰC QUAN)
 # ==========================================
 def app_pdf_split_merge():
@@ -1020,12 +1021,19 @@ def app_pdf_split_merge():
     st.title("✂️ Cắt, Trích Xuất & Ghép Nối PDF")
     st.markdown("Công cụ thao tác PDF toàn diện: Cắt trang trực quan qua ảnh xem trước, rã file hàng loạt (Burst), và ghép nối với khả năng tùy chỉnh thứ tự file linh hoạt.")
 
-    # Nhúng CSS ép canh giữa các nút Checkbox trong phạm vi App 5
+    # Nhúng CSS ép canh giữa TUYỆT ĐỐI cho Checkbox
     st.markdown("""
         <style>
         div[data-testid="stCheckbox"] {
-            display: flex;
-            justify-content: center;
+            display: flex !important;
+            justify-content: center !important;
+            width: 100% !important;
+        }
+        div[data-testid="stCheckbox"] label {
+            width: auto !important;
+            display: flex !important;
+            justify-content: center !important;
+            align-items: center !important;
         }
         </style>
     """, unsafe_allow_html=True)
@@ -1091,9 +1099,10 @@ def app_pdf_split_merge():
                         img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
                         st.image(img, use_container_width=True)
                         
-                        # Định dạng chữ: Canh giữa, màu đỏ, in đậm, chỉnh khoảng cách gọn gàng
-                        st.markdown(f"<div style='text-align: center; color: red; font-size: 24px; font-weight: 900; margin-top: 5px; margin-bottom: -5px;'>Trang {idx + 1}</div>", unsafe_allow_html=True)
+                        # Định dạng chữ: Canh giữa, màu đỏ, in đậm
+                        st.markdown(f"<div style='text-align: center; color: red; font-size: 24px; font-weight: 900; margin-top: 5px; margin-bottom: 0px;'>Trang {idx + 1}</div>", unsafe_allow_html=True)
                         
+                        # Nút Checkbox đã được CSS ép ra giữa
                         st.session_state[state_check_key][idx] = st.checkbox(
                             "Chọn trang này",
                             key=f"chk_page_{idx}_{state_check_key}"
