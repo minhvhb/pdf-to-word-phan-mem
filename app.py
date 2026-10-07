@@ -1020,6 +1020,16 @@ def app_pdf_split_merge():
     st.title("✂️ Cắt, Trích Xuất & Ghép Nối PDF")
     st.markdown("Công cụ thao tác PDF toàn diện: Cắt trang trực quan qua ảnh xem trước, rã file hàng loạt (Burst), và ghép nối với khả năng tùy chỉnh thứ tự file linh hoạt.")
 
+    # Nhúng CSS ép canh giữa các nút Checkbox trong phạm vi App 5
+    st.markdown("""
+        <style>
+        div[data-testid="stCheckbox"] {
+            display: flex;
+            justify-content: center;
+        }
+        </style>
+    """, unsafe_allow_html=True)
+
     tab_split, tab_merge = st.tabs(["✂️ Cắt Trang & Tách File (Visual Split)", "📑 Ghép Nhiều File PDF (Reorder Merge)"])
 
     # ----------------------------------------------------
@@ -1081,8 +1091,8 @@ def app_pdf_split_merge():
                         img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
                         st.image(img, use_container_width=True)
                         
-                        # Định dạng chữ lớn, in đậm và màu đỏ
-                        st.markdown(f"<div style='color: red; font-size: 24px; font-weight: 900; margin-top: 5px; margin-bottom: -10px;'>Trang {idx + 1}</div>", unsafe_allow_html=True)
+                        # Định dạng chữ: Canh giữa, màu đỏ, in đậm, chỉnh khoảng cách gọn gàng
+                        st.markdown(f"<div style='text-align: center; color: red; font-size: 24px; font-weight: 900; margin-top: 5px; margin-bottom: -5px;'>Trang {idx + 1}</div>", unsafe_allow_html=True)
                         
                         st.session_state[state_check_key][idx] = st.checkbox(
                             "Chọn trang này",
