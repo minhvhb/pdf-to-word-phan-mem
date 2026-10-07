@@ -1008,7 +1008,7 @@ def app_document_compare():
                     st.error(f"Đã xảy ra lỗi: {e}")
 
 # ==========================================
-# APP 5: CẮT & GHÉP PDF CHUYÊN NGHIỆP (LÕI PYMUPDF TRỰC QUAN)
+# APP 5: CẮT, TRÍCH XUẤT TỔNG HỢP & GHÉP PDF
 # ==========================================
 def app_pdf_split_merge():
     import fitz
@@ -1044,128 +1044,129 @@ def app_pdf_split_merge():
     tab_split, tab_merge = st.tabs(["✂️ Cắt Trang & Tách File (Visual Split)", "📑 Ghép Nhiều File PDF (Reorder Merge)"])
 
     # ----------------------------------------------------
-    # TAB 1: CẮT TRANG VÀ TÁCH FILE TRỰC QUAN (HỖ TRỢ NHIỀU FILE)
+    # TAB 1: CẮT TRANG VÀ TÁCH FILE TRỰC QUAN (GỘP ĐA FILE)
     # ----------------------------------------------------
     with tab_split:
-        st.subheader("1. Chọn các file PDF cần cắt hoặc tách rời")
+        st.subheader("1. Chọn các file PDF cần trích xuất")
         uploaded_split_files = st.file_uploader(
-            "Tải lên các file PDF:",
+            "Tải lên một hoặc nhiều file PDF (Hệ thống sẽ trải tất cả các trang ra màn hình):",
             type=["pdf"],
-            accept_multiple_files=True, # Bật tính năng nhận nhiều file
+            accept_multiple_files=True,
             key=f"app5_split_{st.session_state.uploader_key}"
         )
 
         if uploaded_split_files:
-            st.info(f"📁 Đã tải lên **{len(uploaded_split_files)} file**.")
-            
-            # Đưa thanh trượt ra ngoài để điều khiển chung cỡ ảnh cho tất cả các file
-            grid_cols = st.slider("🔍 Cỡ ảnh (Số trang / hàng) - Áp dụng chung:", min_value=1, max_value=4, value=2, help="Kéo về 1 hoặc 2 để phóng to trang giấy.")
-            zoom_mat = 0.8 if grid_cols <= 2 else 0.4
-            mat = fitz.Matrix(zoom_mat, zoom_mat)
+            try:
+                # Gộp ngầm tất cả các file vào 1 document trong bộ nhớ để trải ra màn hình
+                combined_doc = fitz.open()
+                for f in uploaded_split_files:
+                    temp_doc = fitz.open("pdf", f.getvalue())
+                    combined_doc.insert_pdf(temp_doc)
+                
+                total_pages = len(combined_doc)
+                st.info(f"📁 Đã tải lên **{len(uploaded_split_files)} file**. Trải dài tổng cộng: **{total_pages} trang**.")
 
-            # Lặp qua từng file và đưa vào khung gập (expander)
-            for file_idx, uploaded_split_file in enumerate(uploaded_split_files):
-                pdf_bytes = uploaded_split_file.getvalue()
-                try:
-                    doc = fitz.open("pdf", pdf_bytes)
-                    total_pages = len(doc)
-                    
-                    with st.expander(f"📄 File {file_idx + 1}: {uploaded_split_file.name} ({total_pages} trang)", expanded=True):
-                        
-                        state_check_key = f"split_selected_{uploaded_split_file.name}_{st.session_state.uploader_key}"
-                        if state_check_key not in st.session_state:
-                            st.session_state[state_check_key] = [True] * total_pages
-                            for i in range(total_pages):
-                                st.session_state[f"chk_page_{file_idx}_{i}_{state_check_key}"] = True
+                # Tạo key lưu trạng thái dựa trên danh sách file để không bị loạn khi đổi file
+                sig = "|".join([f.name for f in uploaded_split_files])
+                state_check_key = f"split_selected_{sig}_{st.session_state.uploader_key}"
+                
+                if state_check_key not in st.session_state:
+                    st.session_state[state_check_key] = [True] * total_pages
+                    for i in range(total_pages):
+                        st.session_state[f"chk_page_{i}_{state_check_key}"] = True
 
-                        col_btn1, col_btn2 = st.columns([1, 1])
-                        with col_btn1:
-                            if st.button("✅ Chọn tất cả trang", key=f"btn_sel_all_{file_idx}"):
+                col_btn1, col_btn2 = st.columns([1, 1])
+                with col_btn1:
+                    if st.button("✅ Chọn tất cả trang", key="btn_sel_all"):
+                        for i in range(total_pages):
+                            st.session_state[f"chk_page_{i}_{state_check_key}"] = True
+                            st.session_state[state_check_key][i] = True
+                        st.rerun()
+                with col_btn2:
+                    if st.button("❌ Bỏ chọn tất cả", key="btn_desel_all"):
+                        for i in range(total_pages):
+                            st.session_state[f"chk_page_{i}_{state_check_key}"] = False
+                            st.session_state[state_check_key][i] = False
+                        st.rerun()
+
+                st.markdown("---")
+                col_view1, col_view2 = st.columns([2, 1])
+                with col_view1:
+                    st.markdown("### 👁️ Danh sách trang tổng hợp")
+                    st.caption("Tick chọn những trang bạn muốn giữ lại để trích xuất thành 1 file duy nhất.")
+                with col_view2:
+                    grid_cols = st.slider("🔍 Cỡ ảnh (Số trang / hàng):", min_value=1, max_value=4, value=2, help="Kéo về 1 hoặc 2 để phóng to trang giấy.")
+
+                zoom_mat = 0.8 if grid_cols <= 2 else 0.4
+                mat = fitz.Matrix(zoom_mat, zoom_mat)
+                cols = st.columns(grid_cols)
+
+                for idx in range(total_pages):
+                    c_idx = idx % grid_cols
+                    page = combined_doc[idx]
+                    with cols[c_idx]:
+                        pix = page.get_pixmap(matrix=mat)
+                        img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+                        st.image(img, use_container_width=True)
+
+                        st.markdown(f"<div style='text-align: center; color: red; font-size: 24px; font-weight: 900; margin-top: 5px; margin-bottom: 0px;'>Trang {idx + 1}</div>", unsafe_allow_html=True)
+
+                        st.session_state[state_check_key][idx] = st.checkbox(
+                            "Chọn trang này",
+                            key=f"chk_page_{idx}_{state_check_key}"
+                        )
+                        st.markdown("<br>", unsafe_allow_html=True)
+
+                st.markdown("---")
+                col_act1, col_act2 = st.columns(2)
+
+                with col_act1:
+                    st.markdown("#### 🎯 Trích xuất trang đã chọn")
+                    selected_indices = [i for i, val in enumerate(st.session_state[state_check_key]) if val]
+                    st.caption(f"Đang chọn **{len(selected_indices)}/{total_pages}** trang.")
+
+                    if st.button("🚀 Xuất 1 PDF Đã Chọn", type="primary", disabled=(len(selected_indices) == 0)):
+                        with st.spinner("Đang trích xuất trang đã chọn..."):
+                            out_doc = fitz.open()
+                            out_doc.insert_pdf(combined_doc, from_page=0, to_page=total_pages - 1)
+                            out_doc.select(selected_indices)
+                            out_stream = BytesIO()
+                            out_doc.save(out_stream, garbage=3, deflate=True)
+                            
+                            st.success(f"🎉 Đã trích xuất thành công {len(selected_indices)} trang thành 1 file duy nhất!")
+                            st.download_button(
+                                label="📥 Tải xuống PDF Đã Cắt",
+                                data=out_stream.getvalue(),
+                                file_name="Tai_Lieu_Trich_Xuat_Tong_Hop.pdf",
+                                mime="application/pdf",
+                                on_click=clear_file
+                            )
+
+                with col_act2:
+                    st.markdown("#### ⚡ Tách rời toàn bộ trang (Burst)")
+                    st.caption("Rã từng trang thành các file PDF riêng biệt (ZIP).")
+                    if st.button("📦 Rã Từng Trang Sang ZIP"):
+                        with st.spinner(f"Đang bóc tách {total_pages} trang thành các file riêng..."):
+                            zip_buffer = BytesIO()
+                            with zipfile.ZipFile(zip_buffer, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
                                 for i in range(total_pages):
-                                    st.session_state[f"chk_page_{file_idx}_{i}_{state_check_key}"] = True
-                                    st.session_state[state_check_key][i] = True
-                                st.rerun()
-                        with col_btn2:
-                            if st.button("❌ Bỏ chọn tất cả", key=f"btn_desel_all_{file_idx}"):
-                                for i in range(total_pages):
-                                    st.session_state[f"chk_page_{file_idx}_{i}_{state_check_key}"] = False
-                                    st.session_state[state_check_key][i] = False
-                                st.rerun()
+                                    single_page_doc = fitz.open()
+                                    single_page_doc.insert_pdf(combined_doc, from_page=i, to_page=i)
+                                    p_stream = BytesIO()
+                                    single_page_doc.save(p_stream, garbage=3, deflate=True)
+                                    zf.writestr(f"Trang_{i+1:03d}.pdf", p_stream.getvalue())
 
-                        st.markdown("---")
+                            st.success("🎉 Đã rã toàn bộ trang và đóng gói ZIP thành công!")
+                            st.download_button(
+                                label="📥 Tải xuống File ZIP",
+                                data=zip_buffer.getvalue(),
+                                file_name="Tach_Roi_Tong_Hop.zip",
+                                mime="application/zip",
+                                on_click=clear_file
+                            )
 
-                        cols = st.columns(grid_cols)
-                        for idx in range(total_pages):
-                            c_idx = idx % grid_cols
-                            page = doc[idx]
-                            with cols[c_idx]:
-                                pix = page.get_pixmap(matrix=mat)
-                                img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
-                                st.image(img, use_container_width=True)
-
-                                # Định dạng chữ: Canh giữa, màu đỏ, in đậm
-                                st.markdown(f"<div style='text-align: center; color: red; font-size: 24px; font-weight: 900; margin-top: 5px; margin-bottom: 0px;'>Trang {idx + 1}</div>", unsafe_allow_html=True)
-
-                                # Checkbox (đã được CSS ở trên căn ra giữa)
-                                st.session_state[state_check_key][idx] = st.checkbox(
-                                    "Chọn trang này",
-                                    key=f"chk_page_{file_idx}_{idx}_{state_check_key}"
-                                )
-                                st.markdown("<br>", unsafe_allow_html=True)
-
-                        st.markdown("---")
-                        col_act1, col_act2 = st.columns(2)
-
-                        with col_act1:
-                            st.markdown("#### 🎯 Trích xuất trang đã chọn")
-                            selected_indices = [i for i, val in enumerate(st.session_state[state_check_key]) if val]
-                            st.caption(f"Đang chọn **{len(selected_indices)}/{total_pages}** trang.")
-
-                            if st.button("🚀 Xuất PDF Đã Chọn", key=f"btn_export_{file_idx}", type="primary", disabled=(len(selected_indices) == 0)):
-                                with st.spinner("Đang trích xuất trang đã chọn..."):
-                                    out_doc = fitz.open()
-                                    out_doc.insert_pdf(doc, from_page=0, to_page=total_pages - 1)
-                                    out_doc.select(selected_indices)
-                                    out_stream = BytesIO()
-                                    out_doc.save(out_stream, garbage=3, deflate=True)
-
-                                    base_name = uploaded_split_file.name.rsplit('.', 1)[0]
-                                    st.success(f"🎉 Đã trích xuất thành công {len(selected_indices)} trang!")
-                                    st.download_button(
-                                        label="📥 Tải xuống PDF Đã Cắt",
-                                        data=out_stream.getvalue(),
-                                        file_name=f"Trich_Xuat_{base_name}.pdf",
-                                        mime="application/pdf",
-                                        key=f"dl_export_{file_idx}",
-                                        on_click=clear_file
-                                    )
-
-                        with col_act2:
-                            st.markdown("#### ⚡ Tách rời toàn bộ trang (Burst)")
-                            st.caption("Rã từng trang thành các file PDF riêng biệt (ZIP).")
-                            if st.button("📦 Rã Từng Trang Sang ZIP", key=f"btn_burst_{file_idx}"):
-                                with st.spinner(f"Đang bóc tách {total_pages} trang thành các file riêng..."):
-                                    zip_buffer = BytesIO()
-                                    base_name = uploaded_split_file.name.rsplit('.', 1)[0]
-                                    with zipfile.ZipFile(zip_buffer, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
-                                        for i in range(total_pages):
-                                            single_page_doc = fitz.open()
-                                            single_page_doc.insert_pdf(doc, from_page=i, to_page=i)
-                                            p_stream = BytesIO()
-                                            single_page_doc.save(p_stream, garbage=3, deflate=True)
-                                            zf.writestr(f"{base_name}_Trang_{i+1:02d}.pdf", p_stream.getvalue())
-
-                                    st.success("🎉 Đã rã toàn bộ trang và đóng gói ZIP thành công!")
-                                    st.download_button(
-                                        label="📥 Tải xuống File ZIP",
-                                        data=zip_buffer.getvalue(),
-                                        file_name=f"Tach_Roi_{base_name}.zip",
-                                        mime="application/zip",
-                                        key=f"dl_burst_{file_idx}",
-                                        on_click=clear_file
-                                    )
-                except Exception as e:
-                    st.error(f"Lỗi khi đọc file {uploaded_split_file.name}: {e}")
+            except Exception as e:
+                st.error(f"Lỗi khi xử lý file PDF: {e}")
 
     # ----------------------------------------------------
     # TAB 2: GHÉP NHIỀU FILE VỚI TÍNH NĂNG ĐỔI THỨ TỰ (REORDER)
