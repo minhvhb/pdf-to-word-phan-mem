@@ -1071,23 +1071,10 @@ def app_pdf_split_merge():
                 state_check_key = f"split_selected_{sig}_{st.session_state.uploader_key}"
                 
                 if state_check_key not in st.session_state:
-                    st.session_state[state_check_key] = [True] * total_pages
+                    # MẶC ĐỊNH LÀ FALSE (Không chọn trang nào cả)
+                    st.session_state[state_check_key] = [False] * total_pages
                     for i in range(total_pages):
-                        st.session_state[f"chk_page_{i}_{state_check_key}"] = True
-
-                col_btn1, col_btn2 = st.columns([1, 1])
-                with col_btn1:
-                    if st.button("✅ Chọn tất cả trang", key="btn_sel_all"):
-                        for i in range(total_pages):
-                            st.session_state[f"chk_page_{i}_{state_check_key}"] = True
-                            st.session_state[state_check_key][i] = True
-                        st.rerun()
-                with col_btn2:
-                    if st.button("❌ Bỏ chọn tất cả", key="btn_desel_all"):
-                        for i in range(total_pages):
-                            st.session_state[f"chk_page_{i}_{state_check_key}"] = False
-                            st.session_state[state_check_key][i] = False
-                        st.rerun()
+                        st.session_state[f"chk_page_{i}_{state_check_key}"] = False
 
                 st.markdown("---")
                 col_view1, col_view2 = st.columns([2, 1])
