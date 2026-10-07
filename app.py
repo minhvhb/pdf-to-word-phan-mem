@@ -1008,6 +1008,7 @@ def app_document_compare():
                     st.error(f"Đã xảy ra lỗi: {e}")
 
 # ==========================================
+# ==========================================
 # APP 5: CẮT & GHÉP PDF CHUYÊN NGHIỆP (LÕI PYMUPDF TRỰC QUAN)
 # ==========================================
 def app_pdf_split_merge():
@@ -1039,11 +1040,9 @@ def app_pdf_split_merge():
                 total_pages = len(doc)
                 st.info(f"📄 Tên file: **{uploaded_split_file.name}** | Tổng số: **{total_pages} trang**")
 
-                # Khởi tạo trạng thái chọn trang CHUẨN cho Streamlit Widgets
                 state_check_key = f"split_selected_{uploaded_split_file.name}_{st.session_state.uploader_key}"
                 if state_check_key not in st.session_state:
                     st.session_state[state_check_key] = [True] * total_pages
-                    # Gán giá trị mặc định (True) trực tiếp cho key của từng ô Checkbox
                     for i in range(total_pages):
                         st.session_state[f"chk_page_{i}_{state_check_key}"] = True
 
@@ -1082,9 +1081,11 @@ def app_pdf_split_merge():
                         img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
                         st.image(img, use_container_width=True)
                         
-                        # Checkbox chỉ cần liên kết key, không truyền value= để tránh lỗi ghi đè
+                        # Định dạng chữ lớn, in đậm và màu đỏ
+                        st.markdown(f"<div style='color: red; font-size: 24px; font-weight: 900; margin-top: 5px; margin-bottom: -10px;'>Trang {idx + 1}</div>", unsafe_allow_html=True)
+                        
                         st.session_state[state_check_key][idx] = st.checkbox(
-                            f"Trang {idx + 1}",
+                            "Chọn trang này",
                             key=f"chk_page_{idx}_{state_check_key}"
                         )
                         st.markdown("<br>", unsafe_allow_html=True)
@@ -1092,7 +1093,6 @@ def app_pdf_split_merge():
                 st.markdown("---")
                 col_act1, col_act2 = st.columns(2)
 
-                # Hành động 1: Trích xuất các trang đã tick chọn
                 with col_act1:
                     st.markdown("#### 🎯 Trích xuất trang đã chọn")
                     selected_indices = [i for i, val in enumerate(st.session_state[state_check_key]) if val]
@@ -1116,7 +1116,6 @@ def app_pdf_split_merge():
                                 on_click=clear_file
                             )
 
-                # Hành động 2: Tách file hàng loạt (Burst)
                 with col_act2:
                     st.markdown("#### ⚡ Tách rời toàn bộ trang (Burst)")
                     st.caption("Rã từng trang thành các file PDF riêng biệt (ZIP).")
@@ -1147,9 +1146,9 @@ def app_pdf_split_merge():
     # TAB 2: GHÉP NHIỀU FILE VỚI TÍNH NĂNG ĐỔI THỨ TỰ (REORDER)
     # ----------------------------------------------------
     with tab_merge:
-        st.subheader("2. Tải lên nhiều file PDF cần ghép nối")
+        st.subheader("2. Tải lên Khay chứa file PDF")
         uploaded_merge_files = st.file_uploader(
-            "Tải lên các file PDF:",
+            "Tải lên các file PDF (Có thể tải lên nhiều lần):",
             type=["pdf"],
             accept_multiple_files=True,
             key=f"app5_merge_{st.session_state.uploader_key}"
@@ -1159,15 +1158,15 @@ def app_pdf_split_merge():
             merge_state_key = f"merge_order_list_{st.session_state.uploader_key}"
             sig_key = f"sig_{merge_state_key}"
             
-            # Khóa chống Reset tự động: Chỉ cập nhật danh sách gốc nếu TẬP FILE UPLOAD BỊ ĐỔI
             current_sig = "|".join(sorted([f.name for f in uploaded_merge_files]))
             if sig_key not in st.session_state or st.session_state[sig_key] != current_sig:
                 st.session_state[merge_state_key] = list(uploaded_merge_files)
                 st.session_state[sig_key] = current_sig
 
-            st.info(f"📁 Bạn có thể bấm các nút mũi tên để điều chỉnh thứ tự ghép. App sẽ bỏ qua các file bị Xóa khỏi danh sách này.")
+            st.markdown("### 📋 DANH SÁCH FILE CHỐT ĐỂ GHÉP")
+            st.warning("Các file bị xóa ở danh sách dưới đây sẽ KHÔNG được ghép, mặc dù file đó vẫn còn nằm ở Khay tải lên phía trên.")
+            st.info(f"Đang có **{len(st.session_state[merge_state_key])} file** sẵn sàng. Bấm mũi tên để đổi thứ tự.")
 
-            # Bảng điều khiển đổi thứ tự file
             for i, f in enumerate(st.session_state[merge_state_key]):
                 col_name, col_up, col_down, col_del = st.columns([6, 1.2, 1.2, 1.2])
                 with col_name:
@@ -1188,7 +1187,7 @@ def app_pdf_split_merge():
                         )
                         st.rerun()
                 with col_del:
-                    if st.button("🗑️ Xóa", key=f"del_{i}_{merge_state_key}"):
+                    if st.button("🗑️ Xóa khỏi DS", key=f"del_{i}_{merge_state_key}"):
                         st.session_state[merge_state_key].pop(i)
                         st.rerun()
 
@@ -1197,7 +1196,7 @@ def app_pdf_split_merge():
             if not merge_name.lower().endswith(".pdf"):
                 merge_name += ".pdf"
 
-            if st.button("🚀 Bắt đầu Ghép Nối Tất Cả", type="primary", disabled=(len(st.session_state[merge_state_key]) == 0)):
+            if st.button("🚀 Bắt đầu Ghép Nối", type="primary", disabled=(len(st.session_state[merge_state_key]) == 0)):
                 with st.spinner("Đang tiến hành ghép nối các file PDF theo thứ tự chỉ định..."):
                     try:
                         merged_doc = fitz.open()
