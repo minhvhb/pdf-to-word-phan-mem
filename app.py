@@ -1008,8 +1008,6 @@ def app_document_compare():
                     st.error(f"Đã xảy ra lỗi: {e}")
 
 # ==========================================
-# ==========================================
-# ==========================================
 # APP 5: CẮT & GHÉP PDF CHUYÊN NGHIỆP (LÕI PYMUPDF TRỰC QUAN)
 # ==========================================
 def app_pdf_split_merge():
@@ -1021,19 +1019,24 @@ def app_pdf_split_merge():
     st.title("✂️ Cắt, Trích Xuất & Ghép Nối PDF")
     st.markdown("Công cụ thao tác PDF toàn diện: Cắt trang trực quan qua ảnh xem trước, rã file hàng loạt (Burst), và ghép nối với khả năng tùy chỉnh thứ tự file linh hoạt.")
 
-    # Nhúng CSS ép canh giữa TUYỆT ĐỐI cho Checkbox
+    # CSS căn giữa checkbox: căn ở KHUNG CHA (stElementContainer), không chỉ ở bên trong checkbox
     st.markdown("""
         <style>
-        div[data-testid="stCheckbox"] {
+        /* Khung cha chứa checkbox: căn giữa */
+        div[data-testid="stElementContainer"]:has(div[data-testid="stCheckbox"]),
+        div.element-container:has(div[data-testid="stCheckbox"]) {
             display: flex !important;
             justify-content: center !important;
             width: 100% !important;
         }
-        div[data-testid="stCheckbox"] label {
+        /* Checkbox chỉ rộng vừa nội dung để được căn giữa */
+        div[data-testid="stCheckbox"] {
             width: auto !important;
+        }
+        div[data-testid="stCheckbox"] label {
             display: flex !important;
-            justify-content: center !important;
             align-items: center !important;
+            justify-content: center !important;
         }
         </style>
     """, unsafe_allow_html=True)
@@ -1079,7 +1082,7 @@ def app_pdf_split_merge():
                         st.rerun()
 
                 st.markdown("---")
-                
+
                 col_view1, col_view2 = st.columns([2, 1])
                 with col_view1:
                     st.markdown("### 👁️ Danh sách trang")
@@ -1098,11 +1101,11 @@ def app_pdf_split_merge():
                         pix = page.get_pixmap(matrix=mat)
                         img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
                         st.image(img, use_container_width=True)
-                        
+
                         # Định dạng chữ: Canh giữa, màu đỏ, in đậm
                         st.markdown(f"<div style='text-align: center; color: red; font-size: 24px; font-weight: 900; margin-top: 5px; margin-bottom: 0px;'>Trang {idx + 1}</div>", unsafe_allow_html=True)
-                        
-                        # Nút Checkbox đã được CSS ép ra giữa
+
+                        # Checkbox (đã được CSS ở trên căn ra giữa)
                         st.session_state[state_check_key][idx] = st.checkbox(
                             "Chọn trang này",
                             key=f"chk_page_{idx}_{state_check_key}"
@@ -1176,7 +1179,7 @@ def app_pdf_split_merge():
         if uploaded_merge_files:
             merge_state_key = f"merge_order_list_{st.session_state.uploader_key}"
             sig_key = f"sig_{merge_state_key}"
-            
+
             current_sig = "|".join(sorted([f.name for f in uploaded_merge_files]))
             if sig_key not in st.session_state or st.session_state[sig_key] != current_sig:
                 st.session_state[merge_state_key] = list(uploaded_merge_files)
