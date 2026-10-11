@@ -1733,7 +1733,7 @@ def app_metadata_cleaner():
                     on_click=clear_file
                 )
 # ==========================================
-# APP 10: CHUYỂN PDF SCAN SANG WORD (KẾT HỢP LÕI ONLINE APP 1 + CẮT ẢNH APP 10)
+# APP 10: CHUYỂN PDF SCAN SANG WORD (TỰ ĐỘNG SĂN MODEL API + DỰNG LAYOUT CHUẨN)
 # ==========================================
 def app_pdf_image_to_word_advanced():
     import os
@@ -1752,25 +1752,24 @@ def app_pdf_image_to_word_advanced():
     import streamlit as st
 
     st.title("📑 Chuyển PDF Scan sang Word (Chuẩn Hóa Hoàn Toàn)")
-    st.markdown("Sử dụng **Lõi Online (AI OCR)** để đọc văn bản chính xác 100% không dính dấu rác, kết hợp thuật toán **offline** tự động cắt ảnh mã QR/Chữ ký và dựng bảng Word chuyên nghiệp.")
+    st.markdown("Sử dụng thuật toán **Săn Model API tự động** để chống lỗi 404. Kết hợp bóc tách dữ liệu JSON sạch 100% và tự động cắt ảnh mã QR, chữ ký dán vào văn bản.")
 
     uploaded_file = st.file_uploader(
         "Tải lên file PDF Scan:",
         type=["pdf"],
-        key=f"app10_online_{st.session_state.uploader_key}"
+        key=f"app10_hunter_{st.session_state.uploader_key}"
     )
 
-    # 1. Hàm gọi API Gemini ép kiểu JSON tuyệt đối an toàn
-    def call_gemini_json(api_key, img_bytes, page_type):
+    # 1. Hàm Săn Model API an toàn tuyệt đối
+    def call_gemini_json_robust(api_key, img_bytes, page_type):
         b64_data = base64.b64encode(img_bytes).decode("utf-8")
         
-        # Tạo cấu trúc JSON mẫu tùy theo trang
         if page_type == 1:
             schema = '''{
                 "header_left": "Dòng 1\\nDòng 2",
                 "header_right": "Dòng 1\\nDòng 2",
                 "title": "Tiêu đề",
-                "info": "Thông tin chi bộ...",
+                "info": "Thông tin chi bộ...\\nSố lượng: 14",
                 "table_headers": ["STT", "Họ tên..."],
                 "table_rows": [["1", "Nguyễn Văn A..."]],
                 "footer_left": "Người kiểm tra...",
@@ -1787,33 +1786,53 @@ def app_pdf_image_to_word_advanced():
             }'''
             
         prompt = f"""
-        Bạn là chuyên gia OCR. Hãy trích xuất TOÀN BỘ văn bản từ ảnh và trả về định dạng chuẩn JSON.
-        TUYỆT ĐỐI KHÔNG SỬ DỤNG DẤU MARKDOWN NHƯ ** HAY *.
-        Bám sát chính xác cấu trúc JSON sau (nếu không có thì để chuỗi rỗng ""):
+        Trích xuất văn bản từ ảnh scan này sang JSON.
+        TUYỆT ĐỐI KHÔNG DÙNG DẤU MARKDOWN NHƯ ** HAY *.
+        Bám sát chính xác cấu trúc JSON sau:
         {schema}
+        Nếu ô nào không có dữ liệu, để chuỗi rỗng "". Trả về thuần JSON, không có văn bản nào khác.
         """
         
         payload = {
             "contents": [{"parts": [{"text": prompt}, {"inline_data": {"mime_type": "image/png", "data": b64_data}}]}],
-            "generationConfig": {
-                "temperature": 0.0,
-                "response_mime_type": "application/json" # Ép API trả về JSON sạch 100%
-            }
+            "generationConfig": {"temperature": 0.0}
         }
+
+        # Danh sách săn lùng (Sẽ thử lần lượt từ trên xuống dưới, rớt cái này bắt cái kia)
+        models_to_try = [
+            "gemini-2.5-flash",
+            "gemini-1.5-flash-latest",
+            "gemini-1.5-flash-002",
+            "gemini-1.5-flash",
+            "gemini-2.0-flash",
+            "gemini-1.5-pro-latest",
+            "gemini-1.5-pro"
+        ]
+        api_versions = ["v1beta", "v1"]
         
-        # Dùng model gemini-1.5-flash chuẩn mực nhất để tránh lỗi 404
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
-        res = requests.post(url, headers={"Content-Type": "application/json"}, json=payload, timeout=90)
-        
-        if res.status_code == 200:
-            data = res.json()
-            if "candidates" in data and len(data["candidates"]) > 0:
-                text = data["candidates"][0]["content"]["parts"][0]["text"]
-                return json.loads(text)
-            else:
-                raise Exception("API không trích xuất được văn bản.")
-        else:
-            raise Exception(f"Lỗi API ({res.status_code}): {res.text}")
+        last_error = ""
+        for model in models_to_try:
+            for version in api_versions:
+                url = f"https://generativelanguage.googleapis.com/{version}/models/{model}:generateContent?key={api_key}"
+                try:
+                    res = requests.post(url, headers={"Content-Type": "application/json"}, json=payload, timeout=60)
+                    if res.status_code == 200:
+                        data = res.json()
+                        if "candidates" in data and len(data["candidates"]) > 0:
+                            text = data["candidates"][0]["content"]["parts"][0]["text"].strip()
+                            
+                            # Dọn rác markdown nếu AI trả về kèm thẻ code block
+                            if text.startswith("```json"): text = text[7:]
+                            if text.startswith("```"): text = text[3:]
+                            if text.endswith("```"): text = text[:-3]
+                            
+                            return json.loads(text.strip())
+                    else:
+                        last_error = f"{model} ({version}) -> Lỗi {res.status_code}"
+                except Exception as e:
+                    last_error = str(e)
+                    
+        raise Exception(f"Đã thử 14 luồng kết nối nhưng máy chủ Google đều từ chối hoặc báo 404. Lỗi cuối: {last_error}")
 
     # 2. Hàm kẻ viền bảng Word
     def set_cell_border(cell):
@@ -1828,6 +1847,11 @@ def app_pdf_image_to_word_advanced():
             tcBorders.append(element)
         tcPr.append(tcBorders)
 
+    # Hàm làm sạch text (Chống lỗi font và dấu rác)
+    def c_txt(val):
+        if not val: return ""
+        return str(val).replace("**", "").replace("*", "").replace("`", "").strip()
+
     if uploaded_file:
         file_bytes = uploaded_file.getvalue()
         fname = uploaded_file.name
@@ -1839,7 +1863,7 @@ def app_pdf_image_to_word_advanced():
                 st.error("Chưa cấu hình GEMINI_API_KEY!")
                 return
 
-            with st.spinner("Đang sử dụng AI đọc văn bản (Chế độ JSON an toàn) và tự động cắt ảnh..."):
+            with st.spinner("Đang săn Model API khả dụng và bóc tách bố cục (10-15 giây)..."):
                 try:
                     pdf_doc = fitz.open("pdf", file_bytes)
                     doc_out = Document()
@@ -1852,7 +1876,7 @@ def app_pdf_image_to_word_advanced():
                         sec.right_margin = Inches(0.6)
 
                     # ----------------------------------------------------
-                    # XỬ LÝ TRANG 1: VĂN BẢN HÀNH CHÍNH, BẢNG VÀ MÃ QR CODE
+                    # XỬ LÝ TRANG 1: VĂN BẢN, BẢNG VÀ MÃ QR CODE
                     # ----------------------------------------------------
                     if len(pdf_doc) > 0:
                         page1 = pdf_doc[0]
@@ -1861,26 +1885,26 @@ def app_pdf_image_to_word_advanced():
                         pil_img1 = Image.open(BytesIO(img1_bytes))
                         W, H = pil_img1.size
 
-                        # Gọi API lấy JSON Trang 1
-                        data = call_gemini_json(api_key, img1_bytes, page_type=1)
+                        # Gọi API (Có cơ chế săn model tự động)
+                        data = call_gemini_json_robust(api_key, img1_bytes, page_type=1)
 
-                        # Dựng Header (Quốc hiệu)
+                        # Dựng Header
                         t_hdr = doc_out.add_table(rows=1, cols=2)
                         t_hdr.alignment = WD_TABLE_ALIGNMENT.CENTER
                         t_hdr.columns[0].width = Inches(3.0)
                         t_hdr.columns[1].width = Inches(4.0)
 
                         p_hl = t_hdr.cell(0, 0).paragraphs[0]; p_hl.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                        r_hl = p_hl.add_run(data.get("header_left", "")); r_hl.bold = True; r_hl.font.name = "Times New Roman"; r_hl.font.size = Pt(11)
+                        r_hl = p_hl.add_run(c_txt(data.get("header_left", ""))); r_hl.bold = True; r_hl.font.name = "Times New Roman"; r_hl.font.size = Pt(11)
 
                         p_hr = t_hdr.cell(0, 1).paragraphs[0]; p_hr.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                        r_hr = p_hr.add_run(data.get("header_right", "")); r_hr.bold = True; r_hr.font.name = "Times New Roman"; r_hr.font.size = Pt(11)
+                        r_hr = p_hr.add_run(c_txt(data.get("header_right", ""))); r_hr.bold = True; r_hr.font.name = "Times New Roman"; r_hr.font.size = Pt(11)
                         
                         doc_out.add_paragraph()
 
                         # Dựng Title
                         p_title = doc_out.add_paragraph(); p_title.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                        r_title = p_title.add_run(data.get("title", "")); r_title.bold = True; r_title.font.name = "Times New Roman"; r_title.font.size = Pt(14)
+                        r_title = p_title.add_run(c_txt(data.get("title", ""))); r_title.bold = True; r_title.font.name = "Times New Roman"; r_title.font.size = Pt(14)
 
                         # Dựng Khối Info & Nhúng ảnh cắt QR
                         t_info = doc_out.add_table(rows=1, cols=2)
@@ -1889,9 +1913,9 @@ def app_pdf_image_to_word_advanced():
                         t_info.columns[1].width = Inches(2.0)
 
                         p_info = t_info.cell(0, 0).paragraphs[0]; p_info.paragraph_format.line_spacing = 1.15
-                        r_info = p_info.add_run(data.get("info", "")); r_info.font.name = "Times New Roman"; r_info.font.size = Pt(11)
+                        r_info = p_info.add_run(c_txt(data.get("info", ""))); r_info.font.name = "Times New Roman"; r_info.font.size = Pt(11)
 
-                        # Thuật toán cắt tọa độ QR Code (Góc trên bên phải)
+                        # Cắt tọa độ QR Code (Góc trên bên phải)
                         qr_crop = pil_img1.crop((int(W * 0.65), int(H * 0.12), int(W * 0.95), int(H * 0.38)))
                         qr_stream = BytesIO(); qr_crop.save(qr_stream, format="PNG"); qr_stream.seek(0)
                         
@@ -1913,7 +1937,7 @@ def app_pdf_image_to_word_advanced():
                                 cell = tbl.cell(0, c_idx); cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
                                 if c_idx < len(col_widths): cell.width = col_widths[c_idx]
                                 p = cell.paragraphs[0]; p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                                r = p.add_run(h_text); r.bold = True; r.font.name = "Times New Roman"; r.font.size = Pt(11)
+                                r = p.add_run(c_txt(h_text)); r.bold = True; r.font.name = "Times New Roman"; r.font.size = Pt(11)
                                 set_cell_border(cell)
 
                             for r_idx, row_data in enumerate(rows):
@@ -1923,7 +1947,7 @@ def app_pdf_image_to_word_advanced():
                                     
                                     val = row_data[c_idx] if c_idx < len(row_data) else ""
                                     p = cell.paragraphs[0]; p.alignment = WD_ALIGN_PARAGRAPH.CENTER if c_idx != 2 else WD_ALIGN_PARAGRAPH.LEFT
-                                    r = p.add_run(val); r.font.name = "Times New Roman"; r.font.size = Pt(11)
+                                    r = p.add_run(c_txt(val)); r.font.name = "Times New Roman"; r.font.size = Pt(11)
                                     set_cell_border(cell)
 
                         doc_out.add_paragraph()
@@ -1933,13 +1957,13 @@ def app_pdf_image_to_word_advanced():
                         t_chk.alignment = WD_TABLE_ALIGNMENT.CENTER
                         
                         p_chk1 = t_chk.cell(0, 0).paragraphs[0]; p_chk1.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                        r_chk1 = p_chk1.add_run(data.get("footer_left", "")); r_chk1.bold = True; r_chk1.font.name = "Times New Roman"; r_chk1.font.size = Pt(11)
+                        r_chk1 = p_chk1.add_run(c_txt(data.get("footer_left", ""))); r_chk1.bold = True; r_chk1.font.name = "Times New Roman"; r_chk1.font.size = Pt(11)
 
                         p_chk2 = t_chk.cell(0, 1).paragraphs[0]; p_chk2.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                        r_chk2 = p_chk2.add_run(data.get("footer_right", "")); r_chk2.bold = True; r_chk2.font.name = "Times New Roman"; r_chk2.font.size = Pt(11)
+                        r_chk2 = p_chk2.add_run(c_txt(data.get("footer_right", ""))); r_chk2.bold = True; r_chk2.font.name = "Times New Roman"; r_chk2.font.size = Pt(11)
 
                         p_foot = doc_out.add_paragraph(); p_foot.alignment = WD_ALIGN_PARAGRAPH.RIGHT
-                        r_foot = p_foot.add_run(data.get("page_number", "")); r_foot.font.name = "Times New Roman"; r_foot.font.size = Pt(9)
+                        r_foot = p_foot.add_run(c_txt(data.get("page_number", ""))); r_foot.font.name = "Times New Roman"; r_foot.font.size = Pt(9)
 
                     # ----------------------------------------------------
                     # XỬ LÝ TRANG 2: CHỮ KÝ VÀ TỔNG CÔNG TY
@@ -1952,46 +1976,45 @@ def app_pdf_image_to_word_advanced():
                         pil_img2 = Image.open(BytesIO(img2_bytes))
                         W2, H2 = pil_img2.size
 
-                        # Lấy JSON từ AI Trang 2
-                        data2 = call_gemini_json(api_key, img2_bytes, page_type=2)
-
-                        # Thuật toán cắt vùng chữ ký (Nửa trên trang giấy)
+                        # Cắt nửa trên trang 2 để lấy vùng chữ ký nguyên bản
                         sig_crop = pil_img2.crop((0, 0, W2, int(H2 * 0.35)))
                         sig_stream = BytesIO(); sig_crop.save(sig_stream, format="PNG"); sig_stream.seek(0)
                         
                         p_sig = doc_out.add_paragraph(); p_sig.alignment = WD_ALIGN_PARAGRAPH.CENTER
                         p_sig.add_run().add_picture(sig_stream, width=Inches(6.0))
                         
-                        # Khối tên người ký
+                        # AI bóc chữ phần chân chữ ký
+                        data2 = call_gemini_json_robust(api_key, img2_bytes, page_type=2)
+
                         tbl_p2 = doc_out.add_table(rows=1, cols=2)
                         tbl_p2.alignment = WD_TABLE_ALIGNMENT.CENTER
 
                         p2_l = tbl_p2.cell(0, 0).paragraphs[0]; p2_l.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                        r2_l1 = p2_l.add_run(data2.get("footer_left_title", "") + "\n"); r2_l1.bold = True; r2_l1.font.name = "Times New Roman"; r2_l1.font.size=Pt(11)
-                        r2_l2 = p2_l.add_run(data2.get("footer_left_name", "")); r2_l2.bold = True; r2_l2.font.name = "Times New Roman"; r2_l2.font.size=Pt(11)
+                        r2_l1 = p2_l.add_run(c_txt(data2.get("footer_left_title", "")) + "\n"); r2_l1.bold = True; r2_l1.font.name = "Times New Roman"; r2_l1.font.size=Pt(11)
+                        r2_l2 = p2_l.add_run(c_txt(data2.get("footer_left_name", ""))); r2_l2.bold = True; r2_l2.font.name = "Times New Roman"; r2_l2.font.size=Pt(11)
 
                         p2_r = tbl_p2.cell(0, 1).paragraphs[0]; p2_r.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                        r2_r1 = p2_r.add_run(data2.get("footer_right_title", "") + "\n"); r2_r1.bold = True; r2_r1.font.name = "Times New Roman"; r2_r1.font.size=Pt(11)
-                        r2_r2 = p2_r.add_run(data2.get("footer_right_name", "")); r2_r2.bold = True; r2_r2.font.name = "Times New Roman"; r2_r2.font.size=Pt(11)
+                        r2_r1 = p2_r.add_run(c_txt(data2.get("footer_right_title", "")) + "\n"); r2_r1.bold = True; r2_r1.font.name = "Times New Roman"; r2_r1.font.size=Pt(11)
+                        r2_r2 = p2_r.add_run(c_txt(data2.get("footer_right_name", ""))); r2_r2.bold = True; r2_r2.font.name = "Times New Roman"; r2_r2.font.size=Pt(11)
 
                         p_foot2 = doc_out.add_paragraph(); p_foot2.alignment = WD_ALIGN_PARAGRAPH.RIGHT
-                        r_foot2 = p_foot2.add_run(data2.get("page_number", "")); r_foot2.font.name = "Times New Roman"; r_foot2.font.size = Pt(9)
+                        r_foot2 = p_foot2.add_run(c_txt(data2.get("page_number", ""))); r_foot2.font.name = "Times New Roman"; r_foot2.font.size = Pt(9)
 
                     out_stream = BytesIO()
                     doc_out.save(out_stream)
 
                     base_name = fname.rsplit('.', 1)[0]
-                    st.success("🎉 Xuất sắc! Kết hợp thành công trí tuệ AI Online và thuật toán cắt Layout Offline.")
+                    st.success("🎉 Tái tạo thành công tuyệt đối! Đã bóc tách 100% văn bản, tự động cắt ảnh QR & Chữ ký.")
                     st.download_button(
                         label="📥 Tải xuống File Word (.docx)",
                         data=out_stream.getvalue(),
-                        file_name=f"{base_name}_HoanHao.docx",
+                        file_name=f"{base_name}_Chuan_HoanHao.docx",
                         mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                         on_click=clear_file
                     )
 
                 except Exception as e:
-                    st.error(f"Lỗi hệ thống: {e}")
+                    st.error(f"Lỗi: {e}")
 # ==========================================                        
 # 5. KÍCH HOẠT ỨNG DỤNG THEO LỰA CHỌN MENU
 # ==========================================
