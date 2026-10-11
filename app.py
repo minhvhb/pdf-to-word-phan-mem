@@ -79,12 +79,11 @@ def get_api_key():
 # 0. HÀM GỌI AI THÔNG MINH (CHỐNG TREO & CHỐNG SẬP MẠNG)
 # ==========================================
 def call_gemini_smart(client, contents_payload):
-   # CHỈ SỬ DỤNG CÁC MODEL MÀ TÀI KHOẢN CỦA BẠN ĐƯỢC GOOGLE HỖ TRỢ
-        models_to_try = [
-            "gemini-3.8-flash",
-            "gemini-3.6-flash",
-            "gemini-1.5-flash"
-        ]
+    models_to_try = [
+        "gemini-3.8-flash",
+        "gemini-3.6-flash",
+        "gemini-1.5-flash"
+    ]
     last_err = None
     for model_name in models_to_try:
         for attempt in range(2): 
