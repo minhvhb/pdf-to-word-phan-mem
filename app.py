@@ -1778,16 +1778,15 @@ def app_pdf_image_to_word_advanced():
             response_mime_type="application/json"
         )
 
-        # Đã loại bỏ model 1.5-pro, chỉ dùng dòng Flash chịu tải cao
+        # CHỈ SỬ DỤNG CÁC MODEL CHUẨN XÁC NHẤT
         models_to_try = [
             "gemini-1.5-flash",
-            "gemini-2.0-flash",
-            "gemini-1.5-flash-8b"
+            "gemini-2.0-flash"
         ]
         
         last_err = ""
         for model in models_to_try:
-            for attempt in range(3):
+            for attempt in range(5): # TĂNG SỐ LẦN THỬ LÊN 5 ĐỂ TRỊ LỖI QUOTA
                 try:
                     res = client.models.generate_content(
                         model=model,
@@ -1803,25 +1802,25 @@ def app_pdf_image_to_word_advanced():
                     err_msg = str(e).lower()
                     last_err = str(e)
                     
-                    # Lỗi 404: Tên model bị sai/khóa -> Bỏ qua ngay lập tức để sang model khác
+                    # Lỗi 404: Tên model bị sai/khóa -> Bỏ qua model này ngay
                     if "404" in err_msg or "not found" in err_msg or "no longer available" in err_msg:
                         break 
                     
-                    # Lỗi 429: Gửi trang quá nhanh -> Ngủ 10 giây để Google nhả block rồi thử lại
+                    # Lỗi 429: Gửi trang quá nhanh -> Ngủ hẳn 15 giây để đợi Google nhả block
                     if any(x in err_msg for x in ['429', 'quota', 'exhausted']):
-                        time.sleep(10) 
+                        time.sleep(15) 
                         continue
                     
-                    # Lỗi 503: Server bận -> Ngủ 3 giây
+                    # Lỗi 503: Server bận -> Ngủ 5 giây
                     if any(x in err_msg for x in ['503', 'unavailable', 'overloaded']):
-                        time.sleep(3)
+                        time.sleep(5)
                         continue
                     
-                    # Lỗi JSON (AI xuất sai format) -> Thử lại ngay
-                    time.sleep(1)
+                    # Lỗi JSON (AI xuất sai format) -> Ngủ 2 giây rồi thử lại
+                    time.sleep(2)
                     continue
                     
-        raise Exception(f"Đã cạn kiệt số lần thử. Nguyên nhân chính: Hệ thống Google đang chặn do gửi file quá nhanh. Vui lòng đợi 1 phút và thử lại. Lỗi hệ thống: {last_err}")
+        raise Exception(f"Hệ thống Google đang chặn do gửi file quá nhanh. Lỗi hệ thống: {last_err}")
 
     def set_cell_border(cell):
         tcPr = cell._tc.get_or_add_tcPr()
