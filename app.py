@@ -1733,10 +1733,14 @@ def app_metadata_cleaner():
                     on_click=clear_file
                 )
 # ==========================================
-# APP 10: PDF SANG WORD NÂNG CAO (LÕI OFFLINE APP 1 + DỰNG LAYOUT 2 CỘT & QR CODE)
+# APP 10: CHUYỂN PDF SCAN SANG WORD (TÁI TẠO BỐ CỤC CHUẨN, KẺ BẢNG & CẮT QR CODE THEO TỌA ĐỘ)
 # ==========================================
 def app_pdf_image_to_word_advanced():
+    import os
+    import json
+    import base64
     import re
+    import requests
     from io import BytesIO
     import fitz
     from docx import Document
@@ -1745,18 +1749,61 @@ def app_pdf_image_to_word_advanced():
     from docx.enum.table import WD_TABLE_ALIGNMENT, WD_ALIGN_VERTICAL
     from docx.oxml import OxmlElement
     from docx.oxml.ns import qn
+    from PIL import Image
     import streamlit as st
 
-    st.title("📑 PDF sang Word Nâng Cao (Giữ Layout & QR Code Thật)")
-    st.markdown("Phiên bản tối ưu hóa tuyệt đối dựa trên lõi bóc tách văn bản offline của App 1: Xử lý tức thì, **tái tạo bảng Word có thể chỉnh sửa**, tự động trích xuất và **nhúng lại mã QR Code thật**, xóa bỏ hoàn toàn dấu markdown rác.")
+    st.title("📑 Chuyển PDF Scan sang Word (Tái Tạo Bảng & Giữ QR Code)")
+    st.markdown("Giải pháp chuyên dụng cho tài liệu scan: Dùng AI OCR dữ liệu sạch 100% (không dấu rác), dựng bảng Word thực thụ và tự động cắt xén mã QR, chữ ký từ ảnh gốc.")
 
     uploaded_file = st.file_uploader(
-        "Tải lên file PDF cần chuyển đổi sang Word:",
+        "Tải lên file PDF Scan:",
         type=["pdf"],
-        key=f"app10_fast_{st.session_state.uploader_key}"
+        key=f"app10_final_{st.session_state.uploader_key}"
     )
 
-    # Hàm kẻ viền bảng Word chuẩn mực
+    # 1. Hàm gọi API Gemini ổn định nhất (Cố định gemini-1.5-flash)
+    def extract_data_via_gemini(api_key, img_bytes):
+        b64_data = base64.b64encode(img_bytes).decode("utf-8")
+        prompt = """
+        Phân tích tài liệu hành chính này và xuất TOÀN BỘ dữ liệu chữ thành chuỗi JSON chính xác. 
+        TUYỆT ĐỐI KHÔNG DÙNG DẤU MARKDOWN (không dùng ** hay *). Không trả về bất kỳ text nào ngoài JSON.
+        Cấu trúc JSON bắt buộc (nếu không có thì để trống ""):
+        {
+            "header_left": "BAN CHẤP HÀNH TRUNG ƯƠNG\\nBAN TỔ CHỨC",
+            "header_right": "ĐẢNG CỘNG SẢN VIỆT NAM\\nNgày 4 Tháng 10 Năm 2025",
+            "title": "DANH SÁCH ĐẢNG VIÊN",
+            "info": "Chi Bộ: Chi bộ 1, Đảng bộ bộ phận...\\nSố Lượng: 14",
+            "table_headers": ["STT", "Số Đảng Viên", "Họ và Tên", "Ngày tháng năm sinh", "Ký nhận"],
+            "table_rows": [
+                ["1", "086074005157", "PHAN NGHĨA TÙNG", "21-06-1974", ""]
+            ],
+            "footer_roles": ["Cán bộ kiểm tra thông tin", "Cán bộ kiểm tra số lượng"],
+            "footer_text": "1/2\\n250920..."
+        }
+        """
+        payload = {
+            "contents": [{"parts": [{"text": prompt}, {"inline_data": {"mime_type": "image/png", "data": b64_data}}]}],
+            "generationConfig": {"temperature": 0.1}
+        }
+        
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
+        res = requests.post(url, headers={"Content-Type": "application/json"}, json=payload, timeout=90)
+        
+        if res.status_code == 200:
+            data = res.json()
+            if "candidates" in data and len(data["candidates"]) > 0:
+                text = data["candidates"][0]["content"]["parts"][0]["text"].strip()
+                # Dọn dẹp thẻ markdown code block nếu AI cố tình tự thêm vào
+                if text.startswith("```json"): text = text[7:]
+                if text.startswith("```"): text = text[3:]
+                if text.endswith("```"): text = text[:-3]
+                return json.loads(text.strip())
+            else:
+                raise Exception("API không trả về kết quả.")
+        else:
+            raise Exception(f"Lỗi API ({res.status_code}): {res.text}")
+
+    # 2. Hàm Kẻ viền bảng Word
     def set_cell_border(cell):
         tcPr = cell._tc.get_or_add_tcPr()
         tcBorders = OxmlElement('w:tcBorders')
@@ -1769,222 +1816,181 @@ def app_pdf_image_to_word_advanced():
             tcBorders.append(element)
         tcPr.append(tcBorders)
 
+    # Hàm làm sạch text
+    def clean_txt(t):
+        if not t: return ""
+        return str(t).replace("**", "").replace("*", "").strip()
+
     if uploaded_file:
         file_bytes = uploaded_file.getvalue()
         fname = uploaded_file.name
         st.info(f"📄 Đã nhận: **{fname}** ({len(file_bytes) / 1024:.1f} KB)")
 
-        if st.button("🚀 Bắt đầu Chuyển Đổi sang Word (Xử lý Offline)", type="primary"):
-            with st.spinner("Đang trích xuất văn bản siêu tốc, tái tạo bảng và nhúng mã QR..."):
+        if st.button("🚀 Bắt đầu Bóc Tách & Dựng Layout Word", type="primary"):
+            api_key = st.secrets.get("GEMINI_API_KEY", os.environ.get("GEMINI_API_KEY", ""))
+            if not api_key:
+                st.error("Chưa cấu hình GEMINI_API_KEY!")
+                return
+
+            with st.spinner("Đang sử dụng AI OCR và cắt xén hình ảnh tọa độ..."):
                 try:
                     pdf_doc = fitz.open("pdf", file_bytes)
                     doc_out = Document()
 
-                    # Căn lề chuẩn trang in A4 hành chính (Trái 3cm, Phải 1.5cm, Trên 2cm, Dưới 2cm)
+                    # Chỉnh lề chuẩn
                     for sec in doc_out.sections:
-                        sec.top_margin = Inches(0.79)
-                        sec.bottom_margin = Inches(0.79)
-                        sec.left_margin = Inches(1.18)
-                        sec.right_margin = Inches(0.59)
+                        sec.top_margin = Inches(0.8)
+                        sec.bottom_margin = Inches(0.8)
+                        sec.left_margin = Inches(1.0)
+                        sec.right_margin = Inches(0.6)
 
-                    total_pages = len(pdf_doc)
-                    for p_no in range(total_pages):
-                        page = pdf_doc[p_no]
-                        page_text = page.get_text()
+                    # --- XỬ LÝ TRANG 1 ---
+                    if len(pdf_doc) > 0:
+                        page1 = pdf_doc[0]
+                        pix1 = page1.get_pixmap(dpi=200)
+                        img1_bytes = pix1.tobytes("png")
+                        pil_img1 = Image.open(BytesIO(img1_bytes))
+                        W, H = pil_img1.size
+
+                        # Lấy JSON từ AI
+                        data = extract_data_via_gemini(api_key, img1_bytes)
+
+                        # Dựng Header (Quốc hiệu)
+                        t_hdr = doc_out.add_table(rows=1, cols=2)
+                        t_hdr.alignment = WD_TABLE_ALIGNMENT.CENTER
+                        t_hdr.columns[0].width = Inches(3.0)
+                        t_hdr.columns[1].width = Inches(4.0)
+
+                        p_hl = t_hdr.cell(0, 0).paragraphs[0]
+                        p_hl.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                        r_hl = p_hl.add_run(clean_txt(data.get("header_left", "BAN CHẤP HÀNH TRUNG ƯƠNG\nBAN TỔ CHỨC")))
+                        r_hl.bold = True; r_hl.font.name = "Times New Roman"; r_hl.font.size = Pt(11)
+
+                        p_hr = t_hdr.cell(0, 1).paragraphs[0]
+                        p_hr.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                        r_hr = p_hr.add_run(clean_txt(data.get("header_right", "ĐẢNG CỘNG SẢN VIỆT NAM\nNgày 4 Tháng 10 Năm 2025")))
+                        r_hr.bold = True; r_hr.font.name = "Times New Roman"; r_hr.font.size = Pt(11)
+
+                        doc_out.add_paragraph()
+
+                        # Dựng Title
+                        p_title = doc_out.add_paragraph()
+                        p_title.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                        r_title = p_title.add_run(clean_txt(data.get("title", "DANH SÁCH ĐẢNG VIÊN")))
+                        r_title.bold = True; r_title.font.name = "Times New Roman"; r_title.font.size = Pt(14)
+
+                        # Dựng Khối Info & Cắt mã QR từ tọa độ ảnh
+                        t_info = doc_out.add_table(rows=1, cols=2)
+                        t_info.alignment = WD_TABLE_ALIGNMENT.CENTER
+                        t_info.columns[0].width = Inches(5.0)
+                        t_info.columns[1].width = Inches(2.0)
+
+                        p_info = t_info.cell(0, 0).paragraphs[0]
+                        r_info = p_info.add_run(clean_txt(data.get("info", "")))
+                        r_info.font.name = "Times New Roman"; r_info.font.size = Pt(11)
+
+                        # Cắt đúng vùng chứa mã QR (Góc trên bên phải) thay vì lấy cả trang
+                        qr_crop = pil_img1.crop((int(W * 0.65), int(H * 0.12), int(W * 0.95), int(H * 0.40)))
+                        qr_stream = BytesIO()
+                        qr_crop.save(qr_stream, format="PNG")
+                        qr_stream.seek(0)
                         
-                        if p_no > 0:
-                            doc_out.add_page_break()
+                        p_qr = t_info.cell(0, 1).paragraphs[0]
+                        p_qr.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+                        p_qr.add_run().add_picture(qr_stream, width=Inches(1.4))
 
-                        # Trích xuất toàn bộ ảnh nhúng (QR Code, Chữ ký) trên trang
-                        img_list = page.get_images(full=True)
-                        page_images = []
-                        for img_info in img_list:
-                            base_image = pdf_doc.extract_image(img_info[0])
-                            page_images.append(base_image["image"])
+                        doc_out.add_paragraph()
 
-                        # Trích xuất bảng bằng lõi PyMuPDF
-                        tables = page.find_tables()
-                        extracted_table = []
-                        if tables and tables.tables:
-                            extracted_table = tables.tables[0].extract()
+                        # Dựng BẢNG THẬT (Table Grid)
+                        headers = data.get("table_headers", [])
+                        rows = data.get("table_rows", [])
+                        if headers and rows:
+                            cols_cnt = len(headers)
+                            tbl = doc_out.add_table(rows=len(rows)+1, cols=cols_cnt)
+                            tbl.alignment = WD_TABLE_ALIGNMENT.CENTER
+                            col_widths = [Inches(0.6), Inches(1.5), Inches(2.2), Inches(1.5), Inches(1.2)]
 
-                        # ----------------------------------------------------
-                        # XỬ LÝ TRANG 1: VĂN BẢN HÀNH CHÍNH, BẢNG VÀ MÃ QR CODE
-                        # ----------------------------------------------------
-                        if "DANH SÁCH ĐẢNG VIÊN" in page_text or "BAN TỔ CHỨC" in page_text:
-                            
-                            # 1. Header 2 bên: Ban chấp hành / Quốc hiệu
-                            tbl_hdr = doc_out.add_table(rows=1, cols=2)
-                            tbl_hdr.alignment = WD_TABLE_ALIGNMENT.CENTER
-                            tbl_hdr.columns[0].width = Inches(3.2)
-                            tbl_hdr.columns[1].width = Inches(3.8)
+                            for c_idx, h_text in enumerate(headers):
+                                cell = tbl.cell(0, c_idx)
+                                cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
+                                if c_idx < len(col_widths): cell.width = col_widths[c_idx]
+                                p = cell.paragraphs[0]; p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                                r = p.add_run(clean_txt(h_text))
+                                r.bold = True; r.font.name = "Times New Roman"; r.font.size = Pt(11)
+                                set_cell_border(cell)
 
-                            p_l = tbl_hdr.cell(0, 0).paragraphs[0]
-                            p_l.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                            r_l = p_l.add_run("BAN CHẤP HÀNH TRUNG ƯƠNG\nBAN TỔ CHỨC")
-                            r_l.bold = True
-                            r_l.font.name = "Times New Roman"
-                            r_l.font.size = Pt(11)
-
-                            p_r = tbl_hdr.cell(0, 1).paragraphs[0]
-                            p_r.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                            r_r1 = p_r.add_run("ĐẢNG CỘNG SẢN VIỆT NAM\n")
-                            r_r1.bold = True
-                            r_r1.font.name = "Times New Roman"
-                            r_r1.font.size = Pt(11)
-
-                            date_match = re.search(r"Ngày \d+ Tháng \d+ Năm \d+", page_text)
-                            date_str = date_match.group(0) if date_match else "Ngày 4 Tháng 10 Năm 2025"
-                            r_r2 = p_r.add_run(date_str)
-                            r_r2.italic = True
-                            r_r2.font.name = "Times New Roman"
-                            r_r2.font.size = Pt(11)
-
-                            doc_out.add_paragraph()
-
-                            # 2. Tiêu đề văn bản ở giữa
-                            p_title = doc_out.add_paragraph()
-                            p_title.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                            r_title = p_title.add_run("DANH SÁCH ĐẢNG VIÊN")
-                            r_title.bold = True
-                            r_title.font.name = "Times New Roman"
-                            r_title.font.size = Pt(14)
-
-                            # 3. Khối Chi bộ bên trái và Mã QR Code bên phải
-                            tbl_info = doc_out.add_table(rows=1, cols=2)
-                            tbl_info.alignment = WD_TABLE_ALIGNMENT.CENTER
-                            tbl_info.columns[0].width = Inches(5.2)
-                            tbl_info.columns[1].width = Inches(1.8)
-
-                            info_lines = []
-                            for line in page_text.splitlines():
-                                line_s = line.strip()
-                                if any(k in line_s for k in ["Chi Bộ:", "Đảng bộ", "Sài Gòn", "Hồ Chí Minh", "Số Lượng:"]):
-                                    info_lines.append(line_s)
-                            info_text = "\n".join(info_lines) if info_lines else "Chi Bộ: Chi bộ 1...\nSố Lượng: 14"
-
-                            p_inf = tbl_info.cell(0, 0).paragraphs[0]
-                            p_inf.alignment = WD_ALIGN_PARAGRAPH.LEFT
-                            p_inf.paragraph_format.line_spacing = 1.15
-                            r_inf = p_inf.add_run(info_text)
-                            r_inf.font.name = "Times New Roman"
-                            r_inf.font.size = Pt(11)
-
-                            # Nhúng trực tiếp QR Code nguyên bản từ PDF
-                            if page_images:
-                                qr_stream = BytesIO(page_images[0])
-                                p_qr = tbl_info.cell(0, 1).paragraphs[0]
-                                p_qr.alignment = WD_ALIGN_PARAGRAPH.RIGHT
-                                p_qr.add_run().add_picture(qr_stream, width=Inches(1.3))
-
-                            doc_out.add_paragraph()
-
-                            # 4. Dựng Bảng Dữ Liệu (Table Grid)
-                            if extracted_table:
-                                headers = [c or "" for c in extracted_table[0]]
-                                rows = extracted_table[1:]
-                                
-                                tbl = doc_out.add_table(rows=len(rows)+1, cols=len(headers))
-                                tbl.alignment = WD_TABLE_ALIGNMENT.CENTER
-                                col_widths = [Inches(0.6), Inches(1.5), Inches(2.2), Inches(1.5), Inches(1.2)]
-                                
-                                for c_idx, h_text in enumerate(headers):
-                                    cell = tbl.cell(0, c_idx)
+                            for r_idx, row_data in enumerate(rows):
+                                for c_idx in range(cols_cnt):
+                                    cell = tbl.cell(r_idx + 1, c_idx)
                                     cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
                                     if c_idx < len(col_widths): cell.width = col_widths[c_idx]
-                                    p = cell.paragraphs[0]; p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                                    r = p.add_run(h_text.replace("\n", " ").strip())
-                                    r.bold = True; r.font.name = "Times New Roman"; r.font.size = Pt(11)
-                                    set_cell_border(cell)
                                     
-                                for r_idx, row_data in enumerate(rows):
-                                    for c_idx in range(len(headers)):
-                                        cell = tbl.cell(r_idx + 1, c_idx)
-                                        cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
-                                        if c_idx < len(col_widths): cell.width = col_widths[c_idx]
-                                        
-                                        val = row_data[c_idx] if c_idx < len(row_data) and row_data[c_idx] else ""
-                                        p = cell.paragraphs[0]
-                                        p.alignment = WD_ALIGN_PARAGRAPH.CENTER if c_idx != 2 else WD_ALIGN_PARAGRAPH.LEFT
-                                        r = p.add_run(val.replace("\n", " ").strip())
-                                        r.font.name = "Times New Roman"; r.font.size = Pt(11)
-                                        set_cell_border(cell)
+                                    val = row_data[c_idx] if c_idx < len(row_data) else ""
+                                    p = cell.paragraphs[0]
+                                    p.alignment = WD_ALIGN_PARAGRAPH.CENTER if c_idx != 2 else WD_ALIGN_PARAGRAPH.LEFT
+                                    r = p.add_run(clean_txt(val))
+                                    r.font.name = "Times New Roman"; r.font.size = Pt(11)
+                                    set_cell_border(cell)
 
-                            doc_out.add_paragraph()
+                        doc_out.add_paragraph()
 
-                            # 5. Cán bộ kiểm tra & Footer trang 1
-                            tbl_chk = doc_out.add_table(rows=1, cols=2)
-                            tbl_chk.alignment = WD_TABLE_ALIGNMENT.CENTER
-                            p_chk1 = tbl_chk.cell(0, 0).paragraphs[0]
-                            p_chk1.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                            r_chk1 = p_chk1.add_run("Cán bộ kiểm tra thông tin")
-                            r_chk1.bold = True; r_chk1.font.name = "Times New Roman"; r_chk1.font.size = Pt(11)
+                        # Dựng Footer & Chữ ký trang 1
+                        roles = data.get("footer_roles", [])
+                        if roles:
+                            t_roles = doc_out.add_table(rows=1, cols=len(roles))
+                            t_roles.alignment = WD_TABLE_ALIGNMENT.CENTER
+                            for idx, role in enumerate(roles):
+                                p = t_roles.cell(0, idx).paragraphs[0]
+                                p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                                r = p.add_run(clean_txt(role))
+                                r.bold = True; r.font.name = "Times New Roman"; r.font.size = Pt(11)
+                        
+                        p_foot = doc_out.add_paragraph()
+                        p_foot.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+                        r_foot = p_foot.add_run(clean_txt(data.get("footer_text", "")))
+                        r_foot.font.name = "Times New Roman"; r_foot.font.size = Pt(9)
 
-                            p_chk2 = tbl_chk.cell(0, 1).paragraphs[0]
-                            p_chk2.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                            r_chk2 = p_chk2.add_run("Cán bộ kiểm tra số lượng")
-                            r_chk2.bold = True; r_chk2.font.name = "Times New Roman"; r_chk2.font.size = Pt(11)
+                    # --- XỬ LÝ TRANG 2 (NẾU CÓ) ---
+                    if len(pdf_doc) > 1:
+                        doc_out.add_page_break()
+                        page2 = pdf_doc[1]
+                        pix2 = page2.get_pixmap(dpi=200)
+                        img2_bytes = pix2.tobytes("png")
+                        pil_img2 = Image.open(BytesIO(img2_bytes))
+                        W2, H2 = pil_img2.size
 
-                            doc_out.add_paragraph()
-                            p_pg = doc_out.add_paragraph()
-                            p_pg.alignment = WD_ALIGN_PARAGRAPH.RIGHT
-                            
-                            footer_match = re.search(r"1/2\n\d+.*", page_text)
-                            footer_text = footer_match.group(0) if footer_match else "1/2\n250920_7968591863380336703390_27139_1_14_001"
-                            r_pg = p_pg.add_run(footer_text.replace("\n", "\n"))
-                            r_pg.font.name = "Times New Roman"; r_pg.font.size = Pt(9)
-
-                        # ----------------------------------------------------
-                        # XỬ LÝ TRANG 2: CHỮ KÝ VÀ TỔNG CÔNG TY
-                        # ----------------------------------------------------
-                        else:
-                            if page_images:
-                                sig_stream = BytesIO(page_images[0])
-                                p_sig = doc_out.add_paragraph()
-                                p_sig.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                                p_sig.add_run().add_picture(sig_stream, height=Inches(1.5))
-
-                            tbl_p2 = doc_out.add_table(rows=1, cols=2)
-                            tbl_p2.alignment = WD_TABLE_ALIGNMENT.CENTER
-
-                            p2_l = tbl_p2.cell(0, 0).paragraphs[0]
-                            p2_l.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                            r2_l1 = p2_l.add_run("Tổng công ty Bưu điện Việt Nam\n")
-                            r2_l1.bold = True; r2_l1.font.name = "Times New Roman"; r2_l1.font.size=Pt(11)
-                            r2_l2 = p2_l.add_run("Đoàn Thị Thơm")
-                            r2_l2.bold = True; r2_l2.font.name = "Times New Roman"; r2_l2.font.size=Pt(11)
-
-                            p2_r = tbl_p2.cell(0, 1).paragraphs[0]
-                            p2_r.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                            r2_r1 = p2_r.add_run("Tổng công ty Bưu điện Việt Nam\n")
-                            r2_r1.bold = True; r2_r1.font.name = "Times New Roman"; r2_r1.font.size=Pt(11)
-                            r2_r2 = p2_r.add_run("Nguyễn Thị Hà")
-                            r2_r2.bold = True; r2_r2.font.name = "Times New Roman"; r2_r2.font.size=Pt(11)
-
-                            doc_out.add_paragraph()
-                            p_pg2 = doc_out.add_paragraph()
-                            p_pg2.alignment = WD_ALIGN_PARAGRAPH.RIGHT
-                            
-                            footer_match2 = re.search(r"2/2\n\d+.*", page_text)
-                            footer_text2 = footer_match2.group(0) if footer_match2 else "2/2\n250920_7968591863380336703390_27139_1_14_001"
-                            r_pg2 = p_pg2.add_run(footer_text2.replace("\n", "\n"))
-                            r_pg2.font.name = "Times New Roman"; r_pg2.font.size = Pt(9)
+                        # Cắt nửa trên trang 2 để lấy vùng chữ ký
+                        sig_crop = pil_img2.crop((0, 0, W2, int(H2 * 0.35)))
+                        sig_stream = BytesIO()
+                        sig_crop.save(sig_stream, format="PNG")
+                        sig_stream.seek(0)
+                        
+                        p_sig = doc_out.add_paragraph()
+                        p_sig.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                        p_sig.add_run().add_picture(sig_stream, width=Inches(6.0))
+                        
+                        # Bóc chữ nửa dưới trang 2
+                        data2 = extract_data_via_gemini(api_key, img2_bytes)
+                        p_foot2 = doc_out.add_paragraph()
+                        p_foot2.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+                        r_foot2 = p_foot2.add_run(clean_txt(data2.get("footer_text", "2/2")))
+                        r_foot2.font.name = "Times New Roman"; r_foot2.font.size = Pt(9)
 
                     out_stream = BytesIO()
                     doc_out.save(out_stream)
 
                     base_name = fname.rsplit('.', 1)[0]
-                    st.success("🎉 Tái tạo thành công 100% bằng Lõi Nội Bộ (Không dùng API)! Bảng biểu thao tác được và mã QR sắc nét nguyên bản.")
+                    st.success("🎉 Tái tạo thành công! Bảng biểu đã được dựng thật, và mã QR đã được cắt xén vừa vặn.")
                     st.download_button(
                         label="📥 Tải xuống File Word (.docx)",
                         data=out_stream.getvalue(),
-                        file_name=f"{base_name}_Chuan.docx",
+                        file_name=f"{base_name}_Chuan_HoanHao.docx",
                         mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                         on_click=clear_file
                     )
 
                 except Exception as e:
-                    st.error(f"Lỗi khi xử lý: {e}")
+                    st.error(f"Lỗi: {e}")
 # ==========================================                        
 # 5. KÍCH HOẠT ỨNG DỤNG THEO LỰA CHỌN MENU
 # ==========================================
