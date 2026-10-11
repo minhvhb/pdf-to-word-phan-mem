@@ -52,36 +52,43 @@ def clear_file():
     st.session_state.uploader_key += 1
 
 # ==========================================
-# HÀM LẤY API KEY NGẪU NHIÊN TỪ SECRETS (CHIA ĐỀU TẢI TRỌNG)
+# HÀM LẤY API KEY NGẪU NHIÊN TỪ SECRETS (TỰ ĐỘNG LỌC KEY LỖI)
 # ==========================================
 def get_api_key():
     try:
         keys = st.secrets.get("GEMINI_API_KEYS", [])
         if isinstance(keys, str):
             keys = [k.strip() for k in keys.split(',')]
-        if not keys:
-            single_key = st.secrets.get("GEMINI_API_KEY", "")
-            if single_key:
-                keys = [single_key]
+            
+        # Bộ lọc an toàn: Chỉ chấp nhận các Key bắt đầu bằng "AIza" và dọn dẹp khoảng trắng
+        valid_keys = [k.strip() for k in keys if isinstance(k, str) and k.strip().startswith("AIza")]
+        
+        if not valid_keys:
+            single_key = str(st.secrets.get("GEMINI_API_KEY", "")).strip()
+            if single_key.startswith("AIza"):
+                valid_keys = [single_key]
             else:
                 raise KeyError
-        return random.choice(keys)
+                
+        return random.choice(valid_keys)
     except KeyError:
-        st.error("⚠️ Hệ thống chưa được cấu hình GEMINI_API_KEYS trong file secrets.toml. Vui lòng liên hệ Quản trị viên!")
+        st.error("⚠️ Hệ thống chưa tìm thấy cấu hình API Key hợp lệ (phải bắt đầu bằng AIza). Vui lòng kiểm tra lại file secrets.toml!")
         st.stop()
 
 # ==========================================
 # 0. HÀM GỌI AI THÔNG MINH (CHỐNG TREO & CHỐNG SẬP MẠNG)
 # ==========================================
 def call_gemini_smart(client, contents_payload):
+    # Đưa các model được tài khoản của bạn hỗ trợ lên hàng đầu
     models_to_try = [
+        "gemini-3.8-flash",
+        "gemini-3.6-flash",
         "gemini-1.5-flash",
-        "gemini-2.0-flash",
         "gemini-1.5-pro"
     ]
     last_err = None
     for model_name in models_to_try:
-        for attempt in range(3): # Kiên nhẫn thử 3 lần cho mỗi model
+        for attempt in range(2): 
             try:
                 response = client.models.generate_content(
                     model=model_name,
@@ -91,12 +98,12 @@ def call_gemini_smart(client, contents_payload):
             except Exception as e:
                 err_msg = str(e).lower()
                 last_err = e
-                # Nếu model bị khóa/không tồn tại -> Đổi model ngay
+                # Nếu model bị khóa/không tồn tại -> Đổi model ngay lập tức
                 if "not found" in err_msg or "404" in err_msg or "no longer available" in err_msg:
                     break 
-                # Nếu chạm trần (429) -> Ngủ 4 giây rồi thử LẠI model NÀY
+                # Nếu chạm trần (429) -> Ngủ 3 giây rồi thử LẠI model NÀY
                 if any(x in err_msg for x in ['429', 'quota', 'exhausted']):
-                    time.sleep(4)
+                    time.sleep(3)
                     continue
                 # Nếu máy chủ bận (503) -> Ngủ 2 giây rồi thử LẠI model NÀY
                 if any(x in err_msg for x in ['503', 'unavailable', 'overloaded', 'high demand']):
@@ -1771,15 +1778,17 @@ def app_pdf_image_to_word_advanced():
             response_mime_type="application/json"
         )
 
+        # Cập nhật danh sách model cho App 10
         models_to_try = [
+            "gemini-3.8-flash",
+            "gemini-3.6-flash",
             "gemini-1.5-flash",
-            "gemini-2.0-flash",
             "gemini-1.5-pro"
         ]
         
         last_err = ""
         for model in models_to_try:
-            for attempt in range(3): # Thử 3 lần cho mỗi model
+            for attempt in range(2): 
                 try:
                     res = client.models.generate_content(
                         model=model,
@@ -1794,18 +1803,15 @@ def app_pdf_image_to_word_advanced():
                 except Exception as e:
                     err_msg = str(e).lower()
                     last_err = str(e)
-                    # Nếu model khóa -> chuyển model tiếp theo
                     if "404" in err_msg or "not found" in err_msg or "no longer available" in err_msg:
                         break 
-                    # Nếu kiệt sức -> Ngủ 5 giây thử LẠI model này
                     if any(x in err_msg for x in ['429', 'quota', 'exhausted']):
-                        time.sleep(5) 
+                        time.sleep(3) 
                         continue
-                    # Nếu máy chủ bận -> Ngủ 2 giây thử LẠI model này
                     if any(x in err_msg for x in ['503', 'unavailable', 'overloaded']):
                         time.sleep(2)
                         continue
-                    break # Lỗi lạ thì bỏ qua model
+                    break 
         raise Exception(f"Đã cạn kiệt số lần thử trên máy chủ Google. Lỗi cuối: {last_err}")
 
     def set_cell_border(cell):
