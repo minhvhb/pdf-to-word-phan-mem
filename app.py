@@ -1734,15 +1734,17 @@ def app_metadata_cleaner():
                 )
 # ==========================================
 # ==========================================
-# APP 10: CHUYỂN PDF SCAN / ẢNH SANG WORD (TÁI TẠO BẢNG & CHỮ THẬT BẰNG AI)
+# APP 10: CHUYỂN PDF SCAN / ẢNH SANG WORD (TÁI TẠO BẢNG & CHỮ THẬT QUA REST API)
 # ==========================================
 def app_pdf_image_to_word_advanced():
     import os
-    import re
+    import json
+    import base64
+    import requests
     from io import BytesIO
     import fitz
     from docx import Document
-    from docx.shared import Pt, Inches, RGBColor
+    from docx.shared import Pt, Inches
     from docx.enum.text import WD_ALIGN_PARAGRAPH
     from docx.enum.table import WD_TABLE_ALIGNMENT, WD_ALIGN_VERTICAL
     from docx.oxml import OxmlElement
@@ -1758,7 +1760,41 @@ def app_pdf_image_to_word_advanced():
         key=f"app10_ocr_{st.session_state.uploader_key}"
     )
 
-    # Hàm hỗ trợ dựng viền bảng Word chuẩn mực
+    # Hàm gọi trực tiếp Gemini REST API (Không cần thư viện google.generativeai)
+    def call_gemini_vision_api(api_key, img_bytes, prompt):
+        models = ["gemini-2.5-flash", "gemini-1.5-flash"]
+        b64_data = base64.b64encode(img_bytes).decode("utf-8")
+        payload = {
+            "contents": [{
+                "parts": [
+                    {"text": prompt},
+                    {
+                        "inline_data": {
+                            "mime_type": "image/png",
+                            "data": b64_data
+                        }
+                    }
+                ]
+            }]
+        }
+        headers = {"Content-Type": "application/json"}
+
+        last_error = ""
+        for model in models:
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
+            try:
+                res = requests.post(url, headers=headers, json=payload, timeout=90)
+                if res.status_code == 200:
+                    data = res.json()
+                    return data["candidates"][0]["content"]["parts"][0]["text"]
+                else:
+                    last_error = f"Model {model} phản hồi mã lỗi {res.status_code}: {res.text}"
+            except Exception as ex:
+                last_error = str(ex)
+
+        raise Exception(f"Không thể kết nối đến AI. Chi tiết: {last_error}")
+
+    # Hàm kẻ khung viền bảng trong Word
     def set_cell_border(cell, **kwargs):
         tcPr = cell._tc.get_or_add_tcPr()
         tcBorders = OxmlElement('w:tcBorders')
@@ -1774,7 +1810,7 @@ def app_pdf_image_to_word_advanced():
                 tcBorders.append(element)
         tcPr.append(tcBorders)
 
-    # Hàm chuyển đổi nội dung Markdown từ AI thành phần tử Word thật (Paragraph & Table)
+    # Hàm dựng Markdown thành phần tử Word thật (Paragraph & Table)
     def parse_markdown_to_docx(doc, md_text):
         lines = md_text.strip().split('\n')
         in_table = False
@@ -1783,7 +1819,6 @@ def app_pdf_image_to_word_advanced():
         def build_table(rows_data):
             if not rows_data:
                 return
-            # Chuẩn hóa số cột
             num_cols = max(len(r) for r in rows_data)
             tbl = doc.add_table(rows=len(rows_data), cols=num_cols)
             tbl.alignment = WD_TABLE_ALIGNMENT.CENTER
@@ -1794,18 +1829,15 @@ def app_pdf_image_to_word_advanced():
                     cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
                     val = row[c_idx] if c_idx < len(row) else ""
                     
-                    # Xử lý đoạn văn trong ô
                     p = cell.paragraphs[0]
                     p.alignment = WD_ALIGN_PARAGRAPH.CENTER if (c_idx == 0 or r_idx == 0) else WD_ALIGN_PARAGRAPH.LEFT
                     run = p.add_run(val)
                     run.font.name = "Times New Roman"
                     run.font.size = Pt(11)
 
-                    # Hàng tiêu đề in đậm
                     if r_idx == 0:
                         run.bold = True
 
-                    # Kẻ viền ô rõ ràng
                     border_kwargs = {
                         'top': {'val': 'single', 'sz': 4, 'color': '000000'},
                         'bottom': {'val': 'single', 'sz': 4, 'color': '000000'},
@@ -1814,15 +1846,12 @@ def app_pdf_image_to_word_advanced():
                     }
                     set_cell_border(cell, **border_kwargs)
 
-            # Cách 1 dòng sau bảng
             doc.add_paragraph()
 
         for line in lines:
             line_str = line.strip()
 
-            # Nhận diện dòng bảng Markdown
             if line_str.startswith('|') and line_str.endswith('|'):
-                # Bỏ qua dòng phân cách |---|---|
                 if set(line_str.replace('|', '').strip()) <= {'-', ':', ' '}:
                     continue
                 cols = [c.strip() for c in line_str.strip('|').split('|')]
@@ -1838,7 +1867,6 @@ def app_pdf_image_to_word_advanced():
                 if not line_str:
                     continue
 
-                # Nhận diện Tiêu đề
                 if line_str.startswith('# '):
                     p = doc.add_paragraph()
                     p.alignment = WD_ALIGN_PARAGRAPH.CENTER
@@ -1860,7 +1888,8 @@ def app_pdf_image_to_word_advanced():
                     run = p.add_run(line_str)
                     run.font.size = Pt(11)
                 
-                p.runs[0].font.name = "Times New Roman"
+                if p.runs:
+                    p.runs[0].font.name = "Times New Roman"
 
         if in_table and table_rows:
             build_table(table_rows)
@@ -1880,13 +1909,9 @@ def app_pdf_image_to_word_advanced():
 
             with st.spinner("Đang sử dụng AI đọc từng trang scan và tái tạo bảng biểu..."):
                 try:
-                    import google.generativeai as genai
-                    genai.configure(api_key=api_key)
-                    model = genai.GenerativeModel("gemini-2.5-flash")
-
                     doc_out = Document()
 
-                    # Căn lề chuẩn văn bản hành chính (Lề trái 3cm, phải 1.5cm, trên/dưới 2cm)
+                    # Căn lề chuẩn văn bản hành chính (Trái 3cm, Phải 1.5cm, Trên/Dưới 2cm)
                     for section in doc_out.sections:
                         section.top_margin = Inches(0.79)
                         section.bottom_margin = Inches(0.79)
@@ -1902,7 +1927,7 @@ Hãy đọc bức ảnh chụp tài liệu scan này và tái cấu trúc lại 
 4. Chỉ trả về nội dung Markdown thuần, không kèm lời mở đầu hoặc kết thúc.
 """
 
-                    # Trường hợp PDF: chuyển từng trang thành ảnh nét (DPI 200) rồi OCR
+                    # Trường hợp PDF scan
                     if fext == "pdf":
                         pdf_doc = fitz.open("pdf", file_bytes)
                         total_p = len(pdf_doc)
@@ -1911,21 +1936,20 @@ Hãy đọc bức ảnh chụp tài liệu scan này và tái cấu trúc lại 
                         for p_idx in range(total_p):
                             page = pdf_doc[p_idx]
                             pix = page.get_pixmap(dpi=200)
-                            pil_img = Image.open(BytesIO(pix.tobytes("png")))
+                            img_png_bytes = pix.tobytes("png")
 
-                            response = model.generate_content([prompt, pil_img])
-                            parse_markdown_to_docx(doc_out, response.text)
+                            md_result = call_gemini_vision_api(api_key, img_png_bytes, prompt)
+                            parse_markdown_to_docx(doc_out, md_result)
 
                             if p_idx < total_p - 1:
                                 doc_out.add_page_break()
 
                             progress_bar.progress((p_idx + 1) / total_p)
 
-                    # Trường hợp ảnh đơn lẻ (PNG/JPG)
+                    # Trường hợp Ảnh đơn lẻ (PNG/JPG)
                     else:
-                        pil_img = Image.open(BytesIO(file_bytes))
-                        response = model.generate_content([prompt, pil_img])
-                        parse_markdown_to_docx(doc_out, response.text)
+                        md_result = call_gemini_vision_api(api_key, file_bytes, prompt)
+                        parse_markdown_to_docx(doc_out, md_result)
 
                     out_stream = BytesIO()
                     doc_out.save(out_stream)
