@@ -1733,110 +1733,32 @@ def app_metadata_cleaner():
                     on_click=clear_file
                 )
 # ==========================================
-# ==========================================
-# APP 10: CHUYỂN PDF SCAN / ẢNH SANG WORD (TÁI TẠO BẢNG & CHỮ THẬT QUA REST API)
+# APP 10: CHUYỂN PDF SCAN / ẢNH SANG WORD (TÁI TẠO BỐ CỤC CHUẨN & NHÚNG QR CODE THẬT)
 # ==========================================
 def app_pdf_image_to_word_advanced():
     import os
     import json
     import base64
+    import re
     import requests
     from io import BytesIO
     import fitz
     from docx import Document
-    from docx.shared import Pt, Inches
+    from docx.shared import Pt, Inches, RGBColor
     from docx.enum.text import WD_ALIGN_PARAGRAPH
     from docx.enum.table import WD_TABLE_ALIGNMENT, WD_ALIGN_VERTICAL
     from docx.oxml import OxmlElement
     from docx.oxml.ns import qn
     from PIL import Image
 
-    st.title("📑 Chuyển PDF Scan / Ảnh sang Word (Tái Tạo Bảng & Ký Tự Thật)")
-    st.markdown("Giải pháp chuyên dụng cho **tài liệu scan và ảnh chụp**: Tự động nhận dạng chữ viết, tái tạo lại **bảng biểu có thể chỉnh sửa** và văn bản thật sự trong Word.")
+    st.title("📑 Chuyển PDF Scan / Ảnh sang Word (Giữ Layout & QR Code Thật)")
+    st.markdown("Số hóa tài liệu hành chính cao cấp: Tái tạo cấu trúc bảng biểu, Quốc hiệu 2 bên, tự động cắt và **nhúng lại mã QR Code / Chữ ký thật** từ bản scan gốc.")
 
     uploaded_file = st.file_uploader(
         "Tải lên file PDF Scan hoặc Ảnh tài liệu (Hỗ trợ PDF, PNG, JPG):",
         type=["pdf", "png", "jpg", "jpeg"],
         key=f"app10_ocr_{st.session_state.uploader_key}"
     )
-
-    # Hàm gọi Gemini REST API với cơ chế tự động dò tìm model khả dụng
-    def call_gemini_vision_api(api_key, img_bytes, prompt):
-        candidates = []
-        try:
-            res_list = requests.get(
-                f"https://generativelanguage.googleapis.com/v1beta/models?key={api_key}",
-                timeout=10
-            )
-            if res_list.status_code == 200:
-                data = res_list.json()
-                for m in data.get("models", []):
-                    if "generateContent" in m.get("supportedGenerationMethods", []):
-                        name = m.get("name", "")
-                        if "gemini" in name:
-                            candidates.append(name)
-        except Exception:
-            pass
-
-        fallback_models = [
-            "models/gemini-2.0-flash",
-            "models/gemini-2.5-flash",
-            "models/gemini-1.5-flash-latest",
-            "models/gemini-1.5-flash-002",
-            "models/gemini-1.5-flash-001",
-            "models/gemini-1.5-flash",
-            "models/gemini-1.5-pro-latest",
-            "models/gemini-1.5-pro"
-        ]
-
-        if not candidates:
-            candidates = fallback_models
-        else:
-            def model_priority(m_name):
-                if "2.0-flash" in m_name: return 0
-                if "2.5-flash" in m_name: return 1
-                if "1.5-flash-latest" in m_name: return 2
-                if "1.5-flash-002" in m_name: return 3
-                if "1.5-flash" in m_name: return 4
-                return 5
-            candidates.sort(key=model_priority)
-
-        b64_data = base64.b64encode(img_bytes).decode("utf-8")
-        payload = {
-            "contents": [{
-                "parts": [
-                    {"text": prompt},
-                    {
-                        "inline_data": {
-                            "mime_type": "image/png",
-                            "data": b64_data
-                        }
-                    }
-                ]
-            }]
-        }
-        headers = {"Content-Type": "application/json"}
-
-        last_error = ""
-        for model in candidates:
-            clean_model = model if model.startswith("models/") else f"models/{model}"
-            for version in ["v1beta", "v1"]:
-                url = f"https://generativelanguage.googleapis.com/{version}/{clean_model}:generateContent?key={api_key}"
-                try:
-                    res = requests.post(url, headers=headers, json=payload, timeout=90)
-                    if res.status_code == 200:
-                        data = res.json()
-                        candidates_resp = data.get("candidates", [])
-                        if candidates_resp:
-                            parts = candidates_resp[0].get("content", {}).get("parts", [])
-                            if parts:
-                                return "".join([p.get("text", "") for p in parts])
-                    else:
-                        last_error = f"{clean_model} ({version}) -> {res.status_code}: {res.text[:180]}"
-                except Exception as ex:
-                    last_error = str(ex)
-
-        raise Exception(f"Không thể kết nối đến AI. Chi tiết: {last_error}")
 
     # Hàm kẻ viền bảng Word
     def set_cell_border(cell, **kwargs):
@@ -1854,90 +1776,277 @@ def app_pdf_image_to_word_advanced():
                 tcBorders.append(element)
         tcPr.append(tcBorders)
 
-    # Hàm chuyển đổi kết quả Markdown thành đoạn văn và Bảng biểu Word thật
-    def parse_markdown_to_docx(doc, md_text):
-        lines = md_text.strip().split('\n')
-        in_table = False
-        table_rows = []
+    # Hàm dọn dẹp khoảng cách dòng đoạn văn Word
+    def format_para(p, align=WD_ALIGN_PARAGRAPH.LEFT, space_after=2):
+        p.alignment = align
+        p.paragraph_format.space_before = Pt(0)
+        p.paragraph_format.space_after = Pt(space_after)
+        p.paragraph_format.line_spacing = 1.15
 
-        def build_table(rows_data):
-            if not rows_data:
-                return
-            num_cols = max(len(r) for r in rows_data)
-            tbl = doc.add_table(rows=len(rows_data), cols=num_cols)
-            tbl.alignment = WD_TABLE_ALIGNMENT.CENTER
+    # Hàm gọi Gemini với chế độ JSON Mode
+    def extract_document_layout_json(api_key, img_bytes):
+        b64_data = base64.b64encode(img_bytes).decode("utf-8")
+        
+        prompt = """
+Bạn là chuyên gia phân tích bố cục và số hóa văn bản hành chính cao cấp.
+Nhiệm vụ: Phân tích bức ảnh tài liệu scan này và trích xuất cấu trúc sang JSON:
+{
+  "header_left": ["BAN CHẤP HÀNH TRUNG ƯƠNG", "BAN TỔ CHỨC"],
+  "header_right": ["ĐẢNG CỘNG SẢN VIỆT NAM", "Ngày 4 Tháng 10 Năm 2025"],
+  "title": "DANH SÁCH ĐẢNG VIÊN",
+  "info_left": "Chi Bộ: Chi bộ 1, Đảng bộ bộ phận Nhà máy thuốc lá Bến Thành Craven \\"A\\"...",
+  "qr_box_2d": [ymin, xmin, ymax, xmax],
+  "table": {
+    "headers": ["STT", "Số Đảng Viên", "Họ và Tên", "Ngày tháng năm sinh", "Ký nhận"],
+    "rows": [
+      ["1", "086074005157", "PHAN NGHĨA TÙNG", "21-06-1974", ""],
+      ["2", "079182027423", "NGUYỄN THỊ THU LÝ", "19-02-1982", ""]
+    ]
+  },
+  "signatures": [
+    {"role": "Cán bộ kiểm tra thông tin", "name": "", "sig_box_2d": null},
+    {"role": "Cán bộ kiểm tra số lượng", "name": "", "sig_box_2d": null}
+  ],
+  "footer": "1/2\\n250920_7968591863380336703390_27139_1_14_001"
+}
 
-            for r_idx, row in enumerate(rows_data):
-                for c_idx in range(num_cols):
-                    cell = tbl.cell(r_idx, c_idx)
-                    cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
-                    val = row[c_idx] if c_idx < len(row) else ""
-                    
-                    p = cell.paragraphs[0]
-                    p.alignment = WD_ALIGN_PARAGRAPH.CENTER if (c_idx == 0 or r_idx == 0) else WD_ALIGN_PARAGRAPH.LEFT
-                    run = p.add_run(val)
-                    run.font.name = "Times New Roman"
-                    run.font.size = Pt(11)
+QUY TẮC BẮT BUỘC:
+1. TUYỆT ĐỐI KHÔNG dùng dấu markdown như ** hoặc * trong chuỗi JSON.
+2. Tìm chính xác tọa độ [ymin, xmin, ymax, xmax] của mã QR Code (chuẩn hóa 0-1000). Nếu không có ghi null.
+3. Nếu có chữ ký tay riêng biệt bên ngoài bảng (ví dụ ở chân trang hoặc trang 2), hãy trả về tọa độ sig_box_2d để hệ thống cắt ảnh chữ ký.
+4. Trích xuất đầy đủ 100% các dòng, không viết tắt, không tóm tắt.
+"""
 
-                    if r_idx == 0:
-                        run.bold = True
+        payload = {
+            "contents": [{
+                "parts": [
+                    {"text": prompt},
+                    {"inline_data": {"mime_type": "image/png", "data": b64_data}}
+                ]
+            }],
+            "generationConfig": {
+                "response_mime_type": "application/json",
+                "temperature": 0.1
+            }
+        }
 
-                    border_kwargs = {
-                        'top': {'val': 'single', 'sz': 4, 'color': '000000'},
-                        'bottom': {'val': 'single', 'sz': 4, 'color': '000000'},
-                        'left': {'val': 'single', 'sz': 4, 'color': '000000'},
-                        'right': {'val': 'single', 'sz': 4, 'color': '000000'},
-                    }
-                    set_cell_border(cell, **border_kwargs)
+        # Dò tìm các model khả dụng
+        candidates = ["models/gemini-2.0-flash", "models/gemini-2.5-flash", "models/gemini-1.5-flash-latest", "models/gemini-1.5-flash"]
+        try:
+            res_list = requests.get(f"https://generativelanguage.googleapis.com/v1beta/models?key={api_key}", timeout=10)
+            if res_list.status_code == 200:
+                avail = [m["name"] for m in res_list.json().get("models", []) if "generateContent" in m.get("supportedGenerationMethods", [])]
+                if avail:
+                    candidates = [c for c in candidates if c in avail] + candidates
+        except Exception:
+            pass
 
-            doc.add_paragraph()
-
-        for line in lines:
-            line_str = line.strip()
-
-            if line_str.startswith('|') and line_str.endswith('|'):
-                if set(line_str.replace('|', '').strip()) <= {'-', ':', ' '}:
-                    continue
-                cols = [c.strip() for c in line_str.strip('|').split('|')]
-                table_rows.append(cols)
-                in_table = True
+        headers = {"Content-Type": "application/json"}
+        for model in candidates:
+            url = f"https://generativelanguage.googleapis.com/v1beta/{model}:generateContent?key={api_key}"
+            try:
+                res = requests.post(url, headers=headers, json=payload, timeout=90)
+                if res.status_code == 200:
+                    res_json = res.json()
+                    parts = res_json["candidates"][0]["content"]["parts"]
+                    text_content = "".join([p.get("text", "") for p in parts])
+                    return json.loads(text_content.strip())
+            except Exception:
                 continue
-            else:
-                if in_table and table_rows:
-                    build_table(table_rows)
-                    table_rows = []
-                    in_table = False
 
-                if not line_str:
-                    continue
+        raise Exception("Không thể kết nối đến AI để nhận diện tài liệu.")
 
-                if line_str.startswith('# '):
-                    p = doc.add_paragraph()
-                    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                    run = p.add_run(line_str[2:])
-                    run.bold = True
-                    run.font.size = Pt(14)
-                elif line_str.startswith('## '):
-                    p = doc.add_paragraph()
-                    run = p.add_run(line_str[3:])
-                    run.bold = True
-                    run.font.size = Pt(12)
-                elif line_str.startswith('### '):
-                    p = doc.add_paragraph()
-                    run = p.add_run(line_str[4:])
-                    run.bold = True
-                    run.font.size = Pt(11)
+    # Hàm dựng trang Word từ dữ liệu JSON và ảnh gốc
+    def build_word_page(doc, data, pil_page_img):
+        W, H = pil_page_img.size
+
+        # 1. Phần Tiêu đề đầu trang (Quốc hiệu 2 bên - Khung không viền)
+        hl = data.get("header_left", [])
+        hr = data.get("header_right", [])
+        if hl or hr:
+            tbl_head = doc.add_table(rows=1, cols=2)
+            tbl_head.alignment = WD_TABLE_ALIGNMENT.CENTER
+            tbl_head.columns[0].width = Inches(3.2)
+            tbl_head.columns[1].width = Inches(3.8)
+
+            # Cột trái (Cơ quan)
+            c_left = tbl_head.cell(0, 0)
+            p_l = c_left.paragraphs[0]
+            for idx, line in enumerate(hl):
+                if idx > 0: p_l = c_left.add_paragraph()
+                format_para(p_l, WD_ALIGN_PARAGRAPH.CENTER, space_after=1)
+                r = p_l.add_run(line.replace("**", "").replace("*", ""))
+                r.bold = True
+                r.font.name = "Times New Roman"
+                r.font.size = Pt(10.5)
+
+            # Cột phải (Quốc hiệu / Ngày tháng)
+            c_right = tbl_head.cell(0, 1)
+            p_r = c_right.paragraphs[0]
+            for idx, line in enumerate(hr):
+                if idx > 0: p_r = c_right.add_paragraph()
+                format_para(p_r, WD_ALIGN_PARAGRAPH.CENTER, space_after=1)
+                clean_text = line.replace("**", "").replace("*", "")
+                r = p_r.add_run(clean_text)
+                r.font.name = "Times New Roman"
+                if "ĐẢNG" in clean_text or "CỘNG HÒA" in clean_text:
+                    r.bold = True
+                    r.font.size = Pt(10.5)
                 else:
-                    p = doc.add_paragraph()
-                    run = p.add_run(line_str)
-                    run.font.size = Pt(11)
+                    r.italic = True
+                    r.font.size = Pt(10)
+
+            doc.add_paragraph() # Khoảng trống
+
+        # 2. Tiêu đề chính giữa (DANH SÁCH ĐẢNG VIÊN)
+        title = data.get("title")
+        if title:
+            p_t = doc.add_paragraph()
+            format_para(p_t, WD_ALIGN_PARAGRAPH.CENTER, space_after=8)
+            r_t = p_t.add_run(title.replace("**", "").replace("*", ""))
+            r_t.bold = True
+            r_t.font.name = "Times New Roman"
+            r_t.font.size = Pt(13)
+
+        # 3. Khối Thông tin bên trái + Cắt Mã QR Code bên phải
+        info_text = data.get("info_left")
+        qr_box = data.get("qr_box_2d")
+
+        if info_text or qr_box:
+            tbl_info = doc.add_table(rows=1, cols=2)
+            tbl_info.alignment = WD_TABLE_ALIGNMENT.CENTER
+            tbl_info.columns[0].width = Inches(5.2)
+            tbl_info.columns[1].width = Inches(1.8)
+
+            c_info = tbl_info.cell(0, 0)
+            p_info = c_info.paragraphs[0]
+            format_para(p_info, WD_ALIGN_PARAGRAPH.LEFT, space_after=3)
+            r_info = p_info.add_run(info_text.replace("**", "").replace("*", "") if info_text else "")
+            r_info.font.name = "Times New Roman"
+            r_info.font.size = Pt(11)
+
+            # Cắt mã QR thật từ ảnh bản scan gốc và nhúng vào cột phải
+            if qr_box and len(qr_box) == 4:
+                ymin, xmin, ymax, xmax = qr_box
+                left = max(0, int(xmin * W / 1000) - 5)
+                top = max(0, int(ymin * H / 1000) - 5)
+                right = min(W, int(xmax * W / 1000) + 5)
+                bottom = min(H, int(ymax * H / 1000) + 5)
+
+                if right > left and bottom > top:
+                    qr_crop = pil_page_img.crop((left, top, right, bottom))
+                    qr_stream = BytesIO()
+                    qr_crop.save(qr_stream, format="PNG")
+                    qr_stream.seek(0)
+
+                    c_qr = tbl_info.cell(0, 1)
+                    p_qr = c_qr.paragraphs[0]
+                    format_para(p_qr, WD_ALIGN_PARAGRAPH.RIGHT, space_after=0)
+                    p_qr.add_run().add_picture(qr_stream, width=Inches(1.5))
+
+            p_sp = doc.add_paragraph()
+            format_para(p_sp, space_after=4)
+
+        # 4. Dựng Bảng Dữ Liệu (Table Thật Có Kẻ Khung)
+        table_data = data.get("table")
+        if table_data and table_data.get("rows"):
+            headers = table_data.get("headers", [])
+            rows = table_data.get("rows", [])
+            cols_cnt = len(headers) if headers else (len(rows[0]) if rows else 0)
+
+            if cols_cnt > 0:
+                all_rows = ([headers] if headers else []) + rows
+                tbl = doc.add_table(rows=len(all_rows), cols=cols_cnt)
+                tbl.alignment = WD_TABLE_ALIGNMENT.CENTER
+
+                # Căn lề từng cột
+                col_widths = [Inches(0.6), Inches(1.5), Inches(2.2), Inches(1.5), Inches(1.2)]
+
+                border_spec = {
+                    'top': {'val': 'single', 'sz': 4, 'color': '000000'},
+                    'bottom': {'val': 'single', 'sz': 4, 'color': '000000'},
+                    'left': {'val': 'single', 'sz': 4, 'color': '000000'},
+                    'right': {'val': 'single', 'sz': 4, 'color': '000000'},
+                }
+
+                for r_idx, r_data in enumerate(all_rows):
+                    for c_idx in range(cols_cnt):
+                        cell = tbl.cell(r_idx, c_idx)
+                        cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
+                        if c_idx < len(col_widths):
+                            cell.width = col_widths[c_idx]
+
+                        val = r_data[c_idx] if c_idx < len(r_data) else ""
+                        p = cell.paragraphs[0]
+                        align = WD_ALIGN_PARAGRAPH.CENTER if (c_idx != 2 and c_idx != 1) else WD_ALIGN_PARAGRAPH.LEFT
+                        if c_idx == 1: align = WD_ALIGN_PARAGRAPH.CENTER
+                        format_para(p, align, space_after=1)
+
+                        run = p.add_run(val.replace("**", "").replace("*", ""))
+                        run.font.name = "Times New Roman"
+                        run.font.size = Pt(10)
+                        if r_idx == 0 and headers:
+                            run.bold = True
+
+                        set_cell_border(cell, **border_spec)
+
+                p_after_t = doc.add_paragraph()
+                format_para(p_after_t, space_after=6)
+
+        # 5. Khối Ký Tên & Chữ Ký Scan (Trang 1 hoặc Trang 2)
+        sigs = data.get("signatures", [])
+        if sigs:
+            tbl_sig = doc.add_table(rows=1, cols=len(sigs))
+            tbl_sig.alignment = WD_TABLE_ALIGNMENT.CENTER
+
+            for s_idx, sig in enumerate(sigs):
+                c_sig = tbl_sig.cell(0, s_idx)
                 
-                if p.runs:
-                    p.runs[0].font.name = "Times New Roman"
+                # Cắt ảnh chữ ký thực tế nếu có
+                sig_box = sig.get("sig_box_2d")
+                if sig_box and len(sig_box) == 4:
+                    ymin, xmin, ymax, xmax = sig_box
+                    s_left = max(0, int(xmin * W / 1000) - 5)
+                    s_top = max(0, int(ymin * H / 1000) - 5)
+                    s_right = min(W, int(xmax * W / 1000) + 5)
+                    s_bottom = min(H, int(ymax * H / 1000) + 5)
 
-        if in_table and table_rows:
-            build_table(table_rows)
+                    if s_right > s_left and s_bottom > s_top:
+                        sig_crop = pil_page_img.crop((s_left, s_top, s_right, s_bottom))
+                        s_stream = BytesIO()
+                        sig_crop.save(s_stream, format="PNG")
+                        s_stream.seek(0)
+                        p_img = c_sig.paragraphs[0]
+                        format_para(p_img, WD_ALIGN_PARAGRAPH.CENTER, space_after=2)
+                        p_img.add_run().add_picture(s_stream, height=Inches(0.9))
 
+                p_role = c_sig.add_paragraph() if (sig_box and len(sig_box) == 4) else c_sig.paragraphs[0]
+                format_para(p_role, WD_ALIGN_PARAGRAPH.CENTER, space_after=2)
+                r_role = p_role.add_run(sig.get("role", "").replace("**", ""))
+                r_role.bold = True
+                r_role.font.name = "Times New Roman"
+                r_role.font.size = Pt(11)
+
+                name = sig.get("name", "")
+                if name:
+                    p_name = c_sig.add_paragraph()
+                    format_para(p_name, WD_ALIGN_PARAGRAPH.CENTER, space_after=1)
+                    r_name = p_name.add_run(name.replace("**", ""))
+                    r_name.bold = True
+                    r_name.font.name = "Times New Roman"
+                    r_name.font.size = Pt(11)
+
+        # 6. Ghi chú chân trang (Footer)
+        footer = data.get("footer")
+        if footer:
+            p_ft = doc.add_paragraph()
+            format_para(p_ft, WD_ALIGN_PARAGRAPH.RIGHT, space_after=0)
+            r_ft = p_ft.add_run(footer.replace("**", "").replace("*", ""))
+            r_ft.font.name = "Times New Roman"
+            r_ft.font.size = Pt(8.5)
+            r_ft.font.color.rgb = RGBColor(128, 128, 128)
+
+    # Nút bấm kích hoạt xử lý
     if uploaded_file:
         file_bytes = uploaded_file.getvalue()
         fname = uploaded_file.name
@@ -1948,30 +2057,20 @@ def app_pdf_image_to_word_advanced():
         if st.button("🚀 Bắt đầu Nhận Dạng & Xuất Word", type="primary"):
             api_key = st.secrets.get("GEMINI_API_KEY", os.environ.get("GEMINI_API_KEY", ""))
             if not api_key:
-                st.error("Chưa cấu hình GEMINI_API_KEY trong file secrets.toml!")
+                st.error("Chưa cấu hình GEMINI_API_KEY trong Streamlit Secrets!")
                 return
 
-            with st.spinner("Đang sử dụng AI đọc từng trang scan và tái tạo bảng biểu..."):
+            with st.spinner("Đang phân tích cấu trúc, bóc tách bảng và cắt mã QR..."):
                 try:
                     doc_out = Document()
 
-                    # Căn lề chuẩn văn bản hành chính (Trái 3cm, Phải 1.5cm, Trên/Dưới 2cm)
-                    for section in doc_out.sections:
-                        section.top_margin = Inches(0.79)
-                        section.bottom_margin = Inches(0.79)
-                        section.left_margin = Inches(1.18)
-                        section.right_margin = Inches(0.59)
+                    # Căn lề chuẩn trang A4 (Trái 3cm, Phải 1.5cm, Trên 2cm, Dưới 2cm)
+                    for sec in doc_out.sections:
+                        sec.top_margin = Inches(0.79)
+                        sec.bottom_margin = Inches(0.79)
+                        sec.left_margin = Inches(1.18)
+                        sec.right_margin = Inches(0.59)
 
-                    prompt = """
-Bạn là chuyên gia số hóa tài liệu hành chính và văn bản. 
-Hãy đọc bức ảnh chụp tài liệu scan này và tái cấu trúc lại toàn bộ nội dung một cách chính xác tuyệt đối:
-1. Đối với các tiêu đề (Quốc hiệu, Tên văn bản, Cơ quan ban hành): ghi rõ ở dạng tiêu đề.
-2. Đối với BẢNG BIỂU (Table): BẮT BUỘC xuất ra ở định dạng Bảng Markdown (| Cột 1 | Cột 2 | ... |), điền đúng tất cả các hàng, cột (STT, Họ tên, Ngày tháng năm, Số hiệu...). Nếu cột chữ ký có ký tên, ghi là '[Đã ký]' hoặc để trống.
-3. Không bỏ sót bất kỳ dòng chữ nào, kể cả ngày tháng năm, số hiệu hoặc dòng ghi chú chân trang.
-4. Chỉ trả về nội dung Markdown thuần, không kèm lời mở đầu hoặc kết thúc.
-"""
-
-                    # Trường hợp PDF scan
                     if fext == "pdf":
                         pdf_doc = fitz.open("pdf", file_bytes)
                         total_p = len(pdf_doc)
@@ -1981,25 +2080,26 @@ Hãy đọc bức ảnh chụp tài liệu scan này và tái cấu trúc lại 
                             page = pdf_doc[p_idx]
                             pix = page.get_pixmap(dpi=200)
                             img_png_bytes = pix.tobytes("png")
+                            pil_page = Image.open(BytesIO(img_png_bytes))
 
-                            md_result = call_gemini_vision_api(api_key, img_png_bytes, prompt)
-                            parse_markdown_to_docx(doc_out, md_result)
+                            # Nhận diện cấu trúc trang qua JSON
+                            layout_data = extract_document_layout_json(api_key, img_png_bytes)
+                            build_word_page(doc_out, layout_data, pil_page)
 
                             if p_idx < total_p - 1:
                                 doc_out.add_page_break()
 
                             progress_bar.progress((p_idx + 1) / total_p)
-
-                    # Trường hợp Ảnh đơn lẻ (PNG/JPG)
                     else:
-                        md_result = call_gemini_vision_api(api_key, file_bytes, prompt)
-                        parse_markdown_to_docx(doc_out, md_result)
+                        pil_page = Image.open(BytesIO(file_bytes))
+                        layout_data = extract_document_layout_json(api_key, file_bytes)
+                        build_word_page(doc_out, layout_data, pil_page)
 
                     out_stream = BytesIO()
                     doc_out.save(out_stream)
 
                     base_name = fname.rsplit('.', 1)[0]
-                    st.success("🎉 Đã bóc tách thành công văn bản và tái tạo bảng Word có thể chỉnh sửa!")
+                    st.success("🎉 Xuất Word thành công! Bố cục chuẩn mực, giữ nguyên mã QR thật và không còn dấu thừa.")
 
                     st.download_button(
                         label="📥 Tải xuống File Word (.docx)",
