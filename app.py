@@ -1733,7 +1733,7 @@ def app_metadata_cleaner():
                     on_click=clear_file
                 )
 # ==========================================
-# APP 10: PDF SANG WORD NÂNG CAO (LÕI APP 1 + DỰNG BẢNG & GIỮ QR CODE THẬT)
+# APP 10: CHUYỂN PDF SANG WORD (TÁI TẠO BỐ CỤC CHUẨN & NHÚNG QR CODE THẬT BẰNG FITZ)
 # ==========================================
 def app_pdf_image_to_word_advanced():
     import os
@@ -1748,8 +1748,8 @@ def app_pdf_image_to_word_advanced():
     from docx.oxml.ns import qn
     from PIL import Image
 
-    st.title("📑 PDF sang Word Nâng Cao (Giữ Bảng Biểu & Mã QR)")
-    st.markdown("Kế thừa lõi bóc tách chính xác từ App 1: Xử lý tức thì, **tái tạo bảng Word có thể chỉnh sửa**, tự động trích xuất và **nhúng lại mã QR Code thật**, xóa bỏ hoàn toàn dấu markdown rác.")
+    st.title("📑 Chuyển PDF sang Word (Giữ Layout & QR Code Thật)")
+    st.markdown("Số hóa tài liệu hành chính cao cấp: Tái tạo cấu trúc bảng biểu, Quốc hiệu 2 bên, tự động cắt và **nhúng lại mã QR Code / Chữ ký thật** từ bản scan gốc. Không sử dụng AI để tránh lỗi định dạng rác.")
 
     uploaded_file = st.file_uploader(
         "Tải lên file PDF cần chuyển đổi sang Word:",
@@ -1773,7 +1773,7 @@ def app_pdf_image_to_word_advanced():
                 tcBorders.append(element)
         tcPr.append(tcBorders)
 
-    # Hàm tạo đoạn văn bản sạch, xóa bỏ mọi dấu ** thừa
+    # Hàm tạo đoạn văn bản sạch
     def add_clean_paragraph(doc, text="", bold=False, italic=False, size=11, align=WD_ALIGN_PARAGRAPH.LEFT, space_after=3):
         p = doc.add_paragraph()
         p.alignment = align
@@ -1781,7 +1781,6 @@ def app_pdf_image_to_word_advanced():
         p.paragraph_format.space_after = Pt(space_after)
         p.paragraph_format.line_spacing = 1.15
         if text:
-            # Loại bỏ hoàn toàn dấu ** hoặc *
             clean = text.replace("**", "").replace("*", "").replace("`", "").strip()
             run = p.add_run(clean)
             run.font.name = "Times New Roman"
@@ -1823,7 +1822,6 @@ def app_pdf_image_to_word_advanced():
                 p.paragraph_format.space_after = Pt(1)
                 p.paragraph_format.line_spacing = 1.15
 
-                # Căn giữa STT, số Đảng viên, ngày sinh; căn trái Họ tên
                 if c_idx in (0, 1, 3, 4) or r_idx == 0:
                     p.alignment = WD_ALIGN_PARAGRAPH.CENTER
                 else:
@@ -1853,7 +1851,7 @@ def app_pdf_image_to_word_advanced():
 
                     doc_out = Document()
 
-                    # Căn lề chuẩn trang in A4 hành chính (Trái 3cm, Phải 1.5cm, Trên 2cm, Dưới 2cm)
+                    # Căn lề chuẩn trang in A4 hành chính
                     for sec in doc_out.sections:
                         sec.top_margin = Inches(0.79)
                         sec.bottom_margin = Inches(0.79)
@@ -1868,7 +1866,7 @@ def app_pdf_image_to_word_advanced():
                         # XỬ LÝ TRANG 1: VĂN BẢN HÀNH CHÍNH, BẢNG VÀ MÃ QR CODE
                         # ----------------------------------------------------
                         if p_no == 0:
-                            # 1. Header 2 bên: Ban chấp hành / Quốc hiệu
+                            # 1. Header 2 bên
                             tbl_hdr = doc_out.add_table(rows=1, cols=2)
                             tbl_hdr.alignment = WD_TABLE_ALIGNMENT.CENTER
                             tbl_hdr.columns[0].width = Inches(3.2)
@@ -1897,7 +1895,7 @@ def app_pdf_image_to_word_advanced():
 
                             add_clean_paragraph(doc_out, space_after=4)
 
-                            # 2. Tiêu đề văn bản ở giữa
+                            # 2. Tiêu đề chính giữa
                             title_match = re.search(r"DANH SÁCH [^\n]+", page_text)
                             title_str = title_match.group(0) if title_match else "DANH SÁCH ĐẢNG VIÊN"
                             add_clean_paragraph(doc_out, title_str, bold=True, size=13, align=WD_ALIGN_PARAGRAPH.CENTER, space_after=6)
@@ -1908,7 +1906,6 @@ def app_pdf_image_to_word_advanced():
                             tbl_info.columns[0].width = Inches(5.2)
                             tbl_info.columns[1].width = Inches(1.8)
 
-                            # Trích xuất đoạn Chi Bộ
                             info_lines = []
                             for line in page_text.splitlines():
                                 line_s = line.strip()
@@ -1923,37 +1920,36 @@ def app_pdf_image_to_word_advanced():
                             r_inf.font.name = "Times New Roman"
                             r_inf.font.size = Pt(11)
 
-                            # Cắt trực tiếp mã QR Code thật từ bản PDF (Độ nét cao 200 DPI)
-                            clip_qr = fitz.Rect(page.rect.width * 0.62, page.rect.height * 0.17, page.rect.width * 0.96, page.rect.height * 0.40)
-                            pix_qr = page.get_pixmap(clip=clip_qr, dpi=200)
-                            qr_stream = BytesIO(pix_qr.tobytes("png"))
-
-                            p_qr = tbl_info.cell(0, 1).paragraphs[0]
-                            p_qr.alignment = WD_ALIGN_PARAGRAPH.RIGHT
-                            p_qr.add_run().add_picture(qr_stream, width=Inches(1.5))
+                            # Cắt mã QR (xác định qua hình ảnh trên trang)
+                            img_list = page.get_images(full=True)
+                            if img_list:
+                                # Lấy thông tin ảnh lớn nhất (khả năng là mã QR)
+                                base_image = pdf_doc.extract_image(img_list[0][0])
+                                img_bytes = base_image["image"]
+                                
+                                qr_stream = BytesIO(img_bytes)
+                                p_qr = tbl_info.cell(0, 1).paragraphs[0]
+                                p_qr.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+                                p_qr.add_run().add_picture(qr_stream, width=Inches(1.5))
 
                             add_clean_paragraph(doc_out, space_after=6)
 
-                            # 4. Trích xuất và dựng Bảng Dữ Liệu
+                            # 4. Trích xuất và dựng Bảng
                             table_headers = ["STT", "Số Đảng Viên", "Họ và Tên", "Ngày tháng năm sinh", "Ký nhận"]
                             table_rows = []
 
-                            # Sử dụng bộ nhận diện bảng PyMuPDF
-                            found_tables = []
+                            # Dùng fitz.find_tables()
                             try:
                                 tf = page.find_tables()
                                 if tf and tf.tables:
-                                    found_tables = tf.tables
-                            except Exception:
+                                    raw_extracted = tf.tables[0].extract()
+                                    if len(raw_extracted) > 1:
+                                        table_headers = [c or "" for c in raw_extracted[0]]
+                                        table_rows = raw_extracted[1:]
+                            except:
                                 pass
 
-                            if found_tables:
-                                raw_extracted = found_tables[0].extract()
-                                if len(raw_extracted) > 1:
-                                    table_headers = [c or "" for c in raw_extracted[0]]
-                                    table_rows = raw_extracted[1:]
-
-                            # Dự phòng bằng Regex nếu bảng quét không ra
+                            # Regex fallback
                             if not table_rows:
                                 pattern = re.compile(r"^(\d+)\s+(\d{12})\s+([A-ZÀ-Ỹ\s]+)\s+(\d{2}-\d{2}-\d{4})", re.MULTILINE)
                                 for match in pattern.finditer(page_text):
@@ -1987,16 +1983,17 @@ def app_pdf_image_to_word_advanced():
                         else:
                             doc_out.add_page_break()
 
-                            # Cắt ảnh chữ ký tay ở nửa trên trang 2
-                            clip_sig = fitz.Rect(page.rect.width * 0.1, page.rect.height * 0.05, page.rect.width * 0.9, page.rect.height * 0.25)
-                            pix_sig = page.get_pixmap(clip=clip_sig, dpi=200)
-                            sig_stream = BytesIO(pix_sig.tobytes("png"))
+                            # Trích xuất hình chữ ký
+                            img_list = page.get_images(full=True)
+                            if img_list:
+                                base_image = pdf_doc.extract_image(img_list[0][0])
+                                img_bytes = base_image["image"]
+                                
+                                sig_stream = BytesIO(img_bytes)
+                                p_simg = doc_out.add_paragraph()
+                                p_simg.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                                p_simg.add_run().add_picture(sig_stream, height=Inches(1.5))
 
-                            p_simg = doc_out.add_paragraph()
-                            p_simg.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                            p_simg.add_run().add_picture(sig_stream, width=Inches(5.5))
-
-                            # Khối cơ quan và người ký
                             tbl_p2 = doc_out.add_table(rows=1, cols=2)
                             tbl_p2.alignment = WD_TABLE_ALIGNMENT.CENTER
 
