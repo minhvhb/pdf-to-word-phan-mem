@@ -255,7 +255,8 @@ app_mode = st.sidebar.radio(
         "💻 6. Chuyên gia Công thức & VBA",
         "🗜️ 7. Nén & Đóng Gói ZIP Gửi Mail",
         "🔄 8. Xoay Trang PDF",
-        "🛡️ 9. Xóa Siêu Dữ Liệu Bảo Mật"
+        "🛡️ 9. Xóa Siêu Dữ Liệu Bảo Mật",
+        "📑 10. PDF/Ảnh sang Word (Giữ Hình Ảnh)"
     ],
     label_visibility="collapsed"
 )
@@ -1732,6 +1733,160 @@ def app_metadata_cleaner():
                     on_click=clear_file
                 )
 # ==========================================
+# ==========================================
+# APP 10: CHUYỂN PDF / ẢNH SANG WORD (GIỮ NGUYÊN HÌNH ẢNH & BỐ CỤC)
+# ==========================================
+def app_pdf_image_to_word_advanced():
+    import os
+    import tempfile
+    from io import BytesIO
+    import fitz
+    from docx import Document
+    from docx.shared import Inches, Pt
+    from PIL import Image
+
+    st.title("📑 Chuyển PDF & Ảnh sang Word (Giữ Nguyên Ảnh & Layout)")
+    st.markdown("Giải pháp nâng cao giúp chuyển đổi tài liệu giữ trọn vẹn **văn bản, bảng biểu, hình vẽ minh họa và ảnh nhúng** sang định dạng Microsoft Word (.docx).")
+
+    tab_pdf, tab_ocr = st.tabs(["📄 PDF sang Word (Giữ Chữ, Ảnh & Bảng)", "🖼️ PDF Scan / Ảnh sang Word (OCR AI)"])
+
+    # ----------------------------------------------------------------------
+    # TAB 1: PDF SANG WORD GIỮ NGUYÊN BỐ CỤC & HÌNH ẢNH (ENGINE PDF2DOCX)
+    # ----------------------------------------------------------------------
+    with tab_pdf:
+        st.subheader("Chuyển đổi PDF đa phương tiện sang Word")
+        st.caption("Thích hợp cho các file PDF báo cáo, tài liệu kỹ thuật có chèn biểu đồ, hình ảnh hoặc bảng số liệu.")
+
+        uploaded_pdf = st.file_uploader(
+            "Tải lên file PDF cần chuyển đổi:",
+            type=["pdf"],
+            key=f"app10_pdf_{st.session_state.uploader_key}"
+        )
+
+        if uploaded_pdf:
+            st.info(f"📄 Đã nạp file: **{uploaded_pdf.name}** ({len(uploaded_pdf.getvalue()) / (1024*1024):.2f} MB)")
+
+            if st.button("🚀 Bắt đầu Chuyển Đổi sang Word (.docx)", type="primary", key="btn_convert_pdf10"):
+                with st.spinner("Đang phân tích bố cục, trích xuất text, bảng biểu và hình ảnh..."):
+                    try:
+                        from pdf2docx import Converter
+
+                        # Tạo file tạm thời trên ổ đĩa để thư viện xử lý tối ưu bộ nhớ
+                        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_pdf:
+                            tmp_pdf.write(uploaded_pdf.getvalue())
+                            tmp_pdf_path = tmp_pdf.name
+
+                        tmp_docx_path = tmp_pdf_path.replace(".pdf", ".docx")
+
+                        # Tiến hành phân tích layout và chuyển đổi
+                        cv = Converter(tmp_pdf_path)
+                        cv.convert(tmp_docx_path, start=0, end=None)
+                        cv.close()
+
+                        # Đọc kết quả đầu ra
+                        with open(tmp_docx_path, "rb") as f:
+                            docx_bytes = f.read()
+
+                        # Dọn dẹp tệp tạm
+                        if os.path.exists(tmp_pdf_path):
+                            os.remove(tmp_pdf_path)
+                        if os.path.exists(tmp_docx_path):
+                            os.remove(tmp_docx_path)
+
+                        out_name = uploaded_pdf.name.rsplit('.', 1)[0] + ".docx"
+                        st.success("🎉 Chuyển đổi hoàn tất! File Word đã giữ nguyên hình ảnh, bảng và định dạng văn bản.")
+
+                        st.download_button(
+                            label=f"📥 Tải xuống {out_name}",
+                            data=docx_bytes,
+                            file_name=out_name,
+                            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                            on_click=clear_file
+                        )
+                    except Exception as e:
+                        st.error(f"Lỗi trong quá trình chuyển đổi: {e}")
+
+    # ----------------------------------------------------------------------
+    # TAB 2: PDF SCAN HOẶC ẢNH SANG WORD (BÓC TÁCH BẰNG AI & NHÚNG ẢNH GỐC)
+    # ----------------------------------------------------------------------
+    with tab_ocr:
+        st.subheader("Chuyển đổi PDF Scan / File Ảnh chụp sang Word")
+        st.caption("Áp dụng cho tài liệu scan máy photo hoặc ảnh chụp (.png, .jpg) gồm cả chữ và sơ đồ.")
+
+        uploaded_scan = st.file_uploader(
+            "Tải lên file Ảnh hoặc PDF Scan:",
+            type=["pdf", "png", "jpg", "jpeg"],
+            key=f"app10_ocr_{st.session_state.uploader_key}"
+        )
+
+        if uploaded_scan:
+            fname = uploaded_scan.name
+            fext = fname.rsplit('.', 1)[-1].lower()
+
+            if st.button("🚀 Bóc Tách Văn Bản & Tạo File Word", type="primary", key="btn_convert_ocr10"):
+                with st.spinner("Đang xử lý hình ảnh và bóc tách nội dung chi tiết..."):
+                    try:
+                        import google.generativeai as genai
+
+                        # Cấu hình API Key (Lấy từ st.secrets hoặc biến môi trường)
+                        api_key = st.secrets.get("GEMINI_API_KEY", os.environ.get("GEMINI_API_KEY", ""))
+                        if not api_key:
+                            st.error("Chưa cấu hình GEMINI_API_KEY trong Streamlit Secrets!")
+                            return
+
+                        genai.configure(api_key=api_key)
+                        model = genai.GenerativeModel("gemini-2.5-flash")
+
+                        doc_out = Document()
+                        doc_out.add_heading(f"TÀI LIỆU CHUYỂN ĐỔI: {fname}", level=1)
+
+                        # Trường hợp đầu vào là PDF Scan: Lấy từng trang làm ảnh để phân tích
+                        if fext == "pdf":
+                            pdf_doc = fitz.open("pdf", uploaded_scan.getvalue())
+                            for p_no in range(len(pdf_doc)):
+                                page = pdf_doc[p_no]
+                                pix = page.get_pixmap(dpi=150)
+                                img_bytes = pix.tobytes("png")
+                                pil_img = Image.open(BytesIO(img_bytes))
+
+                                # Gửi ảnh sang Gemini nhận diện toàn bộ văn bản và bảng biểu
+                                prompt = "Hãy bóc tách toàn bộ văn bản và dữ liệu trong trang này một cách chính xác tuyệt đối. Giữ nguyên tiêu đề, cấu trúc các mục và bảng biểu nếu có."
+                                response = model.generate_content([prompt, pil_img])
+
+                                doc_out.add_heading(f"Trang {p_no + 1}", level=2)
+                                doc_out.add_paragraph(response.text)
+                                doc_out.add_page_break()
+
+                        # Trường hợp đầu vào là File Ảnh đơn lẻ (.png, .jpg)
+                        else:
+                            pil_img = Image.open(uploaded_scan)
+                            prompt = "Hãy bóc tách toàn bộ văn bản và dữ liệu trong bức ảnh này một cách chính xác tuyệt đối. Giữ nguyên cấu trúc các mục, bảng biểu."
+                            response = model.generate_content([prompt, pil_img])
+
+                            # Chèn ảnh gốc lên đầu làm đối chứng
+                            img_stream = BytesIO()
+                            pil_img.save(img_stream, format="PNG")
+                            img_stream.seek(0)
+                            doc_out.add_picture(img_stream, width=Inches(6.0))
+
+                            doc_out.add_heading("Nội Dung Văn Bản Trích Xuất:", level=2)
+                            doc_out.add_paragraph(response.text)
+
+                        out_docx = BytesIO()
+                        doc_out.save(out_docx)
+
+                        st.success("🎉 Bóc tách thành công văn bản và tạo tài liệu Word hoàn chỉnh!")
+                        st.download_button(
+                            label="📥 Tải xuống File Word (.docx)",
+                            data=out_docx.getvalue(),
+                            file_name=f"OCR_{fname.rsplit('.', 1)[0]}.docx",
+                            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                            on_click=clear_file
+                        )
+
+                    except Exception as e:
+                        st.error(f"Lỗi xử lý OCR: {e}")
+# ==========================================                        
 # 5. KÍCH HOẠT ỨNG DỤNG THEO LỰA CHỌN MENU
 # ==========================================
 if "1. PDF sang Word" in app_mode:
@@ -1752,3 +1907,5 @@ elif "8. Xoay Trang PDF" in app_mode:
     app_rotate_pdf()
 elif "9. Xóa Siêu Dữ Liệu" in app_mode:
     app_metadata_cleaner()
+elif "10. PDF/Ảnh sang Word" in app_mode:
+    app_pdf_image_to_word_advanced()
