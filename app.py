@@ -16,7 +16,6 @@ import pandas as pd
 from io import BytesIO
 import json
 import openpyxl
-import random
 from openpyxl.styles import Font, Alignment, Border, Side
 from openpyxl.cell.rich_text import CellRichText, TextBlock
 from openpyxl.cell.text import InlineFont
@@ -26,9 +25,6 @@ from docx import Document
 from docx.shared import Pt, Mm, Cm, RGBColor
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.enum.section import WD_ORIENT
-from docx.enum.table import WD_ALIGN_VERTICAL, WD_ROW_HEIGHT_RULE
-from docx.oxml import OxmlElement, parse_xml
-from docx.oxml.ns import qn, nsdecls
 from PIL import Image
 from pypdf import PdfReader, PdfWriter, Transformation
 import difflib
@@ -52,89 +48,262 @@ def clear_file():
     st.session_state.uploader_key += 1
 
 # ==========================================
-# HÀM LẤY API KEY NGẪU NHIÊN TỪ SECRETS (TỰ ĐỘNG LỌC KEY LỖI)
+# 0. HẠ TẦNG GỌI GEMINI: NHIỀU API KEY XOAY VÒNG + TỰ ĐỔI MODEL FLASH
 # ==========================================
-def get_api_key():
-    try:
-        keys = st.secrets.get("GEMINI_API_KEYS", [])
-        if isinstance(keys, str):
-            keys = [k.strip() for k in keys.split(',')]
-            
-        # Bộ lọc an toàn: Chỉ chấp nhận các Key bắt đầu bằng "AIza" và dọn dẹp khoảng trắng
-        valid_keys = [k.strip() for k in keys if isinstance(k, str) and k.strip().startswith("AIza")]
-        
-        if not valid_keys:
-            single_key = str(st.secrets.get("GEMINI_API_KEY", "")).strip()
-            if single_key.startswith("AIza"):
-                valid_keys = [single_key]
-            else:
-                raise KeyError
-                
-        return random.choice(valid_keys)
-    except KeyError:
-        st.error("⚠️ Hệ thống chưa tìm thấy cấu hình API Key hợp lệ (phải bắt đầu bằng AIza). Vui lòng kiểm tra lại file secrets.toml!")
-        st.stop()
+import threading
+from datetime import datetime, timedelta
 
-# ==========================================
-# 0. HÀM GỌI AI THÔNG MINH (CHỐNG TREO & CHỐNG SẬP MẠNG)
-# ==========================================
-def call_gemini_smart(client, contents_payload):
-    models_to_try = [
-        "gemini-3.8-flash",
-        "gemini-3.6-flash",
-        "gemini-1.5-flash"
-    ]
-    last_err = None
-    for model_name in models_to_try:
-        for attempt in range(2): 
-            try:
-                response = client.models.generate_content(
-                    model=model_name,
-                    contents=contents_payload
-                )
-                return response
-            except Exception as e:
-                err_msg = str(e).lower()
-                last_err = e
-                # Nếu model bị khóa/không tồn tại -> Đổi model ngay lập tức
-                if "not found" in err_msg or "404" in err_msg or "no longer available" in err_msg:
-                    break 
-                # Nếu chạm trần (429) -> Ngủ 3 giây rồi thử LẠI model NÀY
-                if any(x in err_msg for x in ['429', 'quota', 'exhausted']):
-                    time.sleep(3)
-                    continue
-                # Nếu máy chủ bận (503) -> Ngủ 2 giây rồi thử LẠI model NÀY
-                if any(x in err_msg for x in ['503', 'unavailable', 'overloaded', 'high demand']):
-                    time.sleep(2)
-                    continue
-                break 
-    raise last_err
+# Thứ tự ưu tiên model (chất lượng cao -> nhẹ hơn, hạn mức riêng). Có thể ghi đè trong Secrets bằng GEMINI_MODELS.
+GEMINI_DEFAULT_MODELS = ["gemini-3.6-flash", "gemini-2.5-flash", "gemini-2.5-flash-lite"]
+
+
+def _read_gemini_keys():
+    """Đọc danh sách key từ Secrets: GEMINI_API_KEYS (danh sách hoặc chuỗi) hoặc GEMINI_API_KEY (1 key)."""
+    raw = None
+    try:
+        raw = st.secrets.get("GEMINI_API_KEYS", None)
+        if raw is None:
+            raw = st.secrets.get("GEMINI_API_KEY", None)
+    except Exception:
+        raw = None
+    if raw is None:
+        raw = os.environ.get("GEMINI_API_KEYS") or os.environ.get("GEMINI_API_KEY")
+    if raw is None:
+        return []
+    items = re.split(r"[,\s;]+", raw) if isinstance(raw, str) else [str(x) for x in list(raw)]
+    keys = []
+    for k in items:
+        k = k.strip().strip("\"'")
+        if k and k not in keys:
+            keys.append(k)
+    return keys
+
+
+def _next_quota_reset_ts():
+    """Hạn mức theo ngày của Gemini API reset lúc 0h giờ Thái Bình Dương (Pacific)."""
+    try:
+        from zoneinfo import ZoneInfo
+        n = datetime.now(ZoneInfo("America/Los_Angeles"))
+        return (n + timedelta(days=1)).replace(hour=0, minute=0, second=5, microsecond=0).timestamp()
+    except Exception:
+        return time.time() + 3 * 3600
+
+
+def _fmt_ts(ts):
+    try:
+        from zoneinfo import ZoneInfo
+        return datetime.fromtimestamp(ts, ZoneInfo("Asia/Ho_Chi_Minh")).strftime("%H:%M %d/%m")
+    except Exception:
+        return datetime.fromtimestamp(ts).strftime("%H:%M %d/%m")
+
+
+class GeminiKeyPool:
+    """
+    Dùng chung cho mọi người dùng/phiên của ứng dụng. Với mỗi lần gọi:
+      for model (ưu tiên cao -> thấp): for key (lần lượt): thử; lỗi hạn mức -> khoá tạm (key, model) rồi sang key kế.
+    Hết key ở model này mới hạ xuống model flash kế tiếp. Lỗi tạm thời ngắn (<=30s) thì chờ rồi thử lại.
+    """
+
+    def __init__(self, keys, models, mode="sequential"):
+        self.keys, self.models, self.mode = list(keys), list(models), mode
+        self.lock = threading.Lock()
+        self.blocks = {}                      # (key|None, model|None) -> (đến_lúc, lý_do)
+        self.ok_calls = {k: 0 for k in self.keys}
+        self.rr = 0
+        self._clients = {}
+
+    # ---- client
+    def _client(self, key):
+        c = self._clients.get(key)
+        if c is None:
+            if key.startswith("AQ."):          # key Vertex AI (Express mode)
+                c = genai.Client(vertexai=True, api_key=key)
+            else:
+                c = genai.Client(api_key=key)
+            self._clients[key] = c
+        return c
+
+    # ---- khoá tạm
+    def _block(self, key, model, secs, reason):
+        with self.lock:
+            self.blocks[(key, model)] = (time.time() + secs, reason)
+
+    def _blocked_until(self, key, model, now):
+        with self.lock:
+            ends = [self.blocks[p][0] for p in ((key, None), (key, model), (None, model)) if p in self.blocks]
+        ends = [e for e in ends if e > now]
+        return max(ends) if ends else 0
+
+    def _ordered_keys(self):
+        if self.mode == "round_robin" and len(self.keys) > 1:
+            with self.lock:
+                s = self.rr % len(self.keys)
+                self.rr += 1
+            return self.keys[s:] + self.keys[:s]
+        return list(self.keys)
+
+    def _classify(self, key, model, e):
+        msg = str(e)
+        low = msg.lower()
+        code = getattr(e, "code", None)
+        if not isinstance(code, int):
+            m = re.match(r"\s*(\d{3})\b", msg)
+            code = int(m.group(1)) if m else None
+        if any(x in low for x in ("api_key_invalid", "api key not valid", "permission_denied", "leaked", "suspended",
+                                  "api key expired")) or code in (401, 403):
+            self._block(key, None, 24 * 3600, "Key không hợp lệ/bị khoá")
+            return "retry"
+        if code == 429 or "resource_exhausted" in low:
+            if "perday" in low.replace(" ", "") or "per day" in low:
+                self._block(key, model, max(60, _next_quota_reset_ts() - time.time()), "Hết hạn mức ngày")
+            elif "limit: 0" in low:
+                self._block(key, model, 6 * 3600, "Model không có hạn mức")
+            else:
+                self._block(key, model, 65, "Quá giới hạn/phút")
+            return "retry"
+        if code in (500, 502, 503, 504) or any(x in low for x in ("unavailable", "overloaded", "high demand",
+                                                                  "deadline")):
+            self._block(None, model, 20, "Model quá tải")
+            return "retry"
+        if code == 404 or "not_found" in low or "is not found" in low:
+            self._block(key, model, 3600, "Model không tồn tại với key này")
+            return "retry"
+        return "fatal"                         # lỗi do dữ liệu (file sai định dạng, quá lớn...) -> báo ngay
+
+    def generate(self, contents, config=None):
+        last_err = None
+        for rnd in range(3):
+            soonest = None
+            for model in self.models:
+                for key in self._ordered_keys():
+                    until = self._blocked_until(key, model, time.time())
+                    if until:
+                        w = until - time.time()
+                        soonest = w if soonest is None else min(soonest, w)
+                        continue
+                    try:
+                        kw = {"model": model, "contents": contents}
+                        if config is not None:
+                            kw["config"] = config
+                        resp = self._client(key).models.generate_content(**kw)
+                        with self.lock:
+                            self.ok_calls[key] = self.ok_calls.get(key, 0) + 1
+                        return resp
+                    except Exception as e:
+                        last_err = e
+                        if self._classify(key, model, e) == "fatal":
+                            raise
+            if soonest is not None and soonest <= 30 and rnd < 2:
+                time.sleep(soonest + 0.5)       # chờ khoá ngắn (giới hạn/phút) rồi thử lại
+                continue
+            break
+        nxt = self.next_available()
+        hint = f" Dự kiến có lại khoảng {_fmt_ts(nxt)}." if nxt else ""
+        raise RuntimeError("Tất cả API key/model Gemini đang hết hạn mức hoặc quá tải." + hint +
+                           " Vui lòng thử lại sau hoặc báo Quản trị viên bổ sung key. "
+                           f"(Lỗi cuối: {str(last_err)[:200]})")
+
+    def next_available(self):
+        now = time.time()
+        best = None
+        for model in self.models:
+            for key in self.keys:
+                u = self._blocked_until(key, model, now)
+                if not u:
+                    return None
+                best = u if best is None else min(best, u)
+        return best
+
+    def snapshot(self):
+        now = time.time()
+        with self.lock:
+            items = [(p, v) for p, v in self.blocks.items() if v[0] > now]
+            calls = dict(self.ok_calls)
+        out = []
+        for k in self.keys:
+            bl = [(p[1] or "toàn bộ", v[0], v[1]) for p, v in items if p[0] == k]
+            out.append({"key": "…" + k[-4:], "ok": calls.get(k, 0), "blocks": bl})
+        mod = [(p[1], v[0], v[1]) for p, v in items if p[0] is None]
+        return out, mod
+
+
+@st.cache_resource(show_spinner=False)
+def _build_gemini_pool(keys, models, mode):
+    return GeminiKeyPool(keys, models, mode)
+
+
+def get_gemini_pool():
+    keys = _read_gemini_keys()
+    if not keys:
+        return None
+    try:
+        models = list(st.secrets.get("GEMINI_MODELS", GEMINI_DEFAULT_MODELS))
+    except Exception:
+        models = list(GEMINI_DEFAULT_MODELS)
+    try:
+        mode = str(st.secrets.get("GEMINI_KEY_MODE", "sequential")).lower()
+    except Exception:
+        mode = "sequential"
+    return _build_gemini_pool(tuple(keys), tuple(models), mode)
+
+
+def require_gemini_key():
+    """Dùng ở đầu mỗi công cụ cần AI: dừng trang nếu chưa cấu hình key, trả về key đầu tiên (chỉ để khởi tạo client)."""
+    keys = _read_gemini_keys()
+    if not keys:
+        st.error("⚠️ Hệ thống chưa được cấu hình API Key (GEMINI_API_KEYS). Vui lòng liên hệ Quản trị viên!")
+        st.stop()
+    return keys[0]
+
+
+def call_gemini_smart(client, contents_payload, config=None):
+    """
+    Giữ nguyên tên/cách gọi cũ nhưng nay đi qua kho nhiều key: tự xoay key khi hết hạn mức,
+    tự hạ xuống model flash kế tiếp, chờ khi chỉ bị giới hạn theo phút. (Tham số client được bỏ qua.)
+    """
+    pool = get_gemini_pool()
+    if pool is None:
+        raise RuntimeError("Chưa cấu hình GEMINI_API_KEYS trong Secrets.")
+    return pool.generate(contents_payload, config)
+
+
+def render_gemini_status():
+    """Bảng theo dõi key cho Quản trị viên (hiện ở thanh bên)."""
+    pool = get_gemini_pool()
+    with st.sidebar.expander("🔑 Trạng thái API Key (Admin)"):
+        if pool is None:
+            st.error("Chưa có key nào trong Secrets.")
+            return
+        st.caption(f"{len(pool.keys)} key • Model ưu tiên: {' → '.join(pool.models)} • Chế độ: {pool.mode}")
+        keys, models_blocked = pool.snapshot()
+        for k in keys:
+            st.markdown(f"**{k['key']}** — {'🟢 sẵn sàng' if not k['blocks'] else '🟠 có khoá tạm'} • đã dùng {k['ok']} lượt")
+            for scope, until, why in k["blocks"]:
+                st.caption(f"• {scope}: {why}, đến {_fmt_ts(until)}")
+        for m, until, why in models_blocked:
+            st.caption(f"Model {m}: {why}, đến {_fmt_ts(until)}")
+        st.caption("Số lượt chỉ tính từ lúc ứng dụng khởi động lại gần nhất.")
 
 # ==========================================
 # 1. ĐỌC DỮ LIỆU TÀI KHOẢN VÀ ĐĂNG NHẬP
 # ==========================================
-try:
-    with open('config.yaml', 'r', encoding='utf-8') as file:
-        config = yaml.load(file, Loader=SafeLoader)
+with open('config.yaml', 'r', encoding='utf-8') as file:
+    config = yaml.load(file, Loader=SafeLoader)
 
-    stauth.Hasher.hash_passwords(config['credentials'])
+stauth.Hasher.hash_passwords(config['credentials'])
 
-    authenticator = stauth.Authenticate(
-        config['credentials'],
-        config['cookie']['name'],
-        config['cookie']['key'],
-        config['cookie']['expiry_days']
-    )
-except Exception as e:
-    st.error("Lỗi đọc file cấu hình config.yaml. Vui lòng kiểm tra lại file!")
-    st.stop()
+authenticator = stauth.Authenticate(
+    config['credentials'],
+    config['cookie']['name'],
+    config['cookie']['key'],
+    config['cookie']['expiry_days']
+)
 
 # ==========================================
 # 2. GIAO DIỆN TRANG ĐĂNG NHẬP
 # ==========================================
 if st.session_state.get("authentication_status") != True:
-    st.markdown(
-        """
+    st.markdown("""
         <style>
             .stApp {
                 background-image: url("https://images.unsplash.com/photo-1477414348463-c0eb7f1359b6?q=80&w=2070&auto=format&fit=crop");
@@ -222,32 +391,29 @@ if st.session_state.get("authentication_status") != True:
                 margin-top: 15px;
             }
         </style>
-        """,
-        unsafe_allow_html=True
-    )
+    """, unsafe_allow_html=True)
 
-    authenticator.login(
-        location='main',
-        fields={
-            'Form name': 'CÔNG CỤ VĂN PHÒNG NMTLBT CRAVEN A',
-            'Username': 'Tên đăng nhập',
-            'Password': 'Mật khẩu',
-            'Login': 'ĐĂNG NHẬP'
-        }
-    )
+authenticator.login(
+    location='main',
+    fields={
+        'Form name': 'CÔNG CỤ VĂN PHÒNG NMTLBT CRAVEN A',
+        'Username': 'Tên đăng nhập',
+        'Password': 'Mật khẩu',
+        'Login': 'ĐĂNG NHẬP'
+    }
+)
 
-    if st.session_state.get("authentication_status") == False:
-        st.error('Tên đăng nhập hoặc mật khẩu không đúng!')
-        st.stop()
-    elif st.session_state.get("authentication_status") == None:
-        st.warning('Vui lòng đăng nhập để sử dụng công cụ')
-        st.stop()
+if st.session_state["authentication_status"] == False:
+    st.error('Tên đăng nhập hoặc mật khẩu không đúng!')
+    st.stop()
+elif st.session_state["authentication_status"] == None:
+    st.warning('Vui lòng đăng nhập để sử dụng công cụ')
+    st.stop()
 
 # ==========================================
 # 3. GIAO DIỆN THANH BÊN (SIDEBAR) TỐI ƯU
 # ==========================================
-st.markdown(
-    """
+st.markdown("""
     <style>
         [data-testid="stSidebarUserContent"] { 
             padding-top: 1rem !important; 
@@ -272,9 +438,7 @@ st.markdown(
             border: 1px solid #f5c2c7;
         }
     </style>
-    """,
-    unsafe_allow_html=True
-)
+""", unsafe_allow_html=True)
 
 col1, col2, col3 = st.sidebar.columns([1, 2, 1])
 with col2:
@@ -295,37 +459,34 @@ app_mode = st.sidebar.radio(
         "💻 6. Chuyên gia Công thức & VBA",
         "🗜️ 7. Nén & Đóng Gói ZIP Gửi Mail",
         "🔄 8. Xoay Trang PDF",
-        "🛡️ 9. Xóa Siêu Dữ Liệu Bảo Mật",
-        "📑 10. PDF Scan / Ảnh sang Word"
+        "🛡️ 9. Xóa Siêu Dữ Liệu Bảo Mật"
     ],
     label_visibility="collapsed"
 )
 st.sidebar.markdown("---") 
 
-st.sidebar.markdown(
-    """
+st.sidebar.markdown("""
     <div class="custom-alert">
-        <b>⚠️ NGUYÊN TẮC SỬ DỤNG</b><br>
+        <b>⚠️ NGUYÊN TẮC SỬ DỤNG:</b><br>
         <b>- Bảo mật:</b> KHÔNG tải lên tài liệu MẬT, TỐI MẬT, dữ liệu tài chính chưa công khai.<br>
         <b>- Tối ưu:</b> Chỉ tải file PDF <b>dưới 30 trang/lần</b>.
     </div>
-    """, 
-    unsafe_allow_html=True
-)
+""", unsafe_allow_html=True)
 
 st.sidebar.markdown("---")
-st.sidebar.markdown(
-    """
+st.sidebar.markdown("""
     <div style="text-align: center; font-size: 12px; color: #666; margin-top: 10px; line-height: 1.5;">
         <b>BỘ CÔNG CỤ VĂN PHÒNG</b><br>
-        Phiên bản 1.0.0<br>
+        Phiên bản: 1.0.0<br>
         Phát triển: Vũ Huỳnh Bình Minh<br>
         Nhân viên nghiệp vụ - Phòng Nghiệp vụ<br>
         © 2026 NMTLBT Craven "A"
     </div>
-    """, 
-    unsafe_allow_html=True
-)
+""", unsafe_allow_html=True)
+
+
+if st.session_state.get("username") == "admin":
+    render_gemini_status()
 
 # ==========================================
 # 4. CÁC HÀM XỬ LÝ CHỨC NĂNG CỦA ỨNG DỤNG
@@ -364,14 +525,14 @@ def clean_tags_and_align(text, paragraph, default_align):
     return text_clean
 
 def app_pdf_to_word():
-    api_key_input = get_api_key()
+    api_key_input = require_gemini_key()
 
     st.title("📄 Ứng dụng Chuyển đổi PDF & Ảnh sang Word")
     
-    uploaded_file = st.file_uploader("Tải lên file ảnh (JPG, PNG) hoặc PDF", type=['jpg', 'jpeg', 'png', 'pdf'], key=f"app1_{st.session_state.uploader_key}")
+    uploaded_file = st.file_uploader("Tải lên file ảnh (JPG, PNG) hoặc PDF:", type=["jpg", "jpeg", "png", "pdf"], key=f"app1_{st.session_state.uploader_key}")
 
     if uploaded_file is not None:
-        st.success(f"Đã tải lên file {uploaded_file.name}")
+        st.success(f"Đã tải lên file: **{uploaded_file.name}**")
         
         if st.button("🚀 Bắt đầu Chuyển đổi", type="primary"):
             with st.spinner("🤖 Đang phân tích lề và vẽ lại bảng biểu phức tạp..."):
@@ -383,30 +544,34 @@ def app_pdf_to_word():
                     client = genai.Client(api_key=api_key_input)
                     with open(temp_input_path, "rb") as f:
                         file_bytes = f.read()
-                    mime_type = "application/pdf" if uploaded_file.name.endswith('.pdf') else "image/jpeg"
+                    mime_type = "application/pdf" if uploaded_file.name.endswith(".pdf") else "image/jpeg"
                     
                     prompt = """
                     NHIỆM VỤ OCR - BẮT BUỘC TUÂN THỦ NGHIÊM NGẶT CÁC QUY TẮC SAU:
 
-                    1. THỂ THỨC VĂN BẢN (QUỐC HIỆU & CHỮ KÝ)
-                       - Phần Quốc hiệu trên cùng (hoặc các khối chữ ký ngang nhau) BẮT BUỘC dùng [HEADER_TABLE] (bảng tàng hình 2 cột) để chia tỷ lệ.
+                    1. THỂ THỨC VĂN BẢN (QUỐC HIỆU & CHỮ KÝ):
+                       - Phần Quốc hiệu trên cùng (hoặc các khối chữ ký ngang nhau): BẮT BUỘC dùng [HEADER_TABLE] (bảng tàng hình 2 cột) để chia tỷ lệ.
                        - Không dùng bảng cho Footer.
 
-                    2. CANH LỀ ĐOẠN VĂN
+                    2. CANH LỀ ĐOẠN VĂN:
                        - Ghi [CENTER] ở đầu dòng cần canh giữa.
                        - Ghi [RIGHT] ở đầu dòng lệch phải.
 
-                    3. ĐỊNH DẠNG CHỮ 
-                       - In đậm: bọc trong ** ** (VD **THÔNG BÁO**). 
-                       - In nghiêng: bọc trong * * (VD *Nơi nhận*).
-                       - Gạch chân: bọc trong <u> và </u>.
+                    3. ĐỊNH DẠNG CHỮ: 
+                       - In đậm -> bọc trong ** (VD: **THÔNG BÁO**). 
+                       - In nghiêng -> bọc trong * (VD: *Nơi nhận:*).
+                       - Gạch chân -> bọc trong <u> và </u>.
 
-                    4. BẢNG BIỂU PHỨC TẠP (QUAN TRỌNG NHẤT)
-                       - Bắt buộc vẽ bằng Markdown (|...|...|).
+                    4. BẢNG BIỂU PHỨC TẠP (QUAN TRỌNG NHẤT):
+                       - Bắt buộc vẽ bằng Markdown (|...|).
                        - TẤT CẢ các dòng trong cùng 1 bảng PHẢI CÓ SỐ LƯỢNG CỘT BẰNG NHAU (cùng số lượng ký tự `|`).
                        - XỬ LÝ Ô GỘP (MERGED CELLS) TRONG BẢN GỐC:
-                         + Gộp ngang (kéo dài sang phải): Ghi chữ vào ô trái cùng, các ô bị gộp phía sau điền CHÍNH XÁC chữ `[MERGE_LEFT]`
-                         + Gộp dọc (kéo dài xuống dưới): Ghi chữ vào ô trên cùng, các ô bị gộp phía dưới điền CHÍNH XÁC chữ `[MERGE_UP]`
+                         + Gộp ngang (kéo dài sang phải): Ghi chữ vào ô trái cùng, các ô bị gộp phía sau điền CHÍNH XÁC chữ: `[MERGE_LEFT]`
+                         + Gộp dọc (kéo dài xuống dưới): Ghi chữ vào ô trên cùng, các ô bị gộp phía dưới điền CHÍNH XÁC chữ: `[MERGE_UP]`
+                       - Ví dụ bảng có tiêu đề gộp:
+                         | STT | TÊN VĂN BẢN | TÌNH TRẠNG HỒ SƠ | [MERGE_LEFT] | [MERGE_LEFT] | [MERGE_LEFT] |
+                         | [MERGE_UP] | [MERGE_UP] | Có | [MERGE_LEFT] | [MERGE_LEFT] | Không có |
+                         | [MERGE_UP] | [MERGE_UP] | Bản chính | Bản sao | Bản photo | [MERGE_UP] |
                        - TUYỆT ĐỐI không để ô trống làm lệch số lượng cột. Dùng `<br>` để xuống dòng trong ô.
 
                     5. KHÔNG sinh ra mã phân trang (Start of Page). KHÔNG dùng mã LaTeX toán học.
@@ -428,7 +593,7 @@ def app_pdf_to_word():
                         else:
                             img = Image.open(BytesIO(file_bytes))
                             is_landscape = img.width > img.height
-                    except Exception:
+                    except Exception as e:
                         is_landscape = False
                     
                     doc = Document()
@@ -509,13 +674,13 @@ def app_pdf_to_word():
                     is_next_table_header = False
 
                     for line in response_text.split('\n'):
-                        line_stripped = re.sub(r'<td>(.*?)</td>', r'\1', line.strip())
+                        line_stripped = re.sub(r'<td[^>]*>', '', line.strip())
                         line_stripped = re.sub(r'</td>', '', line_stripped)
                         
-                        line_stripped = re.sub(r'==\s*Start\s*of\s*Page.*==', '', line_stripped, flags=re.IGNORECASE).strip()
-                        line_stripped = line_stripped.replace('$ge$', '≥').replace('$rightarrow$', '→').replace('$le$', '≤').replace('$Rightarrow$', '⇒').replace('$leftarrow$', '←')
+                        line_stripped = re.sub(r'==\s*(Start|End)\s+of\s+Page.*?==', '', line_stripped, flags=re.IGNORECASE).strip()
+                        line_stripped = line_stripped.replace('$\ge$', '≥').replace('$\rightarrow$', '→').replace('$\le$', '≤').replace('$\Rightarrow$', '⇒').replace('$\leftarrow$', '←')
 
-                        if not line_stripped or line_stripped.startswith('```'):
+                        if not line_stripped or line_stripped.startswith("```"):
                             continue
 
                         if line_stripped == '[HEADER_TABLE]':
@@ -523,7 +688,7 @@ def app_pdf_to_word():
                             continue
 
                         if line_stripped.startswith('|') and line_stripped.endswith('|'):
-                            if re.match(r'^\|[\s\-:]+\|$', line_stripped):
+                            if re.match(r'^[\s\|\-:]+$', line_stripped):
                                 continue
                             
                             cells_data = [cell.strip() for cell in line_stripped.split('|')][1:-1]
@@ -570,10 +735,10 @@ def app_number_2():
     st.title("🖨️ Chuyển PDF về khổ A4")
     st.markdown("Xóa bỏ mọi khung ẩn của bản vẽ cũ, ép lại chính xác thành khổ A4 tiêu chuẩn.")
 
-    uploaded_pdf = st.file_uploader("Tải lên bản vẽ PDF cần xử lý", type=["pdf"], key=f"app2_{st.session_state.uploader_key}")
+    uploaded_pdf = st.file_uploader("Tải lên bản vẽ PDF cần xử lý:", type=["pdf"], key=f"app2_{st.session_state.uploader_key}")
 
     if uploaded_pdf is not None:
-        st.success(f"Đã tải lên file {uploaded_pdf.name}")
+        st.success(f"Đã tải lên file: **{uploaded_pdf.name}**")
         
         if st.button("📏 Chuyển thành A4", type="primary"):
             with st.spinner("Đang truy quét và ghi đè các khung viền ẩn..."):
@@ -658,15 +823,15 @@ def parse_rich_text(text_val, font_name="Times New Roman", size=12):
     return rt
 
 def app_number_3():
-    api_key_input = get_api_key()
+    api_key_input = require_gemini_key()
 
     st.title("📊 Bóc tách PDF/Ảnh sang Excel (Chuẩn A4 & Giữ Định Dạng)")
-    st.markdown("Trích xuất và tự động định dạng giống PDF gốc, ép sẵn khổ in A4 (Ngang/Dọc tự động).")
+    st.markdown("Trích xuất và tự động định dạng giống PDF gốc, ép sẵn khổ in **A4 (Ngang/Dọc tự động)**.")
 
-    uploaded_excel_file = st.file_uploader("Tải lên tài liệu (Ảnh hoặc PDF)", type=["jpg", "jpeg", "png", "pdf"], key=f"app3_{st.session_state.uploader_key}")
+    uploaded_excel_file = st.file_uploader("Tải lên tài liệu (Ảnh hoặc PDF):", type=["jpg", "jpeg", "png", "pdf"], key=f"app3_{st.session_state.uploader_key}")
 
     if uploaded_excel_file is not None:
-        st.success(f"Đã tải lên file {uploaded_excel_file.name}")
+        st.success(f"Đã tải lên file: **{uploaded_excel_file.name}**")
         
         if st.button("🚀 Trích xuất ra Excel", type="primary"):
             with st.spinner("🤖 Vui lòng đợi..."):
@@ -678,14 +843,14 @@ def app_number_3():
                     client = genai.Client(api_key=api_key_input)
                     with open(temp_input_path, "rb") as f:
                         file_bytes = f.read()
-                    mime_type = "application/pdf" if uploaded_excel_file.name.endswith('.pdf') else "image/jpeg"
+                    mime_type = "application/pdf" if uploaded_excel_file.name.endswith(".pdf") else "image/jpeg"
                     
                     prompt = """
                     Bạn là một chuyên gia số hóa tài liệu. Hãy đọc kỹ tài liệu và trả về kết quả DUY NHẤT dưới dạng chuỗi JSON hợp lệ. Không trả lời thêm.
                     
                     LƯU Ý QUAN TRỌNG VỀ ĐỊNH DẠNG:
                     Hãy phân tích và BỌC CÁC CHỮ ĐƯỢC IN ĐẬM trong bản gốc bằng dấu sao kép (**). 
-                    Ví dụ: **Thời gian: 9 giờ ngày 15 tháng 7 năm 2026**
+                    Ví dụ: "- **Thời gian:** 9 giờ ngày 15 tháng 7 năm 2026"
                     
                     Cấu trúc JSON BẮT BUỘC:
                     {
@@ -718,7 +883,7 @@ def app_number_3():
                         else:
                             img = Image.open(BytesIO(file_bytes))
                             is_landscape = img.width > img.height
-                    except Exception:
+                    except Exception as e:
                         is_landscape = False
 
                     raw_text = response.text.strip()
@@ -864,18 +1029,18 @@ def extract_text_from_file(uploaded_file, client):
     return text
 
 def app_document_compare():
-    api_key_input = get_api_key()
+    api_key_input = require_gemini_key()
 
     st.title("🔍 So sánh Văn bản / Hợp đồng")
-    st.markdown("Đối soát độ lệch chữ giữa 2 phiên bản tài liệu. Hỗ trợ đối chiếu chéo Word vs Word, PDF scan vs Word.")
+    st.markdown("Đối soát độ lệch chữ giữa 2 phiên bản tài liệu. Hỗ trợ đối chiếu chéo **Word vs Word**, **PDF scan vs Word**.")
 
     col1, col2 = st.columns(2)
     with col1:
         st.info("📄 BẢN GỐC (V1)")
-        file_v1 = st.file_uploader("Tải lên bản gốc (PDF/Word/Ảnh)", key=f"v1_{st.session_state.uploader_key}")
+        file_v1 = st.file_uploader("Tải lên bản gốc (PDF/Word/Ảnh):", key=f"v1_{st.session_state.uploader_key}")
     with col2:
         st.warning("📝 BẢN ĐỐI TÁC GỬI LẠI (V2)")
-        file_v2 = st.file_uploader("Tải lên bản chỉnh sửa (PDF/Word/Ảnh)", key=f"v2_{st.session_state.uploader_key}")
+        file_v2 = st.file_uploader("Tải lên bản chỉnh sửa (PDF/Word/Ảnh):", key=f"v2_{st.session_state.uploader_key}")
 
     if file_v1 and file_v2:
         if st.button("🔎 Soi Sự Khác Biệt", type="primary"):
@@ -916,15 +1081,14 @@ def app_document_compare():
                     
                     Hãy viết một đoạn văn ngắn gọn đánh giá rủi ro pháp lý/ngữ nghĩa của các điểm khác biệt này.
                     BẮT BUỘC TUÂN THỦ: 
-                    1. TUYỆT ĐỐI KHÔNG dùng ký tự đặc biệt như dấu sao (**), thăng (#), gạch ngang (-), hay bảng biểu (|). 
+                    1. TUYỆT ĐỐI KHÔNG dùng ký tự đặc biệt như dấu sao (*), thăng (#), gạch ngang (-), hay bảng biểu (|). 
                     2. Trả lời bằng văn bản thuần túy (plain text) để đưa trực tiếp vào Word.
                     """
-                    
                     summary_response = call_gemini_smart(
                         client, 
                         [summary_prompt]
                     )
-                    ai_text = summary_response.text.replace('**', '').replace('#', '').replace('`', '').strip()
+                    ai_text = summary_response.text.replace('*', '').replace('#', '').replace('`', '').strip()
 
                     doc_report = Document()
                     
@@ -1038,6 +1202,9 @@ def app_document_compare():
                 except Exception as e:
                     st.error(f"Đã xảy ra lỗi: {e}")
 
+# ==========================================
+# APP 5: CẮT, TRÍCH XUẤT TỔNG HỢP & GHÉP PDF
+# ==========================================
 def app_pdf_split_merge():
     import fitz
     from PIL import Image
@@ -1047,15 +1214,17 @@ def app_pdf_split_merge():
     st.title("✂️ Cắt, Trích Xuất & Ghép Nối PDF")
     st.markdown("Công cụ thao tác PDF toàn diện: Cắt trang trực quan qua ảnh xem trước, rã file hàng loạt (Burst), và ghép nối với khả năng tùy chỉnh thứ tự file linh hoạt.")
 
-    st.markdown(
-        """
+    # CSS căn giữa checkbox: căn ở KHUNG CHA (stElementContainer), không chỉ ở bên trong checkbox
+    st.markdown("""
         <style>
+        /* Khung cha chứa checkbox: căn giữa */
         div[data-testid="stElementContainer"]:has(div[data-testid="stCheckbox"]),
         div.element-container:has(div[data-testid="stCheckbox"]) {
             display: flex !important;
             justify-content: center !important;
             width: 100% !important;
         }
+        /* Checkbox chỉ rộng vừa nội dung để được căn giữa */
         div[data-testid="stCheckbox"] {
             width: auto !important;
         }
@@ -1064,18 +1233,22 @@ def app_pdf_split_merge():
             align-items: center !important;
             justify-content: center !important;
         }
+        /* In đậm nhãn của checkbox */
         div[data-testid="stCheckbox"] label p {
             font-weight: bold !important;
         }
         </style>
-        """, unsafe_allow_html=True)
+    """, unsafe_allow_html=True)
 
     tab_split, tab_merge = st.tabs(["✂️ Cắt Trang & Tách File (Visual Split)", "📑 Ghép Nhiều File PDF (Reorder Merge)"])
 
+    # ----------------------------------------------------
+    # TAB 1: CẮT TRANG VÀ TÁCH FILE TRỰC QUAN (GỘP ĐA FILE)
+    # ----------------------------------------------------
     with tab_split:
         st.subheader("1. Chọn các file PDF cần trích xuất")
         uploaded_split_files = st.file_uploader(
-            "Tải lên một hoặc nhiều file PDF (Hệ thống sẽ trải tất cả các trang ra màn hình)",
+            "Tải lên một hoặc nhiều file PDF (Hệ thống sẽ trải tất cả các trang ra màn hình):",
             type=["pdf"],
             accept_multiple_files=True,
             key=f"app5_split_{st.session_state.uploader_key}"
@@ -1083,18 +1256,21 @@ def app_pdf_split_merge():
 
         if uploaded_split_files:
             try:
+                # Gộp ngầm tất cả các file vào 1 document trong bộ nhớ để trải ra màn hình
                 combined_doc = fitz.open()
                 for f in uploaded_split_files:
                     temp_doc = fitz.open("pdf", f.getvalue())
                     combined_doc.insert_pdf(temp_doc)
                 
                 total_pages = len(combined_doc)
-                st.info(f"📁 Đã tải lên {len(uploaded_split_files)} file. Trải dài tổng cộng {total_pages} trang.")
+                st.info(f"📁 Đã tải lên **{len(uploaded_split_files)} file**. Trải dài tổng cộng: **{total_pages} trang**.")
 
-                sig = "_".join([f.name for f in uploaded_split_files])
+                # Tạo key lưu trạng thái dựa trên danh sách file để không bị loạn khi đổi file
+                sig = "|".join([f.name for f in uploaded_split_files])
                 state_check_key = f"split_selected_{sig}_{st.session_state.uploader_key}"
                 
                 if state_check_key not in st.session_state:
+                    # MẶC ĐỊNH LÀ FALSE (Không chọn trang nào cả)
                     st.session_state[state_check_key] = [False] * total_pages
                     for i in range(total_pages):
                         st.session_state[f"chk_page_{i}_{state_check_key}"] = False
@@ -1105,7 +1281,7 @@ def app_pdf_split_merge():
                     st.markdown("### 👁️ Danh sách trang tổng hợp")
                     st.caption("Tick chọn những trang bạn muốn giữ lại để trích xuất thành 1 file duy nhất.")
                 with col_view2:
-                    grid_cols = st.slider("🔍 Cỡ ảnh (Số trang / hàng)", min_value=1, max_value=4, value=2)
+                    grid_cols = st.slider("🔍 Cỡ ảnh (Số trang / hàng):", min_value=1, max_value=4, value=2, help="Kéo về 1 hoặc 2 để phóng to trang giấy.")
 
                 zoom_mat = 0.8 if grid_cols <= 2 else 0.4
                 mat = fitz.Matrix(zoom_mat, zoom_mat)
@@ -1133,7 +1309,7 @@ def app_pdf_split_merge():
                 with col_act1:
                     st.markdown("#### 🎯 Trích xuất trang đã chọn")
                     selected_indices = [i for i, val in enumerate(st.session_state[state_check_key]) if val]
-                    st.caption(f"Đang chọn {len(selected_indices)}/{total_pages} trang.")
+                    st.caption(f"Đang chọn **{len(selected_indices)}/{total_pages}** trang.")
 
                     if st.button("🚀 Xuất 1 PDF Đã Chọn", type="primary", disabled=(len(selected_indices) == 0)):
                         with st.spinner("Đang trích xuất trang đã chọn..."):
@@ -1147,7 +1323,7 @@ def app_pdf_split_merge():
                             st.download_button(
                                 label="📥 Tải xuống PDF Đã Cắt",
                                 data=out_stream.getvalue(),
-                                file_name="Tai_Lieu_Trich_Xuat.pdf",
+                                file_name="Tai_Lieu_Trich_Xuat_Tong_Hop.pdf",
                                 mime="application/pdf",
                                 on_click=clear_file
                             )
@@ -1178,10 +1354,13 @@ def app_pdf_split_merge():
             except Exception as e:
                 st.error(f"Lỗi khi xử lý file PDF: {e}")
 
+    # ----------------------------------------------------
+    # TAB 2: GHÉP NHIỀU FILE VỚI TÍNH NĂNG ĐỔI THỨ TỰ (REORDER)
+    # ----------------------------------------------------
     with tab_merge:
         st.subheader("2. Tải lên Khay chứa file PDF")
         uploaded_merge_files = st.file_uploader(
-            "Tải lên các file PDF (Có thể tải lên nhiều lần)",
+            "Tải lên các file PDF (Có thể tải lên nhiều lần):",
             type=["pdf"],
             accept_multiple_files=True,
             key=f"app5_merge_{st.session_state.uploader_key}"
@@ -1191,20 +1370,20 @@ def app_pdf_split_merge():
             merge_state_key = f"merge_order_list_{st.session_state.uploader_key}"
             sig_key = f"sig_{merge_state_key}"
 
-            current_sig = "_".join(sorted([f.name for f in uploaded_merge_files]))
+            current_sig = "|".join(sorted([f.name for f in uploaded_merge_files]))
             if sig_key not in st.session_state or st.session_state[sig_key] != current_sig:
                 st.session_state[merge_state_key] = list(uploaded_merge_files)
                 st.session_state[sig_key] = current_sig
 
             st.markdown("### 📋 DANH SÁCH FILE CHỐT ĐỂ GHÉP")
             st.warning("Các file bị xóa ở danh sách dưới đây sẽ KHÔNG được ghép, mặc dù file đó vẫn còn nằm ở Khay tải lên phía trên.")
-            st.info(f"Đang có {len(st.session_state[merge_state_key])} file sẵn sàng. Bấm mũi tên để đổi thứ tự.")
+            st.info(f"Đang có **{len(st.session_state[merge_state_key])} file** sẵn sàng. Bấm mũi tên để đổi thứ tự.")
 
             for i, f in enumerate(st.session_state[merge_state_key]):
                 col_name, col_up, col_down, col_del = st.columns([6, 1.2, 1.2, 1.2])
                 with col_name:
                     file_mb = len(f.getvalue()) / (1024 * 1024)
-                    st.markdown(f"Vị trí {i+1} 📄 `{f.name}` ({file_mb:.2f} MB)")
+                    st.markdown(f"**Vị trí {i+1}:** 📄 `{f.name}` *({file_mb:.2f} MB)*")
                 with col_up:
                     if st.button("⬆️ Lên", key=f"up_{i}_{merge_state_key}", disabled=(i == 0)):
                         st.session_state[merge_state_key][i - 1], st.session_state[merge_state_key][i] = (
@@ -1225,8 +1404,8 @@ def app_pdf_split_merge():
                         st.rerun()
 
             st.markdown("---")
-            merge_name = st.text_input("Tên file PDF sau khi ghép nối", value="Tai_Lieu_Ghep_Tong_Hop.pdf")
-            if not merge_name.lower().endswith('.pdf'):
+            merge_name = st.text_input("Tên file PDF sau khi ghép nối:", value="Tai_Lieu_Ghep_Tong_Hop.pdf")
+            if not merge_name.lower().endswith(".pdf"):
                 merge_name += ".pdf"
 
             if st.button("🚀 Bắt đầu Ghép Nối", type="primary", disabled=(len(st.session_state[merge_state_key]) == 0)):
@@ -1243,7 +1422,7 @@ def app_pdf_split_merge():
                         total_pages_merged = len(merged_doc)
                         merged_size_mb = len(out_merged.getvalue()) / (1024 * 1024)
 
-                        st.success(f"🎉 Ghép thành công {len(st.session_state[merge_state_key])} file thành 1 file duy nhất! (Tổng cộng {total_pages_merged} trang, nặng {merged_size_mb:.2f} MB)")
+                        st.success(f"🎉 Ghép thành công **{len(st.session_state[merge_state_key])} file** thành 1 file duy nhất! (Tổng cộng **{total_pages_merged} trang**, nặng **{merged_size_mb:.2f} MB**)")
                         st.download_button(
                             label=f"📥 Tải xuống {merge_name}",
                             data=out_merged.getvalue(),
@@ -1253,28 +1432,29 @@ def app_pdf_split_merge():
                         )
                     except Exception as e:
                         st.error(f"Lỗi khi ghép các file PDF: {e}")
+                        # ==========================================
 
 def app_excel_expert():
-    api_key_input = get_api_key()
+    api_key_input = require_gemini_key()
 
     st.title("💻 Chuyên gia Công thức & VBA Excel")
     st.markdown("Tải file lên, mô tả bài toán và nhận ngay Công thức hoặc Mã VBA chuẩn xác.")
 
-    uploaded_file = st.file_uploader("Tải lên bảng dữ liệu (Excel/CSV) làm mẫu", type=["csv", "xlsx", "xls"], key=f"app6_{st.session_state.uploader_key}")
+    uploaded_file = st.file_uploader("Tải lên bảng dữ liệu (Excel/CSV) làm mẫu:", type=["csv", "xlsx", "xls"], key=f"app6_{st.session_state.uploader_key}")
     
     if uploaded_file:
-        st.success(f"Đã nạp thành công {uploaded_file.name}")
+        st.success(f"Đã nạp thành công: **{uploaded_file.name}**")
         
         context_str = ""
         try:
             if uploaded_file.name.endswith('.csv'):
                 df = pd.read_csv(uploaded_file, nrows=3)
-                context_str = f"Tên file {uploaded_file.name}\nDữ liệu mẫu (Tiêu đề và 3 dòng đầu)\n{df.to_csv(index=False)}"
+                context_str = f"Tên file: {uploaded_file.name}\nDữ liệu mẫu (Tiêu đề và 3 dòng đầu):\n{df.to_csv(index=False)}"
             else:
                 xls = pd.ExcelFile(uploaded_file)
                 sheet_names = xls.sheet_names
                 df = pd.read_excel(uploaded_file, sheet_name=sheet_names[0], nrows=3)
-                context_str = f"Các sheets có trong file {', '.join(sheet_names)}\nDữ liệu mẫu của sheet đầu tiên (Tiêu đề và 3 dòng đầu)\n{df.to_csv(index=False)}"
+                context_str = f"Các sheets có trong file: {', '.join(sheet_names)}\nDữ liệu mẫu của sheet đầu tiên (Tiêu đề và 3 dòng đầu):\n{df.to_csv(index=False)}"
         except Exception as e:
             st.error(f"Lỗi đọc file mẫu: {e}")
             return
@@ -1296,12 +1476,12 @@ def app_excel_expert():
                 {context_str}
                 
                 YÊU CẦU CỦA NGƯỜI DÙNG:
-                {user_query}
+                "{user_query}"
                 
                 QUY TẮC PHẢN HỒI (BẮT BUỘC TUÂN THỦ):
                 1. Quy tắc Ưu tiên (Formula First): Luôn cố gắng giải quyết bằng Công thức Excel tiêu chuẩn trước. Nếu công thức ngắn và tối ưu, hãy trả về công thức.
-                2. Đo lường độ phức tạp (Chuyển cấp VBA): Nếu bài toán quá khó, cần vòng lặp, cần thao tác qua nhiều sheet, hoặc công thức quá nặng - BẮT BUỘC dùng mã VBA.
-                3. Luật VBA: Nếu dùng VBA, TRƯỚC KHI in mã code, BẮT BUỘC phải in ra dòng cảnh báo này: "Yêu cầu này không thể giải quyết hiệu quả bằng công thức. Hệ thống đề xuất dùng đoạn mã VBA dưới đây để xử lý tự động và nhẹ máy hơn."
+                2. Đo lường độ phức tạp (Chuyển cấp VBA): Nếu bài toán quá khó, cần vòng lặp, cần thao tác qua nhiều sheet, hoặc công thức quá nặng -> BẮT BUỘC dùng mã VBA.
+                3. Luật VBA: Nếu dùng VBA, TRƯỚC KHI in mã code, BẮT BUỘC phải in ra dòng cảnh báo này: "Yêu cầu này không thể giải quyết hiệu quả bằng công thức. Hệ thống đề xuất dùng đoạn mã VBA dưới đây để xử lý tự động và nhẹ máy hơn:".
                 4. Hướng dẫn VBA: NẾU có mã VBA, phải in ra 4 bước hướng dẫn sau ở cuối cùng:
                    - Cách dùng VBA:
                    1. Nhấn Alt + F11 để mở cửa sổ VBA.
@@ -1320,21 +1500,26 @@ def app_excel_expert():
                         [prompt]
                     )
                     
-                    st.info("💡 Kết quả từ AI (Nhấp vào biểu tượng ở góc phải khung code để sao chép)")
+                    st.info("💡 Kết quả từ AI (Nhấp vào biểu tượng ở góc phải khung code để sao chép):")
                     st.markdown(response.text)
                     
                 except Exception as e:
                     st.error(f"Đã xảy ra lỗi AI: {e}")
 
+# ==========================================
+# APP 7: NÉN DUNG LƯỢNG & ĐÓNG GÓI ZIP GỬI MAIL (CỐT LÕI PYMUPDF - TỐI ƯU MÀU SẮC)
+# ==========================================
 def compress_single_image(img_bytes, quality=50, is_color=True):
     try:
         img = Image.open(BytesIO(img_bytes))
         
+        # Xử lý hệ màu theo lựa chọn của người dùng
         if not is_color:
             img = img.convert("L")
         elif img.mode != "RGB":
             img = img.convert("RGB")
             
+        # Thu nhỏ khung hình nếu ảnh quá lớn
         max_dim = int(800 + (quality - 30) * (1600 - 800) / (90 - 30))
         if max(img.width, img.height) > max_dim:
             ratio = max_dim / float(max(img.width, img.height))
@@ -1348,21 +1533,26 @@ def compress_single_image(img_bytes, quality=50, is_color=True):
         return img_bytes
 
 def compress_pdf_extreme(pdf_bytes, quality=50, is_color=True):
+    """Sử dụng PyMuPDF cào bằng trang PDF, tối ưu hóa DPI và giữ nguyên hệ màu RGB"""
     try:
         doc = fitz.open("pdf", pdf_bytes)
         new_pdf = fitz.open()
         
+        # Ép DPI từ 100 (siêu nhẹ) đến 200 (sắc nét) dựa trên thanh trượt
         dpi = int(100 + (quality - 30) * (200 - 100) / (90 - 30))
         
         for page in doc:
             zoom = dpi / 72.0
             mat = fitz.Matrix(zoom, zoom)
             
+            # Khởi tạo bản vẽ với RGB (Màu) hoặc GRAY (Đen trắng)
             c_space = fitz.csRGB if is_color else fitz.csGRAY
             pix = page.get_pixmap(matrix=mat, colorspace=c_space)
             
+            # Ép nén bằng thuật toán phân tích hạt JPEG
             img_bytes = pix.tobytes("jpeg", jpg_quality=quality)
             
+            # Gói lại vào trang PDF mới tinh (loại bỏ hoàn toàn rác mã hóa của máy scan)
             imgdoc = fitz.open("jpeg", img_bytes)
             pdfbytes = imgdoc.convert_to_pdf()
             imgpdf = fitz.open("pdf", pdfbytes)
@@ -1376,10 +1566,10 @@ def compress_pdf_extreme(pdf_bytes, quality=50, is_color=True):
 
 def app_compress_and_zip():
     st.title("🗜️ Nén Dung Lượng & Đóng Gói ZIP Gửi Mail")
-    st.markdown("Tối ưu hóa các file PDF/Ảnh scan nặng, tự động đóng gói toàn bộ vào 1 file .ZIP để gửi email công ty không bị vượt trần 25MB.")
+    st.markdown("Tối ưu hóa các file PDF/Ảnh scan nặng, tự động đóng gói toàn bộ vào 1 file **.ZIP** để gửi email công ty không bị vượt trần 25MB.")
 
     uploaded_files = st.file_uploader(
-        "Tải lên một hoặc nhiều file cần nén và đóng gói (PDF, JPG, PNG, DOCX, XLSX...)",
+        "Tải lên một hoặc nhiều file cần nén và đóng gói (PDF, JPG, PNG, DOCX, XLSX...):",
         accept_multiple_files=True,
         key=f"app7_{st.session_state.uploader_key}"
     )
@@ -1387,18 +1577,19 @@ def app_compress_and_zip():
     if uploaded_files:
         total_orig_bytes = sum(len(f.getvalue()) for f in uploaded_files)
         total_orig_mb = total_orig_bytes / (1024 * 1024)
-        st.info(f"📁 Đã chọn {len(uploaded_files)} file | Tổng dung lượng gốc: {total_orig_mb:.2f} MB")
+        st.info(f"📁 Đã chọn **{len(uploaded_files)} file** | Tổng dung lượng gốc: **{total_orig_mb:.2f} MB**")
 
+        # Giao diện điều khiển mới chia làm 2 cột
         col1, col2 = st.columns(2)
         with col1:
             che_do_mau = st.radio(
-                "Chế độ màu sắc",
+                "Chế độ màu sắc:",
                 ["🌈 Giữ nguyên màu gốc", "🔲 Chuyển Đen Trắng"],
                 help="Chế độ Giữ Màu vẫn ép nén rất tốt. Chỉ dùng Đen Trắng khi bạn cần file đạt mức siêu nhẹ gọn."
             )
         with col2:
             quality = st.slider(
-                "Mức chất lượng nén (Mặc định: 50)",
+                "Mức chất lượng nén (Mặc định 50):",
                 min_value=30,
                 max_value=90,
                 value=50,
@@ -1406,17 +1597,17 @@ def app_compress_and_zip():
                 help="Điều chỉnh thanh trượt càng thấp, cả độ phân giải và chất lượng ảnh sẽ càng được tối ưu nhỏ lại."
             )
         
-        st.markdown(
-        """
-         💡 Bạn hoàn toàn làm chủ độ nét thông qua Thanh trượt chất lượng:
-         - Kéo lên mức 70 - 90: Dành cho các hợp đồng quan trọng, ảnh chụp linh kiện máy móc cần độ nét cao để nghiệm thu (chấp nhận file ZIP đầu ra sẽ nặng hơn một chút).
-         - Để mức 40 - 50: Tối ưu hóa tối đa để đính kèm qua email nội bộ bị giới hạn 25MB.
-        """
-        )
+        # Bổ sung khung hướng dẫn sử dụng chi tiết
+        st.markdown("""
+        > 💡 **Bạn hoàn toàn làm chủ độ nét thông qua Thanh trượt chất lượng:**
+        > - **Kéo lên mức 70 - 90:** Dành cho các hợp đồng quan trọng, ảnh chụp linh kiện máy móc cần độ nét cao để nghiệm thu (chấp nhận file ZIP đầu ra sẽ nặng hơn một chút).
+        > - **Để mức 40 - 50:** Tối ưu hóa tối đa để đính kèm qua email nội bộ bị giới hạn 25MB.
+        """)
 
+        # Biến boolean kiểm tra chế độ màu
         is_color = "🌈" in che_do_mau
 
-        zip_filename = st.text_input("Tên file ZIP xuất ra", value="Tai_Lieu_Gui_Mail.zip")
+        zip_filename = st.text_input("Tên file ZIP xuất ra:", value="Tai_Lieu_Gui_Mail.zip")
         if not zip_filename.lower().endswith(".zip"):
             zip_filename += ".zip"
 
@@ -1427,6 +1618,7 @@ def app_compress_and_zip():
             zip_buffer = BytesIO()
             report_rows = []
 
+            # Sử dụng thuật toán ZipDeflated cấp độ nén cao nhất
             with zipfile.ZipFile(zip_buffer, mode="w", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as zf:
                 for idx, file in enumerate(uploaded_files):
                     fname = file.name
@@ -1434,15 +1626,18 @@ def app_compress_and_zip():
                     raw_bytes = file.getvalue()
                     orig_len = len(raw_bytes)
 
-                    status_text.text(f"Đang xử lý ({idx+1}/{len(uploaded_files)}) {fname}...")
+                    status_text.text(f"Đang xử lý ({idx+1}/{len(uploaded_files)}): {fname}...")
 
+                    # Phân luồng nén
                     if fext == "pdf":
                         processed_bytes = compress_pdf_extreme(raw_bytes, quality=quality, is_color=is_color)
                     elif fext in ["jpg", "jpeg", "png"]:
                         processed_bytes = compress_single_image(raw_bytes, quality=quality, is_color=is_color)
+                        # Đồng nhất định dạng ảnh đầu ra thành JPG để nhẹ gọn nhất
                         if not fname.lower().endswith(".jpg") and not fname.lower().endswith(".jpeg"):
                             fname = f"{fname.rsplit('.', 1)[0]}.jpg"
                     else:
+                        # Giữ nguyên bản gốc đối với các file Word, Excel
                         processed_bytes = raw_bytes
 
                     new_len = len(processed_bytes)
@@ -1465,15 +1660,16 @@ def app_compress_and_zip():
             status_text.empty()
             progress_bar.empty()
 
+            # Hiển thị số liệu trực quan
             col1, col2, col3 = st.columns(3)
             col1.metric("Tổng dung lượng gốc", f"{total_orig_mb:.2f} MB")
             col2.metric("File ZIP hoàn thành", f"{final_zip_mb:.2f} MB")
             col3.metric("Tiết kiệm được", f"{total_saved_pct:.1f}%")
 
             if final_zip_mb <= 25.0:
-                st.success(f"🎉 Siêu nén thành công! File ZIP nặng {final_zip_mb:.2f} MB, hoàn toàn đủ điều kiện gửi email công ty.")
+                st.success(f"🎉 Siêu nén thành công! File ZIP nặng **{final_zip_mb:.2f} MB**, hoàn toàn đủ điều kiện gửi email công ty.")
             else:
-                st.warning(f"⚠️ File ZIP hiện tại nặng {final_zip_mb:.2f} MB (vẫn vượt 25MB). Hãy thử giảm mức chất lượng xuống 30-40% hoặc chọn Đen trắng.")
+                st.warning(f"⚠️ File ZIP hiện tại nặng **{final_zip_mb:.2f} MB** (vẫn vượt 25MB). Hãy thử giảm mức chất lượng xuống 30-40% hoặc chọn Đen trắng.")
 
             st.dataframe(pd.DataFrame(report_rows), use_container_width=True)
 
@@ -1484,25 +1680,29 @@ def app_compress_and_zip():
                 mime="application/zip",
                 on_click=clear_file
             )
-
+# ==========================================
+# ==========================================
+# APP 8: XOAY TÙY Ý TỪNG TRANG & TỰ ĐỘNG GHÉP FILE
+# ==========================================
 def app_rotate_pdf():
     import fitz
     from io import BytesIO
     from PIL import Image
 
     st.title("🔄 Xoay Trang PDF & Ghép File")
-    st.markdown("Tải lên nhiều file PDF, điều chỉnh góc xoay cho từng trang bị ngược. Hệ thống sẽ tự động ghép tất cả lại thành 1 file PDF duy nhất.")
+    st.markdown("Tải lên nhiều file PDF, điều chỉnh góc xoay cho từng trang bị ngược. Hệ thống sẽ tự động ghép tất cả lại thành **1 file PDF duy nhất**.")
 
     uploaded_files = st.file_uploader(
-        "Tải lên các file PDF cần kiểm tra, xoay và ghép", 
+        "Tải lên các file PDF cần kiểm tra, xoay và ghép:", 
         type=["pdf"], 
         accept_multiple_files=True, 
         key=f"app8_{st.session_state.uploader_key}"
     )
 
     if uploaded_files:
-        st.info(f"📁 Đã chọn {len(uploaded_files)} file. Các file sẽ được ghép nối theo đúng thứ tự tải lên.")
+        st.info(f"📁 Đã chọn **{len(uploaded_files)} file**. Các file sẽ được ghép nối theo đúng thứ tự tải lên.")
         
+        # Lặp qua từng file và tạo khung mở rộng riêng
         for file_idx, uploaded_file in enumerate(uploaded_files):
             pdf_bytes = uploaded_file.getvalue()
             
@@ -1511,6 +1711,7 @@ def app_rotate_pdf():
                 num_pages = len(doc)
                 
                 with st.expander(f"📄 File {file_idx + 1}: {uploaded_file.name} ({num_pages} trang)", expanded=True):
+                    # Quản lý bộ nhớ trạng thái xoay riêng cho từng file
                     state_key = f"rotations_{uploaded_file.name}_{st.session_state.uploader_key}"
                     if state_key not in st.session_state:
                         st.session_state[state_key] = {i: 0 for i in range(num_pages)}
@@ -1525,7 +1726,7 @@ def app_rotate_pdf():
                             st.markdown(f"<div style='text-align: center; color: #003366; margin-top: 15px;'><b>Trang {i+1}</b></div>", unsafe_allow_html=True)
                             
                             rot_val = st.selectbox(
-                                "Hướng xoay",
+                                "Hướng xoay:",
                                 options=[0, 90, 180, 270],
                                 index=[0, 90, 180, 270].index(st.session_state[state_key][i]),
                                 format_func=lambda x: "✅ Giữ nguyên" if x == 0 else "↪️ Phải 90°" if x == 90 else "🔃 Ngược 180°" if x == 180 else "↩️ Trái 90°",
@@ -1552,6 +1753,7 @@ def app_rotate_pdf():
         if st.button("🚀 Lưu & Tự Động Ghép File", type="primary"):
             with st.spinner("Đang áp dụng góc xoay và ghép tất cả thành 1 file PDF duy nhất..."):
                 try:
+                    # Khởi tạo một file PDF tổng (rỗng)
                     merged_doc = fitz.open()
                     
                     for file in uploaded_files:
@@ -1563,6 +1765,7 @@ def app_rotate_pdf():
                                 p = out_doc[i]
                                 p.set_rotation((p.rotation + st.session_state[state_key][i]) % 360)
                         
+                        # Chèn file PDF đã xoay vào file tổng
                         merged_doc.insert_pdf(out_doc)
                     
                     out_stream = BytesIO()
@@ -1578,11 +1781,15 @@ def app_rotate_pdf():
                     )
                 except Exception as e:
                     st.error(f"Có lỗi trong quá trình ghép file: {e}")
-
+# ==========================================
+# ==========================================
+# APP 9: XÓA SIÊU DỮ LIỆU (METADATA CLEANER) BẢO MẬT TÀI LIỆU
+# ==========================================
 def clean_pdf_metadata(pdf_bytes):
     import fitz
     from io import BytesIO
     doc = fitz.open("pdf", pdf_bytes)
+    # Gán trắng toàn bộ từ điển Metadata ẩn
     doc.set_metadata({})
     out = BytesIO()
     doc.save(out, garbage=4, deflate=True)
@@ -1626,29 +1833,30 @@ def app_metadata_cleaner():
     from io import BytesIO
 
     st.title("🛡️ Xóa Siêu Dữ Liệu (Metadata) Bảo Mật Tài Liệu")
-    st.markdown("Tự động xóa sạch tên tác giả, người chỉnh sửa cuối cùng, thông tin máy in, phần mềm và lịch sử ẩn bên trong file PDF, Word (.docx), Excel (.xlsx) trước khi gửi ra ngoài.")
+    st.markdown("Tự động xóa sạch tên tác giả, người chỉnh sửa cuối cùng, thông tin máy in, phần mềm và lịch sử ẩn bên trong file **PDF, Word (.docx), Excel (.xlsx)** trước khi gửi ra ngoài.")
 
     uploaded_files = st.file_uploader(
-        "Tải lên các file cần tẩy sạch dữ liệu ẩn (Hỗ trợ PDF, DOCX, XLSX)",
+        "Tải lên các file cần tẩy sạch dữ liệu ẩn (Hỗ trợ PDF, DOCX, XLSX):",
         type=["pdf", "docx", "xlsx"],
         accept_multiple_files=True,
         key=f"app9_{st.session_state.uploader_key}"
     )
 
     if uploaded_files:
-        st.info(f"📁 Đã chọn {len(uploaded_files)} file sẵn sàng làm sạch dữ liệu bảo mật.")
+        st.info(f"📁 Đã chọn **{len(uploaded_files)} file** sẵn sàng làm sạch dữ liệu bảo mật.")
 
         if st.button("🚀 Bắt đầu Tẩy Sạch Dữ Liệu Ẩn", type="primary"):
             progress_bar = st.progress(0)
             status_text = st.empty()
 
+            # Trường hợp 1: Tải lên 1 file -> Trả về đúng định dạng gốc
             if len(uploaded_files) == 1:
                 file = uploaded_files[0]
                 fname = file.name
                 fext = fname.split('.')[-1].lower()
                 raw_bytes = file.getvalue()
 
-                status_text.text(f"Đang làm sạch file {fname}...")
+                status_text.text(f"Đang làm sạch file: {fname}...")
                 try:
                     if fext == "pdf":
                         cleaned_bytes = clean_pdf_metadata(raw_bytes)
@@ -1665,7 +1873,7 @@ def app_metadata_cleaner():
 
                     progress_bar.progress(100)
                     status_text.empty()
-                    st.success(f"🎉 Đã tẩy sạch toàn bộ metadata của file {fname}!")
+                    st.success(f"🎉 Đã tẩy sạch toàn bộ metadata của file **{fname}**!")
 
                     st.download_button(
                         label=f"📥 Tải xuống {fname} (Bản sạch)",
@@ -1677,6 +1885,7 @@ def app_metadata_cleaner():
                 except Exception as e:
                     st.error(f"Lỗi khi xử lý file: {e}")
 
+            # Trường hợp 2: Tải lên nhiều file -> Làm sạch và đóng gói ZIP
             else:
                 zip_buffer = BytesIO()
                 with zipfile.ZipFile(zip_buffer, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
@@ -1685,7 +1894,7 @@ def app_metadata_cleaner():
                         fext = fname.split('.')[-1].lower()
                         raw_bytes = file.getvalue()
 
-                        status_text.text(f"Đang xử lý ({idx+1}/{len(uploaded_files)}) {fname}...")
+                        status_text.text(f"Đang xử lý ({idx+1}/{len(uploaded_files)}): {fname}...")
                         try:
                             if fext == "pdf":
                                 cleaned_bytes = clean_pdf_metadata(raw_bytes)
@@ -1713,277 +1922,9 @@ def app_metadata_cleaner():
                     mime="application/zip",
                     on_click=clear_file
                 )
-
 # ==========================================
-# APP 10: PDF SCAN / ẢNH SANG WORD (CHUẨN HÓA HOÀN TOÀN) - SỬ DỤNG SDK CHÍNH QUY & MULTI-KEY (HỖ TRỢ ĐA TRANG)
+# APP 10: CHUYỂN PDF SCAN SANG WORD (TỰ ĐỘNG SĂN MODEL API + DỰNG LAYOUT CHUẨN)
 # ==========================================
-def app_pdf_image_to_word_advanced():
-    import json
-    from io import BytesIO
-    import fitz
-    from docx import Document
-    from docx.shared import Pt, Inches
-    from docx.enum.text import WD_ALIGN_PARAGRAPH
-    from docx.enum.table import WD_TABLE_ALIGNMENT, WD_ALIGN_VERTICAL
-    from docx.oxml import OxmlElement
-    from docx.oxml.ns import qn
-    from PIL import Image
-
-    st.title("📑 Chuyển PDF Scan sang Word (Chuẩn Hóa Hoàn Toàn)")
-    st.markdown("Sử dụng **Lõi Online (AI OCR)** qua SDK để đọc văn bản chính xác 100% không dính dấu rác, kết hợp thuật toán tự động cắt ảnh mã QR/Chữ ký và dựng bảng Word chuyên nghiệp.")
-
-    uploaded_file = st.file_uploader(
-        "Tải lên file PDF Scan:",
-        type=["pdf"],
-        key=f"app10_online_{st.session_state.uploader_key}"
-    )
-
-    def call_gemini_json_robust(api_key, img_bytes, page_type):
-        client = genai.Client(api_key=api_key)
-        
-        if page_type == 1:
-            schema = '''{
-                "header_left": "Dòng 1\\nDòng 2",
-                "header_right": "Dòng 1\\nDòng 2",
-                "title": "Tiêu đề",
-                "info": "Thông tin...",
-                "table_headers": ["Cột 1", "Cột 2..."],
-                "table_rows": [["Dữ liệu 1", "Dữ liệu 2..."]],
-                "footer_left": "Chữ ký trái...",
-                "footer_right": "Chữ ký phải...",
-                "page_number": "Trang..."
-            }'''
-        else:
-            schema = '''{
-                "footer_left_title": "Chức danh...",
-                "footer_left_name": "Họ tên...",
-                "footer_right_title": "Chức danh...",
-                "footer_right_name": "Họ tên...",
-                "page_number": "2/2..."
-            }'''
-            
-        prompt = f"""
-        Trích xuất văn bản từ ảnh scan này sang JSON.
-        TUYỆT ĐỐI KHÔNG DÙNG DẤU MARKDOWN NHƯ ** HAY *.
-        Bám sát chính xác cấu trúc JSON sau:
-        {schema}
-        Nếu ô nào không có dữ liệu, để chuỗi rỗng "". Trả về thuần JSON, không có văn bản nào khác.
-        """
-        
-        contents = [types.Part.from_bytes(data=img_bytes, mime_type="image/png"), prompt]
-        config = types.GenerateContentConfig(
-            temperature=0.0,
-            response_mime_type="application/json"
-        )
-
-       # CHỈ SỬ DỤNG CÁC MODEL MÀ TÀI KHOẢN CỦA BẠN ĐƯỢC GOOGLE HỖ TRỢ
-        models_to_try = [
-            "gemini-3.8-flash",
-            "gemini-3.6-flash",
-            "gemini-1.5-flash"
-        ]
-        
-        last_err = ""
-        for model in models_to_try:
-            for attempt in range(5): # TĂNG SỐ LẦN THỬ LÊN 5 ĐỂ TRỊ LỖI QUOTA
-                try:
-                    res = client.models.generate_content(
-                        model=model,
-                        contents=contents,
-                        config=config
-                    )
-                    text = res.text.strip()
-                    if text.startswith("```json"): text = text[7:]
-                    if text.startswith("```"): text = text[3:]
-                    if text.endswith("```"): text = text[:-3]
-                    return json.loads(text.strip())
-                except Exception as e:
-                    err_msg = str(e).lower()
-                    last_err = str(e)
-                    
-                    # Lỗi 404: Tên model bị sai/khóa -> Bỏ qua model này ngay
-                    if "404" in err_msg or "not found" in err_msg or "no longer available" in err_msg:
-                        break 
-                    
-                    # Lỗi 429: Gửi trang quá nhanh -> Ngủ hẳn 15 giây để đợi Google nhả block
-                    if any(x in err_msg for x in ['429', 'quota', 'exhausted']):
-                        time.sleep(15) 
-                        continue
-                    
-                    # Lỗi 503: Server bận -> Ngủ 5 giây
-                    if any(x in err_msg for x in ['503', 'unavailable', 'overloaded']):
-                        time.sleep(5)
-                        continue
-                    
-                    # Lỗi JSON (AI xuất sai format) -> Ngủ 2 giây rồi thử lại
-                    time.sleep(2)
-                    continue
-                    
-        raise Exception(f"Hệ thống Google đang chặn do gửi file quá nhanh. Lỗi hệ thống: {last_err}")
-
-    def set_cell_border(cell):
-        tcPr = cell._tc.get_or_add_tcPr()
-        tcBorders = OxmlElement('w:tcBorders')
-        for edge in ('top', 'left', 'bottom', 'right'):
-            element = OxmlElement(f'w:{edge}')
-            element.set(qn('w:val'), 'single')
-            element.set(qn('w:sz'), '4')
-            element.set(qn('w:space'), '0')
-            element.set(qn('w:color'), '000000')
-            tcBorders.append(element)
-        tcPr.append(tcBorders)
-
-    def c_txt(val):
-        if not val: return ""
-        return str(val).replace("**", "").replace("*", "").replace("`", "").strip()
-
-    if uploaded_file:
-        file_bytes = uploaded_file.getvalue()
-        fname = uploaded_file.name
-        st.info(f"📄 Đã nhận: **{fname}** ({len(file_bytes) / 1024:.1f} KB)")
-
-        if st.button("🚀 Bắt đầu Bóc Tách & Dựng Layout Word", type="primary"):
-            api_key_input = get_api_key()
-
-            with st.spinner("Đang sử dụng hệ thống OCR chống treo (Săn Model đa luồng)..."):
-                try:
-                    pdf_doc = fitz.open("pdf", file_bytes)
-                    doc_out = Document()
-
-                    for sec in doc_out.sections:
-                        sec.top_margin = Inches(0.8)
-                        sec.bottom_margin = Inches(0.8)
-                        sec.left_margin = Inches(1.0)
-                        sec.right_margin = Inches(0.6)
-
-                    # --- VÒNG LẶP XỬ LÝ TOÀN BỘ CÁC TRANG TRONG FILE ---
-                    total_pages = len(pdf_doc)
-                    for page_num in range(total_pages):
-                        if page_num > 0:
-                            doc_out.add_page_break()
-
-                        st.toast(f"Đang xử lý trang {page_num + 1}/{total_pages}...")
-                        
-                        page = pdf_doc[page_num]
-                        pix = page.get_pixmap(dpi=200)
-                        img_bytes = pix.tobytes("png")
-                        pil_img = Image.open(BytesIO(img_bytes))
-                        W, H = pil_img.size
-
-                        # Xác định loại trang để cắt ảnh (trang cuối thường chứa chữ ký, các trang khác chứa QR)
-                        page_type = 2 if page_num == total_pages - 1 and total_pages > 1 else 1
-                        
-                        data = call_gemini_json_robust(api_key_input, img_bytes, page_type)
-
-                        if page_type == 1:
-                            t_hdr = doc_out.add_table(rows=1, cols=2)
-                            t_hdr.alignment = WD_TABLE_ALIGNMENT.CENTER
-                            t_hdr.columns[0].width = Inches(3.0)
-                            t_hdr.columns[1].width = Inches(4.0)
-
-                            p_hl = t_hdr.cell(0, 0).paragraphs[0]; p_hl.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                            r_hl = p_hl.add_run(c_txt(data.get("header_left", ""))); r_hl.bold = True; r_hl.font.name = "Times New Roman"; r_hl.font.size = Pt(11)
-
-                            p_hr = t_hdr.cell(0, 1).paragraphs[0]; p_hr.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                            r_hr = p_hr.add_run(c_txt(data.get("header_right", ""))); r_hr.bold = True; r_hr.font.name = "Times New Roman"; r_hr.font.size = Pt(11)
-                            
-                            doc_out.add_paragraph()
-
-                            p_title = doc_out.add_paragraph(); p_title.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                            r_title = p_title.add_run(c_txt(data.get("title", ""))); r_title.bold = True; r_title.font.name = "Times New Roman"; r_title.font.size = Pt(14)
-
-                            t_info = doc_out.add_table(rows=1, cols=2)
-                            t_info.alignment = WD_TABLE_ALIGNMENT.CENTER
-                            t_info.columns[0].width = Inches(5.0)
-                            t_info.columns[1].width = Inches(2.0)
-
-                            p_info = t_info.cell(0, 0).paragraphs[0]; p_info.paragraph_format.line_spacing = 1.15
-                            r_info = p_info.add_run(c_txt(data.get("info", ""))); r_info.font.name = "Times New Roman"; r_info.font.size = Pt(11)
-
-                            # Cắt QR góc trên bên phải
-                            qr_crop = pil_img.crop((int(W * 0.65), int(H * 0.12), int(W * 0.95), int(H * 0.38)))
-                            qr_stream = BytesIO(); qr_crop.save(qr_stream, format="PNG"); qr_stream.seek(0)
-                            
-                            p_qr = t_info.cell(0, 1).paragraphs[0]; p_qr.alignment = WD_ALIGN_PARAGRAPH.RIGHT
-                            p_qr.add_run().add_picture(qr_stream, width=Inches(1.4))
-
-                            doc_out.add_paragraph()
-
-                            headers = data.get("table_headers", [])
-                            rows = data.get("table_rows", [])
-                            if headers and rows:
-                                cols_cnt = len(headers)
-                                tbl = doc_out.add_table(rows=len(rows)+1, cols=cols_cnt)
-                                tbl.alignment = WD_TABLE_ALIGNMENT.CENTER
-                                col_widths = [Inches(0.6), Inches(1.5), Inches(2.2), Inches(1.5), Inches(1.2)]
-
-                                for c_idx, h_text in enumerate(headers):
-                                    cell = tbl.cell(0, c_idx); cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
-                                    if c_idx < len(col_widths): cell.width = col_widths[c_idx]
-                                    p = cell.paragraphs[0]; p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                                    r = p.add_run(c_txt(h_text)); r.bold = True; r.font.name = "Times New Roman"; r.font.size = Pt(11)
-                                    set_cell_border(cell)
-
-                                for r_idx, row_data in enumerate(rows):
-                                    for c_idx in range(cols_cnt):
-                                        cell = tbl.cell(r_idx + 1, c_idx); cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
-                                        if c_idx < len(col_widths): cell.width = col_widths[c_idx]
-                                        
-                                        val = row_data[c_idx] if c_idx < len(row_data) else ""
-                                        p = cell.paragraphs[0]; p.alignment = WD_ALIGN_PARAGRAPH.CENTER if c_idx != 2 else WD_ALIGN_PARAGRAPH.LEFT
-                                        r = p.add_run(c_txt(val)); r.font.name = "Times New Roman"; r.font.size = Pt(11)
-                                        set_cell_border(cell)
-
-                            doc_out.add_paragraph()
-
-                            t_chk = doc_out.add_table(rows=1, cols=2)
-                            t_chk.alignment = WD_TABLE_ALIGNMENT.CENTER
-                            
-                            p_chk1 = t_chk.cell(0, 0).paragraphs[0]; p_chk1.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                            r_chk1 = p_chk1.add_run(c_txt(data.get("footer_left", ""))); r_chk1.bold = True; r_chk1.font.name = "Times New Roman"; r_chk1.font.size = Pt(11)
-
-                            p_chk2 = t_chk.cell(0, 1).paragraphs[0]; p_chk2.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                            r_chk2 = p_chk2.add_run(c_txt(data.get("footer_right", ""))); r_chk2.bold = True; r_chk2.font.name = "Times New Roman"; r_chk2.font.size = Pt(11)
-
-                            p_foot = doc_out.add_paragraph(); p_foot.alignment = WD_ALIGN_PARAGRAPH.RIGHT
-                            r_foot = p_foot.add_run(c_txt(data.get("page_number", ""))); r_foot.font.name = "Times New Roman"; r_foot.font.size = Pt(9)
-
-                        elif page_type == 2:
-                            # Cắt chữ ký nửa trên
-                            sig_crop = pil_img.crop((0, 0, W, int(H * 0.35)))
-                            sig_stream = BytesIO(); sig_crop.save(sig_stream, format="PNG"); sig_stream.seek(0)
-                            
-                            p_sig = doc_out.add_paragraph(); p_sig.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                            p_sig.add_run().add_picture(sig_stream, width=Inches(6.0))
-                            
-                            tbl_p2 = doc_out.add_table(rows=1, cols=2)
-                            tbl_p2.alignment = WD_TABLE_ALIGNMENT.CENTER
-
-                            p2_l = tbl_p2.cell(0, 0).paragraphs[0]; p2_l.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                            r2_l1 = p2_l.add_run(c_txt(data.get("footer_left", "")) + "\n"); r2_l1.bold = True; r2_l1.font.name = "Times New Roman"; r2_l1.font.size=Pt(11)
-
-                            p2_r = tbl_p2.cell(0, 1).paragraphs[0]; p2_r.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                            r2_r1 = p2_r.add_run(c_txt(data.get("footer_right", "")) + "\n"); r2_r1.bold = True; r2_r1.font.name = "Times New Roman"; r2_r1.font.size=Pt(11)
-
-                            p_foot2 = doc_out.add_paragraph(); p_foot2.alignment = WD_ALIGN_PARAGRAPH.RIGHT
-                            r_foot2 = p_foot2.add_run(c_txt(data.get("page_number", ""))); r_foot2.font.name = "Times New Roman"; r_foot2.font.size = Pt(9)
-
-                    out_stream = BytesIO()
-                    doc_out.save(out_stream)
-
-                    base_name = fname.rsplit('.', 1)[0]
-                    st.success("🎉 Tái tạo thành công tuyệt đối! Đã bóc tách toàn bộ tài liệu.")
-                    st.download_button(
-                        label="📥 Tải xuống File Word (.docx)",
-                        data=out_stream.getvalue(),
-                        file_name=f"{base_name}_Chuan_HoanHao.docx",
-                        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                        on_click=clear_file
-                    )
-
-                except Exception as e:
-                    st.error(f"Lỗi: {e}")
-
 # ==========================================                        
 # 5. KÍCH HOẠT ỨNG DỤNG THEO LỰA CHỌN MENU
 # ==========================================
@@ -2005,5 +1946,3 @@ elif "8. Xoay Trang PDF" in app_mode:
     app_rotate_pdf()
 elif "9. Xóa Siêu Dữ Liệu" in app_mode:
     app_metadata_cleaner()
-elif "10. PDF Scan / Ảnh sang Word" in app_mode:
-    app_pdf_image_to_word_advanced()
