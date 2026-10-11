@@ -53,11 +53,11 @@ def clear_file():
 def call_gemini_smart(client, contents_payload):
     """
     Tự động thử lần lượt các model.
-    Nếu bị lỗi 503 (quá tải) hoặc 429 (hết hạn mức), tự động nhảy sang model tiếp theo.
+    Bổ sung cơ chế chống ngắt kết nối do vượt giới hạn tốc độ (Rate Limit).
     """
     models_to_try = [
-        "gemini-3.8-flash",  # Cập nhật model mới nhất theo yêu cầu của Google
-        "gemini-1.5-pro"     # Model dự phòng
+        "gemini-1.5-flash", # Hạn mức cao nhất: 1500 request/ngày
+        "gemini-1.5-pro"    # Hạn mức: 50 request/ngày
     ]
     last_err = None
     for model_name in models_to_try:
@@ -70,12 +70,16 @@ def call_gemini_smart(client, contents_payload):
         except Exception as e:
             err_msg = str(e).lower()
             last_err = e
-            # Bỏ qua ngay nếu gặp lỗi 404 (model cũ bị khóa)
-            if "not found" in err_msg or "404" in err_msg or "no longer available" in err_msg:
-                continue 
-            # Nếu gặp lỗi quá tải, nghỉ 1 giây rồi thử lại model khác
-            if any(x in err_msg for x in ['503', '429', 'unavailable', 'exhausted', 'overloaded']):
-                time.sleep(1) 
+            # Chạm trần Rate Limit (429): Nghỉ 5 giây để máy chủ hồi lại rồi chạy tiếp
+            if "429" in err_msg or "quota" in err_msg or "exhausted" in err_msg:
+                time.sleep(5)
+                continue
+            # Máy chủ quá tải (503): Nghỉ 2 giây
+            if "503" in err_msg or "unavailable" in err_msg or "overloaded" in err_msg:
+                time.sleep(2)
+                continue
+            # Tên model không tồn tại: Bỏ qua để thử model dưới
+            if "404" in err_msg or "not found" in err_msg:
                 continue
             raise e
     raise last_err
@@ -319,10 +323,15 @@ def clean_tags_and_align(text, paragraph, default_align):
     return text_clean
 
 def app_pdf_to_word():
+    import random
+    
     try:
-        api_key_input = st.secrets["GEMINI_API_KEY"]
+        # Lấy danh sách 4 key từ Streamlit Secrets
+        api_keys = st.secrets["GEMINI_API_KEYS"]
+        # Chọn ngẫu nhiên 1 key cho mỗi lần xử lý để né hạn mức của Google
+        api_key_input = random.choice(api_keys)
     except KeyError:
-        st.error("⚠️ Hệ thống chưa được cấu hình API Key. Vui lòng liên hệ Quản trị viên!")
+        st.error("⚠️ Hệ thống chưa tìm thấy cấu hình GEMINI_API_KEYS. Vui lòng liên hệ Quản trị viên!")
         st.stop()
 
     st.title("📄 Ứng dụng Chuyển đổi PDF & Ảnh sang Word")
@@ -1758,11 +1767,11 @@ from docx.enum.table import WD_ALIGN_VERTICAL, WD_ROW_HEIGHT_RULE
 from docx.oxml import OxmlElement, parse_xml
 from docx.oxml.ns import qn, nsdecls
 
-# Danh sách model khai báo theo đúng chuẩn cập nhật của Google API
-A10_MODELS_PRECISE = ["gemini-1.5-pro", "gemini-3.8-flash"]
-A10_MODELS_FAST = ["gemini-3.8-flash", "gemini-1.5-pro"]
+# Danh sách model ưu tiên dòng 1.5 để có hạn mức cao nhất (1500 request/ngày)
+A10_MODELS_PRECISE = ["gemini-1.5-pro", "gemini-1.5-flash"]
+A10_MODELS_FAST = ["gemini-1.5-flash"]
 A10_RENDER_DPI = 250          # độ phân giải dựng ảnh trang
-A10_API_MAX_SIDE = 2600       # cạnh dài tối đa của ảnh
+A10_API_MAX_SIDE = 2600       # cạnh dài tối đa của ảnh gửi lên API
 
 _A10_SCHEMA_TXT = '''{
   "font_family": "serif",
@@ -1887,6 +1896,7 @@ def _a10_sanitize(layout):
 
 
 # ------------------------------------------------------------------ gọi Gemini online
+# ------------------------------------------------------------------ gọi Gemini online
 def _a10_call_gemini(api_key, img_bytes, hint_text, models):
     from google import genai
     from google.genai import types
@@ -1894,11 +1904,12 @@ def _a10_call_gemini(api_key, img_bytes, hint_text, models):
     client = genai.Client(api_key=api_key)
     hint = ""
     if hint_text:
-        hint = ("\nVĂN BẢN GỐC lấy từ lớp text của PDF (đáng tin hơn OCR về mặt ký tự; hãy dùng để chép đúng "
-                "chính tả, số liệu, dấu tiếng Việt, nhưng bố cục/vị trí vẫn lấy theo ảnh):\n<<<\n"
-                + hint_text[:12000] + "\n>>>")
-    prompt = _A10_PROMPT.replace("<<HINT>>", hint)
+        hint = ("\n(VĂN BẢN GỐC lấy từ lớp text của PDF (đáng tin hơn OCR về mặt ký tự; hãy dùng để chép đúng \n"
+                "chính tả, số liệu, dấu tiếng Việt, nhưng bố cục/vị trí vẫn lấy theo ảnh):\n\n"
+                + hint_text[:12000] + "\n)")
+    prompt = _A10_PROMPT.replace("HINT", hint)
     last_err = None
+    
     for model in models:
         for attempt in range(3):
             try:
@@ -1908,23 +1919,29 @@ def _a10_call_gemini(api_key, img_bytes, hint_text, models):
                     config=types.GenerateContentConfig(
                         temperature=0.0,
                         response_mime_type="application/json",
-                        max_output_tokens=32000,
+                        max_output_tokens=8192,
                     ),
                 )
                 return _a10_parse_json(resp.text), model
-            except json.JSONDecodeError as e:          # JSON lỗi/cụt -> thử lại
+            except json.JSONDecodeError as e:          
                 last_err = e
                 continue
             except Exception as e:
                 last_err = e
-                msg = str(e)
-                if any(x in msg for x in ("503", "429", "UNAVAILABLE", "RESOURCE_EXHAUSTED", "overloaded", "high demand")):
-                    time.sleep(2 * (attempt + 1))
+                msg = str(e).lower()
+                # Chạm hạn mức 15 yêu cầu/phút (429) -> Ngủ 10 giây để API nhả khóa
+                if any(x in msg for x in ('429', 'quota', 'exhausted')):
+                    time.sleep(10)
                     continue
-                break                                   # 404/không hỗ trợ -> sang model kế tiếp
+                # Máy chủ nghẽn mạng (503) -> Ngủ 3 giây
+                if any(x in msg for x in ('503', 'unavailable', 'overloaded', 'high demand')):
+                    time.sleep(3)
+                    continue
+                # Model không tồn tại -> Lập tức thoát vòng lặp để đổi model
+                if "404" in msg or "not found" in msg:
+                    break 
+                break
     raise RuntimeError(f"Tất cả model đều thất bại. Lỗi cuối: {last_err}")
-
-
 # ------------------------------------------------------------------ đọc số liệu gốc của PDF (nếu có text layer)
 _A10_FONT_MAP = [("times", "Times New Roman"), ("arial", "Arial"), ("helvet", "Arial"), ("calibri", "Calibri"),
                  ("cambria", "Cambria"), ("tahoma", "Tahoma"), ("verdana", "Verdana"), ("segoe", "Segoe UI"),
