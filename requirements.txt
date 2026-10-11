@@ -10,3 +10,4 @@ openpyxl
 streamlit-authenticator
 PyYAML
 PyMuPDF
+pdf2docx
