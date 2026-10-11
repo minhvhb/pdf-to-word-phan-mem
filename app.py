@@ -1753,7 +1753,7 @@ def app_pdf_image_to_word_advanced():
     import streamlit as st
 
     st.title("📑 Chuyển PDF Scan sang Word (Tái Tạo Bảng & Giữ QR Code)")
-    st.markdown("Giải pháp chuyên dụng cho tài liệu scan: Dùng AI OCR dữ liệu sạch 100% (không dấu rác), dựng bảng Word thực thụ và tự động cắt xén mã QR, chữ ký từ ảnh gốc.")
+    st.markdown("Giải pháp tối ưu nhất cho tài liệu scan: Dùng AI OCR với cơ chế **ưu tiên model dự phòng an toàn**, dựng bảng Word thực thụ và cắt ghép mã QR, chữ ký từ ảnh gốc.")
 
     uploaded_file = st.file_uploader(
         "Tải lên file PDF Scan:",
@@ -1761,7 +1761,7 @@ def app_pdf_image_to_word_advanced():
         key=f"app10_final_{st.session_state.uploader_key}"
     )
 
-    # 1. Hàm gọi API Gemini ổn định nhất (Cố định gemini-1.5-flash)
+    # 1. Hàm gọi API Gemini với danh sách model ưu tiên (Fallback mạnh mẽ)
     def extract_data_via_gemini(api_key, img_bytes):
         b64_data = base64.b64encode(img_bytes).decode("utf-8")
         prompt = """
@@ -1780,28 +1780,49 @@ def app_pdf_image_to_word_advanced():
             "footer_roles": ["Cán bộ kiểm tra thông tin", "Cán bộ kiểm tra số lượng"],
             "footer_text": "1/2\\n250920..."
         }
+        Nếu không có dữ liệu ở phần nào, để mảng rỗng [] hoặc chuỗi rỗng "". Trích xuất đầy đủ 100% các dòng trong bảng.
         """
         payload = {
             "contents": [{"parts": [{"text": prompt}, {"inline_data": {"mime_type": "image/png", "data": b64_data}}]}],
             "generationConfig": {"temperature": 0.1}
         }
         
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
-        res = requests.post(url, headers={"Content-Type": "application/json"}, json=payload, timeout=90)
+        # Cơ chế ưu tiên Model: Bắt đầu từ model mới nhất/nhanh nhất, lùi dần nếu bị lỗi 404
+        models = [
+            "gemini-2.5-flash",
+            "gemini-2.0-flash",
+            "gemini-1.5-flash-latest",
+            "gemini-1.5-flash",
+            "gemini-1.5-pro-latest",
+            "gemini-1.5-pro"
+        ]
         
-        if res.status_code == 200:
-            data = res.json()
-            if "candidates" in data and len(data["candidates"]) > 0:
-                text = data["candidates"][0]["content"]["parts"][0]["text"].strip()
-                # Dọn dẹp thẻ markdown code block nếu AI cố tình tự thêm vào
-                if text.startswith("```json"): text = text[7:]
-                if text.startswith("```"): text = text[3:]
-                if text.endswith("```"): text = text[:-3]
-                return json.loads(text.strip())
-            else:
-                raise Exception("API không trả về kết quả.")
-        else:
-            raise Exception(f"Lỗi API ({res.status_code}): {res.text}")
+        last_error = ""
+        for model in models:
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
+            try:
+                res = requests.post(url, headers={"Content-Type": "application/json"}, json=payload, timeout=90)
+                if res.status_code == 200:
+                    data = res.json()
+                    # Kiểm tra dữ liệu an toàn để tránh lỗi 'candidates'
+                    if "candidates" in data and len(data["candidates"]) > 0:
+                        parts = data["candidates"][0].get("content", {}).get("parts", [])
+                        if parts:
+                            text = parts[0].get("text", "").strip()
+                            
+                            # Làm sạch thẻ markdown code block
+                            if text.startswith("```json"): text = text[7:]
+                            if text.startswith("```"): text = text[3:]
+                            if text.endswith("```"): text = text[:-3]
+                            
+                            return json.loads(text.strip())
+                else:
+                    last_error = f"Model {model} lỗi ({res.status_code})"
+            except Exception as e:
+                last_error = f"Model {model} ngoại lệ: {str(e)}"
+                continue
+                
+        raise Exception(f"Tất cả các model đều không khả dụng hoặc hệ thống Google quá tải. Lỗi cuối: {last_error}")
 
     # 2. Hàm Kẻ viền bảng Word
     def set_cell_border(cell):
@@ -1816,7 +1837,7 @@ def app_pdf_image_to_word_advanced():
             tcBorders.append(element)
         tcPr.append(tcBorders)
 
-    # Hàm làm sạch text
+    # Hàm làm sạch text nội bộ
     def clean_txt(t):
         if not t: return ""
         return str(t).replace("**", "").replace("*", "").strip()
@@ -1832,7 +1853,7 @@ def app_pdf_image_to_word_advanced():
                 st.error("Chưa cấu hình GEMINI_API_KEY!")
                 return
 
-            with st.spinner("Đang sử dụng AI OCR và cắt xén hình ảnh tọa độ..."):
+            with st.spinner("Đang sử dụng AI OCR (Cơ chế ưu tiên model an toàn) và cắt xén tọa độ ảnh..."):
                 try:
                     pdf_doc = fitz.open("pdf", file_bytes)
                     doc_out = Document()
@@ -1871,7 +1892,7 @@ def app_pdf_image_to_word_advanced():
                         r_hr = p_hr.add_run(clean_txt(data.get("header_right", "ĐẢNG CỘNG SẢN VIỆT NAM\nNgày 4 Tháng 10 Năm 2025")))
                         r_hr.bold = True; r_hr.font.name = "Times New Roman"; r_hr.font.size = Pt(11)
 
-                        doc_out.add_paragraph()
+                        doc_out.add_paragraph() 
 
                         # Dựng Title
                         p_title = doc_out.add_paragraph()
@@ -1879,7 +1900,7 @@ def app_pdf_image_to_word_advanced():
                         r_title = p_title.add_run(clean_txt(data.get("title", "DANH SÁCH ĐẢNG VIÊN")))
                         r_title.bold = True; r_title.font.name = "Times New Roman"; r_title.font.size = Pt(14)
 
-                        # Dựng Khối Info & Cắt mã QR từ tọa độ ảnh
+                        # Dựng Khối Info & Nhúng ảnh cắt QR
                         t_info = doc_out.add_table(rows=1, cols=2)
                         t_info.alignment = WD_TABLE_ALIGNMENT.CENTER
                         t_info.columns[0].width = Inches(5.0)
@@ -1889,7 +1910,7 @@ def app_pdf_image_to_word_advanced():
                         r_info = p_info.add_run(clean_txt(data.get("info", "")))
                         r_info.font.name = "Times New Roman"; r_info.font.size = Pt(11)
 
-                        # Cắt đúng vùng chứa mã QR (Góc trên bên phải) thay vì lấy cả trang
+                        # THUẬT TOÁN CẮT MÃ QR: Lấy góc trên bên phải của tài liệu
                         qr_crop = pil_img1.crop((int(W * 0.65), int(H * 0.12), int(W * 0.95), int(H * 0.40)))
                         qr_stream = BytesIO()
                         qr_crop.save(qr_stream, format="PNG")
@@ -1969,7 +1990,7 @@ def app_pdf_image_to_word_advanced():
                         p_sig.alignment = WD_ALIGN_PARAGRAPH.CENTER
                         p_sig.add_run().add_picture(sig_stream, width=Inches(6.0))
                         
-                        # Bóc chữ nửa dưới trang 2
+                        # AI bóc tách text nửa dưới trang 2
                         data2 = extract_data_via_gemini(api_key, img2_bytes)
                         p_foot2 = doc_out.add_paragraph()
                         p_foot2.alignment = WD_ALIGN_PARAGRAPH.RIGHT
@@ -1980,7 +2001,7 @@ def app_pdf_image_to_word_advanced():
                     doc_out.save(out_stream)
 
                     base_name = fname.rsplit('.', 1)[0]
-                    st.success("🎉 Tái tạo thành công! Bảng biểu đã được dựng thật, và mã QR đã được cắt xén vừa vặn.")
+                    st.success("🎉 Hoàn thành! Hệ thống đã dùng phương án tốt nhất để bóc tách siêu chuẩn và an toàn.")
                     st.download_button(
                         label="📥 Tải xuống File Word (.docx)",
                         data=out_stream.getvalue(),
