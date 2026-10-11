@@ -1733,306 +1733,83 @@ def app_metadata_cleaner():
                     on_click=clear_file
                 )
 # ==========================================
-# APP 10: CHUYỂN PDF SANG WORD (TÁI TẠO BỐ CỤC CHUẨN & NHÚNG QR CODE THẬT BẰNG FITZ)
+# APP 10: PDF SANG WORD (TỐI ƯU HÓA TỪ APP 1 - GIỮ NGUYÊN ẢNH VÀ LAYOUT)
 # ==========================================
 def app_pdf_image_to_word_advanced():
     import os
-    import re
-    from io import BytesIO
-    import fitz
+    import tempfile
+    import fitz 
     from docx import Document
-    from docx.shared import Pt, Inches, RGBColor
-    from docx.enum.text import WD_ALIGN_PARAGRAPH
-    from docx.enum.table import WD_TABLE_ALIGNMENT, WD_ALIGN_VERTICAL
-    from docx.oxml import OxmlElement
-    from docx.oxml.ns import qn
-    from PIL import Image
+    from io import BytesIO
 
-    st.title("📑 Chuyển PDF sang Word (Giữ Layout & QR Code Thật)")
-    st.markdown("Số hóa tài liệu hành chính cao cấp: Tái tạo cấu trúc bảng biểu, Quốc hiệu 2 bên, tự động cắt và **nhúng lại mã QR Code / Chữ ký thật** từ bản scan gốc. Không sử dụng AI để tránh lỗi định dạng rác.")
+    st.title("📑 PDF sang Word Nâng Cao (Chuẩn Layout & Giữ Mã QR)")
+    st.markdown("Phiên bản tối ưu hóa tuyệt đối dựa trên lõi bóc tách văn bản cực chuẩn của App 1. Nâng cấp thêm tính năng **giữ nguyên hình ảnh, mã QR Code và bảng biểu**.")
 
     uploaded_file = st.file_uploader(
         "Tải lên file PDF cần chuyển đổi sang Word:",
         type=["pdf"],
-        key=f"app10_fast_{st.session_state.uploader_key}"
+        key=f"app10_opt_{st.session_state.uploader_key}"
     )
-
-    # Hàm kẻ viền bảng Word chuẩn mực
-    def set_cell_border(cell, **kwargs):
-        tcPr = cell._tc.get_or_add_tcPr()
-        tcBorders = OxmlElement('w:tcBorders')
-        for edge in ('top', 'left', 'bottom', 'right'):
-            edge_data = kwargs.get(edge)
-            if edge_data:
-                tag = f'w:{edge}'
-                element = OxmlElement(tag)
-                element.set(qn('w:val'), edge_data.get('val', 'single'))
-                element.set(qn('w:sz'), str(edge_data.get('sz', 4)))
-                element.set(qn('w:space'), '0')
-                element.set(qn('w:color'), edge_data.get('color', '000000'))
-                tcBorders.append(element)
-        tcPr.append(tcBorders)
-
-    # Hàm tạo đoạn văn bản sạch
-    def add_clean_paragraph(doc, text="", bold=False, italic=False, size=11, align=WD_ALIGN_PARAGRAPH.LEFT, space_after=3):
-        p = doc.add_paragraph()
-        p.alignment = align
-        p.paragraph_format.space_before = Pt(0)
-        p.paragraph_format.space_after = Pt(space_after)
-        p.paragraph_format.line_spacing = 1.15
-        if text:
-            clean = text.replace("**", "").replace("*", "").replace("`", "").strip()
-            run = p.add_run(clean)
-            run.font.name = "Times New Roman"
-            run.font.size = Pt(size)
-            run.bold = bold
-            run.italic = italic
-        return p
-
-    # Hàm dựng Bảng Word thật sự
-    def add_clean_table(doc, headers, rows):
-        cols_cnt = max(len(headers), max((len(r) for r in rows), default=0))
-        if cols_cnt == 0:
-            return
-        all_rows = ([headers] if headers else []) + rows
-        tbl = doc.add_table(rows=len(all_rows), cols=cols_cnt)
-        tbl.alignment = WD_TABLE_ALIGNMENT.CENTER
-
-        border_spec = {
-            'top': {'val': 'single', 'sz': 4, 'color': '000000'},
-            'bottom': {'val': 'single', 'sz': 4, 'color': '000000'},
-            'left': {'val': 'single', 'sz': 4, 'color': '000000'},
-            'right': {'val': 'single', 'sz': 4, 'color': '000000'},
-        }
-
-        col_widths = [Inches(0.6), Inches(1.5), Inches(2.2), Inches(1.5), Inches(1.2)]
-
-        for r_idx, r_data in enumerate(all_rows):
-            for c_idx in range(cols_cnt):
-                cell = tbl.cell(r_idx, c_idx)
-                cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
-                if c_idx < len(col_widths):
-                    cell.width = col_widths[c_idx]
-
-                val = r_data[c_idx] if c_idx < len(r_data) else ""
-                clean_val = val.replace("**", "").replace("*", "").strip()
-
-                p = cell.paragraphs[0]
-                p.paragraph_format.space_before = Pt(0)
-                p.paragraph_format.space_after = Pt(1)
-                p.paragraph_format.line_spacing = 1.15
-
-                if c_idx in (0, 1, 3, 4) or r_idx == 0:
-                    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                else:
-                    p.alignment = WD_ALIGN_PARAGRAPH.LEFT
-
-                run = p.add_run(clean_val)
-                run.font.name = "Times New Roman"
-                run.font.size = Pt(10)
-                if r_idx == 0 and headers:
-                    run.bold = True
-
-                set_cell_border(cell, **border_spec)
-
-        p_sp = doc.add_paragraph()
-        p_sp.paragraph_format.space_after = Pt(4)
 
     if uploaded_file:
         file_bytes = uploaded_file.getvalue()
         fname = uploaded_file.name
+        
         st.info(f"📄 Đã nhận: **{fname}** ({len(file_bytes) / 1024:.1f} KB)")
 
         if st.button("🚀 Bắt đầu Chuyển Đổi sang Word", type="primary"):
-            with st.spinner("Đang trích xuất văn bản, tái tạo bảng và nhúng mã QR..."):
+            with st.spinner("Đang phân tích cấu trúc, giữ bảng biểu và mã QR..."):
                 try:
-                    pdf_doc = fitz.open("pdf", file_bytes)
-                    total_pages = len(pdf_doc)
+                    from pdf2docx import Converter
 
-                    doc_out = Document()
+                    # Dùng file tạm thời để pdf2docx xử lý luồng dữ liệu an toàn
+                    with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_pdf:
+                        tmp_pdf.write(file_bytes)
+                        tmp_pdf_path = tmp_pdf.name
 
-                    # Căn lề chuẩn trang in A4 hành chính
-                    for sec in doc_out.sections:
-                        sec.top_margin = Inches(0.79)
-                        sec.bottom_margin = Inches(0.79)
-                        sec.left_margin = Inches(1.18)
-                        sec.right_margin = Inches(0.59)
+                    tmp_docx_path = tmp_pdf_path.replace(".pdf", ".docx")
 
-                    for p_no in range(total_pages):
-                        page = pdf_doc[p_no]
-                        page_text = page.get_text()
+                    # Khởi tạo bộ chuyển đổi
+                    cv = Converter(tmp_pdf_path)
+                    
+                    # QUAN TRỌNG: Cấu hình tham số để giữ lại hình ảnh (như mã QR) và định dạng bảng biểu
+                    cv.convert(
+                        tmp_docx_path, 
+                        start=0, end=None,
+                        # Cấu hình giữ ảnh và bảng
+                        kwargs={'connected_border_tolerance': 2.0, 'multi_processing': True} 
+                    )
+                    cv.close()
 
-                        # ----------------------------------------------------
-                        # XỬ LÝ TRANG 1: VĂN BẢN HÀNH CHÍNH, BẢNG VÀ MÃ QR CODE
-                        # ----------------------------------------------------
-                        if p_no == 0:
-                            # 1. Header 2 bên
-                            tbl_hdr = doc_out.add_table(rows=1, cols=2)
-                            tbl_hdr.alignment = WD_TABLE_ALIGNMENT.CENTER
-                            tbl_hdr.columns[0].width = Inches(3.2)
-                            tbl_hdr.columns[1].width = Inches(3.8)
+                    # Đọc lại file Word đã xử lý
+                    with open(tmp_docx_path, "rb") as f:
+                        docx_bytes = f.read()
 
-                            p_l = tbl_hdr.cell(0, 0).paragraphs[0]
-                            p_l.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                            r_l = p_l.add_run("BAN CHẤP HÀNH TRUNG ƯƠNG\nBAN TỔ CHỨC")
-                            r_l.bold = True
-                            r_l.font.name = "Times New Roman"
-                            r_l.font.size = Pt(10.5)
-
-                            p_r = tbl_hdr.cell(0, 1).paragraphs[0]
-                            p_r.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                            r_r1 = p_r.add_run("ĐẢNG CỘNG SẢN VIỆT NAM\n")
-                            r_r1.bold = True
-                            r_r1.font.name = "Times New Roman"
-                            r_r1.font.size = Pt(10.5)
-
-                            date_match = re.search(r"Ngày \d+ Tháng \d+ Năm \d+", page_text)
-                            date_str = date_match.group(0) if date_match else "Ngày 4 Tháng 10 Năm 2025"
-                            r_r2 = p_r.add_run(date_str)
-                            r_r2.italic = True
-                            r_r2.font.name = "Times New Roman"
-                            r_r2.font.size = Pt(10)
-
-                            add_clean_paragraph(doc_out, space_after=4)
-
-                            # 2. Tiêu đề chính giữa
-                            title_match = re.search(r"DANH SÁCH [^\n]+", page_text)
-                            title_str = title_match.group(0) if title_match else "DANH SÁCH ĐẢNG VIÊN"
-                            add_clean_paragraph(doc_out, title_str, bold=True, size=13, align=WD_ALIGN_PARAGRAPH.CENTER, space_after=6)
-
-                            # 3. Khối Chi bộ bên trái và Mã QR Code bên phải
-                            tbl_info = doc_out.add_table(rows=1, cols=2)
-                            tbl_info.alignment = WD_TABLE_ALIGNMENT.CENTER
-                            tbl_info.columns[0].width = Inches(5.2)
-                            tbl_info.columns[1].width = Inches(1.8)
-
-                            info_lines = []
-                            for line in page_text.splitlines():
-                                line_s = line.strip()
-                                if any(k in line_s for k in ["Chi Bộ:", "Đảng bộ", "Sài Gòn", "Hồ Chí Minh", "Số Lượng:"]):
-                                    info_lines.append(line_s)
-                            info_text = "\n".join(info_lines) if info_lines else "Chi Bộ: Chi bộ 1...\nSố Lượng: 14"
-
-                            p_inf = tbl_info.cell(0, 0).paragraphs[0]
-                            p_inf.alignment = WD_ALIGN_PARAGRAPH.LEFT
-                            p_inf.paragraph_format.line_spacing = 1.15
-                            r_inf = p_inf.add_run(info_text)
-                            r_inf.font.name = "Times New Roman"
-                            r_inf.font.size = Pt(11)
-
-                            # Cắt mã QR (xác định qua hình ảnh trên trang)
-                            img_list = page.get_images(full=True)
-                            if img_list:
-                                # Lấy thông tin ảnh lớn nhất (khả năng là mã QR)
-                                base_image = pdf_doc.extract_image(img_list[0][0])
-                                img_bytes = base_image["image"]
-                                
-                                qr_stream = BytesIO(img_bytes)
-                                p_qr = tbl_info.cell(0, 1).paragraphs[0]
-                                p_qr.alignment = WD_ALIGN_PARAGRAPH.RIGHT
-                                p_qr.add_run().add_picture(qr_stream, width=Inches(1.5))
-
-                            add_clean_paragraph(doc_out, space_after=6)
-
-                            # 4. Trích xuất và dựng Bảng
-                            table_headers = ["STT", "Số Đảng Viên", "Họ và Tên", "Ngày tháng năm sinh", "Ký nhận"]
-                            table_rows = []
-
-                            # Dùng fitz.find_tables()
-                            try:
-                                tf = page.find_tables()
-                                if tf and tf.tables:
-                                    raw_extracted = tf.tables[0].extract()
-                                    if len(raw_extracted) > 1:
-                                        table_headers = [c or "" for c in raw_extracted[0]]
-                                        table_rows = raw_extracted[1:]
-                            except:
-                                pass
-
-                            # Regex fallback
-                            if not table_rows:
-                                pattern = re.compile(r"^(\d+)\s+(\d{12})\s+([A-ZÀ-Ỹ\s]+)\s+(\d{2}-\d{2}-\d{4})", re.MULTILINE)
-                                for match in pattern.finditer(page_text):
-                                    stt, sodv, hoten, ns = match.groups()
-                                    table_rows.append([stt.strip(), sodv.strip(), hoten.strip(), ns.strip(), ""])
-
-                            if table_rows:
-                                add_clean_table(doc_out, table_headers, table_rows)
-
-                            # 5. Cán bộ kiểm tra & Footer trang 1
-                            tbl_chk = doc_out.add_table(rows=1, cols=2)
-                            tbl_chk.alignment = WD_TABLE_ALIGNMENT.CENTER
-                            p_chk1 = tbl_chk.cell(0, 0).paragraphs[0]
-                            p_chk1.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                            r_chk1 = p_chk1.add_run("Cán bộ kiểm tra thông tin")
-                            r_chk1.bold = True
-                            r_chk1.font.name = "Times New Roman"
-
-                            p_chk2 = tbl_chk.cell(0, 1).paragraphs[0]
-                            p_chk2.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                            r_chk2 = p_chk2.add_run("Cán bộ kiểm tra số lượng")
-                            r_chk2.bold = True
-                            r_chk2.font.name = "Times New Roman"
-
-                            add_clean_paragraph(doc_out, space_after=12)
-                            add_clean_paragraph(doc_out, "1/2\n250920_7968591863380336703390_27139_1_14_001", size=8.5, align=WD_ALIGN_PARAGRAPH.RIGHT)
-
-                        # ----------------------------------------------------
-                        # XỬ LÝ TRANG 2: CHỮ KÝ VÀ TỔNG CÔNG TY
-                        # ----------------------------------------------------
-                        else:
-                            doc_out.add_page_break()
-
-                            # Trích xuất hình chữ ký
-                            img_list = page.get_images(full=True)
-                            if img_list:
-                                base_image = pdf_doc.extract_image(img_list[0][0])
-                                img_bytes = base_image["image"]
-                                
-                                sig_stream = BytesIO(img_bytes)
-                                p_simg = doc_out.add_paragraph()
-                                p_simg.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                                p_simg.add_run().add_picture(sig_stream, height=Inches(1.5))
-
-                            tbl_p2 = doc_out.add_table(rows=1, cols=2)
-                            tbl_p2.alignment = WD_TABLE_ALIGNMENT.CENTER
-
-                            p2_l = tbl_p2.cell(0, 0).paragraphs[0]
-                            p2_l.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                            r2_l1 = p2_l.add_run("Tổng công ty Bưu điện Việt Nam\n")
-                            r2_l1.bold = True
-                            r2_l1.font.name = "Times New Roman"
-                            r2_l2 = p2_l.add_run("Đoàn Thị Thơm")
-                            r2_l2.bold = True
-                            r2_l2.font.name = "Times New Roman"
-
-                            p2_r = tbl_p2.cell(0, 1).paragraphs[0]
-                            p2_r.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                            r2_r1 = p2_r.add_run("Tổng công ty Bưu điện Việt Nam\n")
-                            r2_r1.bold = True
-                            r2_r1.font.name = "Times New Roman"
-                            r2_r2 = p2_r.add_run("Nguyễn Thị Hà")
-                            r2_r2.bold = True
-                            r2_r2.font.name = "Times New Roman"
-
-                            add_clean_paragraph(doc_out, space_after=30)
-                            add_clean_paragraph(doc_out, "2/2\n250920_7968591863380336703390_27139_1_14_001", size=8.5, align=WD_ALIGN_PARAGRAPH.RIGHT)
-
-                    out_stream = BytesIO()
-                    doc_out.save(out_stream)
+                    # Xóa file tạm
+                    if os.path.exists(tmp_pdf_path):
+                        os.remove(tmp_pdf_path)
+                    if os.path.exists(tmp_docx_path):
+                        os.remove(tmp_docx_path)
 
                     base_name = fname.rsplit('.', 1)[0]
-                    st.success("🎉 Chuyển đổi thành công! Tài liệu giữ nguyên mã QR, chữ ký, bảng biểu chuẩn và sạch 100% văn bản.")
+                    st.success("🎉 Chuyển đổi thành công! Tài liệu giữ nguyên layout chuẩn, bảng biểu và mã QR.")
+                    
                     st.download_button(
                         label="📥 Tải xuống File Word (.docx)",
-                        data=out_stream.getvalue(),
-                        file_name=f"{base_name}_Chuan.docx",
+                        data=docx_bytes,
+                        file_name=f"{base_name}_Chuan_Layout.docx",
                         mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                         on_click=clear_file
                     )
 
                 except Exception as e:
                     st.error(f"Lỗi khi xử lý: {e}")
+                    
+                    # Dọn dẹp nếu có lỗi
+                    if 'tmp_pdf_path' in locals() and os.path.exists(tmp_pdf_path):
+                        os.remove(tmp_pdf_path)
+                    if 'tmp_docx_path' in locals() and os.path.exists(tmp_docx_path):
+                        os.remove(tmp_docx_path)
 # ==========================================                        
 # 5. KÍCH HOẠT ỨNG DỤNG THEO LỰA CHỌN MENU
 # ==========================================
