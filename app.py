@@ -52,13 +52,12 @@ def clear_file():
 # ==========================================
 def call_gemini_smart(client, contents_payload):
     """
-    Tự động thử lần lượt các model theo thứ tự yêu cầu.
+    Tự động thử lần lượt các model.
     Nếu bị lỗi 503 (quá tải) hoặc 429 (hết hạn mức), tự động nhảy sang model tiếp theo.
     """
     models_to_try = [
-        "gemini-3.6-flash",
-        "gemini-2.5-flash",
-        "gemini-1.5-pro"
+        "gemini-3.8-flash",  # Cập nhật model mới nhất theo yêu cầu của Google
+        "gemini-1.5-pro"     # Model dự phòng
     ]
     last_err = None
     for model_name in models_to_try:
@@ -69,15 +68,16 @@ def call_gemini_smart(client, contents_payload):
             )
             return response
         except Exception as e:
-            err_msg = str(e)
+            err_msg = str(e).lower()
             last_err = e
-            # Nếu gặp lỗi quá tải 503, 429 hoặc Unavailable, thử tiếp model khác
-            if any(x in err_msg for x in ["503", "429", "UNAVAILABLE", "high demand", "RESOURCE_EXHAUSTED", "overloaded"]):
-                time.sleep(1) # Nghỉ 1 giây trước khi đổi model
+            # Bỏ qua ngay nếu gặp lỗi 404 (model cũ bị khóa)
+            if "not found" in err_msg or "404" in err_msg or "no longer available" in err_msg:
+                continue 
+            # Nếu gặp lỗi quá tải, nghỉ 1 giây rồi thử lại model khác
+            if any(x in err_msg for x in ['503', '429', 'unavailable', 'exhausted', 'overloaded']):
+                time.sleep(1) 
                 continue
-            else:
-                # Nếu là lỗi khác (ví dụ sai định dạng file), văng lỗi ngay
-                raise e
+            raise e
     raise last_err
 
 # ==========================================
@@ -1758,11 +1758,11 @@ from docx.enum.table import WD_ALIGN_VERTICAL, WD_ROW_HEIGHT_RULE
 from docx.oxml import OxmlElement, parse_xml
 from docx.oxml.ns import qn, nsdecls
 
-# Danh sách model thử lần lượt (tự chuyển khi lỗi/quá tải/không tồn tại). Sửa tên ở đây nếu cần.
-A10_MODELS_PRECISE = ["gemini-2.5-pro", "gemini-3.6-flash", "gemini-2.5-flash"]
-A10_MODELS_FAST = ["gemini-3.6-flash", "gemini-2.5-flash", "gemini-2.5-pro"]
-A10_RENDER_DPI = 250          # độ phân giải dựng ảnh trang (cắt logo/QR/chữ ký rất nét)
-A10_API_MAX_SIDE = 2600       # cạnh dài tối đa của ảnh gửi lên API
+# Danh sách model khai báo theo đúng chuẩn cập nhật của Google API
+A10_MODELS_PRECISE = ["gemini-1.5-pro", "gemini-3.8-flash"]
+A10_MODELS_FAST = ["gemini-3.8-flash", "gemini-1.5-pro"]
+A10_RENDER_DPI = 250          # độ phân giải dựng ảnh trang
+A10_API_MAX_SIDE = 2600       # cạnh dài tối đa của ảnh
 
 _A10_SCHEMA_TXT = '''{
   "font_family": "serif",
