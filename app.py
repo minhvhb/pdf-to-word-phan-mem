@@ -60,7 +60,6 @@ def get_api_key():
         if isinstance(keys, str):
             keys = [k.strip() for k in keys.split(',')]
         if not keys:
-            # Fallback nếu chỉ cấu hình GEMINI_API_KEY đơn lẻ
             single_key = st.secrets.get("GEMINI_API_KEY", "")
             if single_key:
                 keys = [single_key]
@@ -72,41 +71,38 @@ def get_api_key():
         st.stop()
 
 # ==========================================
-# 0. HÀM GỌI AI THÔNG MINH (TỰ ĐỘNG CHUYỂN MODEL KHI QUÁ TẢI)
+# 0. HÀM GỌI AI THÔNG MINH (CHỐNG TREO & CHỐNG SẬP MẠNG)
 # ==========================================
 def call_gemini_smart(client, contents_payload):
-    """
-    Tự động thử lần lượt các model.
-    Bổ sung cơ chế chống ngắt kết nối do vượt giới hạn tốc độ (Rate Limit).
-    """
     models_to_try = [
         "gemini-1.5-flash",
-        "gemini-1.5-pro",
-        "gemini-1.5-flash-8b"
+        "gemini-2.0-flash",
+        "gemini-1.5-pro"
     ]
     last_err = None
     for model_name in models_to_try:
-        try:
-            response = client.models.generate_content(
-                model=model_name,
-                contents=contents_payload
-            )
-            return response
-        except Exception as e:
-            err_msg = str(e).lower()
-            last_err = e
-            # Chạm trần Rate Limit (429): Nghỉ vài giây để máy chủ hồi lại rồi chạy tiếp
-            if any(x in err_msg for x in ['429', 'quota', 'exhausted']):
-                time.sleep(3)
-                continue
-            # Máy chủ quá tải (503): Nghỉ 2 giây
-            if any(x in err_msg for x in ['503', 'unavailable', 'overloaded', 'high demand']):
-                time.sleep(2)
-                continue
-            # Tên model không tồn tại: Bỏ qua để thử model dưới
-            if "404" in err_msg or "not found" in err_msg or "no longer available" in err_msg:
-                continue
-            raise e
+        for attempt in range(3): # Kiên nhẫn thử 3 lần cho mỗi model
+            try:
+                response = client.models.generate_content(
+                    model=model_name,
+                    contents=contents_payload
+                )
+                return response
+            except Exception as e:
+                err_msg = str(e).lower()
+                last_err = e
+                # Nếu model bị khóa/không tồn tại -> Đổi model ngay
+                if "not found" in err_msg or "404" in err_msg or "no longer available" in err_msg:
+                    break 
+                # Nếu chạm trần (429) -> Ngủ 4 giây rồi thử LẠI model NÀY
+                if any(x in err_msg for x in ['429', 'quota', 'exhausted']):
+                    time.sleep(4)
+                    continue
+                # Nếu máy chủ bận (503) -> Ngủ 2 giây rồi thử LẠI model NÀY
+                if any(x in err_msg for x in ['503', 'unavailable', 'overloaded', 'high demand']):
+                    time.sleep(2)
+                    continue
+                break 
     raise last_err
 
 # ==========================================
@@ -1714,13 +1710,10 @@ def app_metadata_cleaner():
                 )
 
 # ==========================================
-# APP 10: PDF SCAN / ẢNH SANG WORD (CHUẨN HÓA HOÀN TOÀN) - SĂN MODEL & SĂN KEY
+# APP 10: PDF SCAN / ẢNH SANG WORD (CHUẨN HÓA HOÀN TOÀN) - SỬ DỤNG SDK CHÍNH QUY & MULTI-KEY
 # ==========================================
 def app_pdf_image_to_word_advanced():
-    import os
     import json
-    import base64
-    import requests
     from io import BytesIO
     import fitz
     from docx import Document
@@ -1730,12 +1723,9 @@ def app_pdf_image_to_word_advanced():
     from docx.oxml import OxmlElement
     from docx.oxml.ns import qn
     from PIL import Image
-    import streamlit as st
-    import random
-    import time
 
     st.title("📑 Chuyển PDF Scan sang Word (Chuẩn Hóa Hoàn Toàn)")
-    st.markdown("Sử dụng **Lõi Online (AI OCR)** để đọc văn bản chính xác 100% không dính dấu rác, kết hợp thuật toán **offline** tự động cắt ảnh mã QR/Chữ ký và dựng bảng Word chuyên nghiệp.")
+    st.markdown("Sử dụng **Lõi Online (AI OCR)** qua SDK để đọc văn bản chính xác 100% không dính dấu rác, kết hợp thuật toán tự động cắt ảnh mã QR/Chữ ký và dựng bảng Word chuyên nghiệp.")
 
     uploaded_file = st.file_uploader(
         "Tải lên file PDF Scan:",
@@ -1744,7 +1734,7 @@ def app_pdf_image_to_word_advanced():
     )
 
     def call_gemini_json_robust(api_key, img_bytes, page_type):
-        b64_data = base64.b64encode(img_bytes).decode("utf-8")
+        client = genai.Client(api_key=api_key)
         
         if page_type == 1:
             schema = '''{
@@ -1775,46 +1765,48 @@ def app_pdf_image_to_word_advanced():
         Nếu ô nào không có dữ liệu, để chuỗi rỗng "". Trả về thuần JSON, không có văn bản nào khác.
         """
         
-        payload = {
-            "contents": [{"parts": [{"text": prompt}, {"inline_data": {"mime_type": "image/png", "data": b64_data}}]}],
-            "generationConfig": {"temperature": 0.0}
-        }
+        contents = [types.Part.from_bytes(data=img_bytes, mime_type="image/png"), prompt]
+        config = types.GenerateContentConfig(
+            temperature=0.0,
+            response_mime_type="application/json"
+        )
 
         models_to_try = [
             "gemini-1.5-flash",
-            "gemini-1.5-pro",
-            "gemini-1.5-flash-8b"
+            "gemini-2.0-flash",
+            "gemini-1.5-pro"
         ]
-        api_versions = ["v1beta", "v1"]
         
-        last_error = ""
+        last_err = ""
         for model in models_to_try:
-            for version in api_versions:
-                url = f"https://generativelanguage.googleapis.com/{version}/models/{model}:generateContent?key={api_key}"
+            for attempt in range(3): # Thử 3 lần cho mỗi model
                 try:
-                    res = requests.post(url, headers={"Content-Type": "application/json"}, json=payload, timeout=60)
-                    if res.status_code == 200:
-                        data = res.json()
-                        if "candidates" in data and len(data["candidates"]) > 0:
-                            text = data["candidates"][0]["content"]["parts"][0]["text"].strip()
-                            if text.startswith("```json"): text = text[7:]
-                            if text.startswith("```"): text = text[3:]
-                            if text.endswith("```"): text = text[:-3]
-                            return json.loads(text.strip())
-                    else:
-                        last_error = f"{model} ({version}) -> Lỗi {res.status_code}"
-                        
-                    err_msg = str(res.text).lower()
-                    if "not found" in err_msg or "404" in err_msg or "no longer available" in err_msg:
-                        continue 
-                    if any(x in err_msg for x in ['503', '429', 'unavailable', 'exhausted', 'overloaded']):
-                        time.sleep(3) 
-                        continue
-                        
+                    res = client.models.generate_content(
+                        model=model,
+                        contents=contents,
+                        config=config
+                    )
+                    text = res.text.strip()
+                    if text.startswith("```json"): text = text[7:]
+                    if text.startswith("```"): text = text[3:]
+                    if text.endswith("```"): text = text[:-3]
+                    return json.loads(text.strip())
                 except Exception as e:
-                    last_error = str(e)
-                    
-        raise Exception(f"Đã thử các luồng kết nối nhưng máy chủ Google đều từ chối hoặc báo lỗi. Lỗi cuối: {last_error}")
+                    err_msg = str(e).lower()
+                    last_err = str(e)
+                    # Nếu model khóa -> chuyển model tiếp theo
+                    if "404" in err_msg or "not found" in err_msg or "no longer available" in err_msg:
+                        break 
+                    # Nếu kiệt sức -> Ngủ 5 giây thử LẠI model này
+                    if any(x in err_msg for x in ['429', 'quota', 'exhausted']):
+                        time.sleep(5) 
+                        continue
+                    # Nếu máy chủ bận -> Ngủ 2 giây thử LẠI model này
+                    if any(x in err_msg for x in ['503', 'unavailable', 'overloaded']):
+                        time.sleep(2)
+                        continue
+                    break # Lỗi lạ thì bỏ qua model
+        raise Exception(f"Đã cạn kiệt số lần thử trên máy chủ Google. Lỗi cuối: {last_err}")
 
     def set_cell_border(cell):
         tcPr = cell._tc.get_or_add_tcPr()
@@ -1840,7 +1832,7 @@ def app_pdf_image_to_word_advanced():
         if st.button("🚀 Bắt đầu Bóc Tách & Dựng Layout Word", type="primary"):
             api_key_input = get_api_key()
 
-            with st.spinner("Đang săn Model API khả dụng và bóc tách bố cục (10-15 giây)..."):
+            with st.spinner("Đang sử dụng hệ thống OCR chống treo (Săn Model đa luồng)..."):
                 try:
                     pdf_doc = fitz.open("pdf", file_bytes)
                     doc_out = Document()
