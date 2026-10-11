@@ -56,6 +56,7 @@ def call_gemini_smart(client, contents_payload):
     Nếu bị lỗi 503 (quá tải) hoặc 429 (hết hạn mức), tự động nhảy sang model tiếp theo.
     """
     models_to_try = [
+        "gemini-3.8-flash",
         "gemini-3.6-flash",
         "gemini-2.5-flash",
         "gemini-1.5-pro"
@@ -1759,8 +1760,8 @@ from docx.oxml import OxmlElement, parse_xml
 from docx.oxml.ns import qn, nsdecls
 
 # Danh sách model thử lần lượt (tự chuyển khi lỗi/quá tải/không tồn tại). Sửa tên ở đây nếu cần.
-A10_MODELS_PRECISE = ["gemini-2.5-pro", "gemini-3.6-flash", "gemini-2.5-flash"]
-A10_MODELS_FAST = ["gemini-3.6-flash", "gemini-2.5-flash", "gemini-2.5-pro"]
+A10_MODELS_PRECISE = ["gemini-3.8-flash", "gemini-3.6-flash", "gemini-2.5-pro", "gemini-1.5-pro"]
+A10_MODELS_FAST = ["gemini-3.8-flash", "gemini-3.6-flash", "gemini-2.5-flash", "gemini-1.5-flash"]
 A10_RENDER_DPI = 250          # độ phân giải dựng ảnh trang (cắt logo/QR/chữ ký rất nét)
 A10_API_MAX_SIDE = 2600       # cạnh dài tối đa của ảnh gửi lên API
 
