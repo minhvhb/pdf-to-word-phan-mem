@@ -1734,158 +1734,215 @@ def app_metadata_cleaner():
                 )
 # ==========================================
 # ==========================================
-# APP 10: CHUYỂN PDF / ẢNH SANG WORD (GIỮ NGUYÊN HÌNH ẢNH & BỐ CỤC)
+# APP 10: CHUYỂN PDF SCAN / ẢNH SANG WORD (TÁI TẠO BẢNG & CHỮ THẬT BẰNG AI)
 # ==========================================
 def app_pdf_image_to_word_advanced():
     import os
-    import tempfile
+    import re
     from io import BytesIO
     import fitz
     from docx import Document
-    from docx.shared import Inches, Pt
+    from docx.shared import Pt, Inches, RGBColor
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+    from docx.enum.table import WD_TABLE_ALIGNMENT, WD_ALIGN_VERTICAL
+    from docx.oxml import OxmlElement
+    from docx.oxml.ns import qn
     from PIL import Image
 
-    st.title("📑 Chuyển PDF & Ảnh sang Word (Giữ Nguyên Ảnh & Layout)")
-    st.markdown("Giải pháp nâng cao giúp chuyển đổi tài liệu giữ trọn vẹn **văn bản, bảng biểu, hình vẽ minh họa và ảnh nhúng** sang định dạng Microsoft Word (.docx).")
+    st.title("📑 Chuyển PDF Scan / Ảnh sang Word (Tái Tạo Bảng & Ký Tự Thật)")
+    st.markdown("Giải pháp chuyên dụng cho **tài liệu scan và ảnh chụp**: Sử dụng AI để nhận dạng chữ viết, tái tạo lại **bảng biểu có thể chỉnh sửa** và văn bản thật sự trong Word.")
 
-    tab_pdf, tab_ocr = st.tabs(["📄 PDF sang Word (Giữ Chữ, Ảnh & Bảng)", "🖼️ PDF Scan / Ảnh sang Word (OCR AI)"])
+    uploaded_file = st.file_uploader(
+        "Tải lên file PDF Scan hoặc Ảnh tài liệu (Hỗ trợ PDF, PNG, JPG):",
+        type=["pdf", "png", "jpg", "jpeg"],
+        key=f"app10_ocr_{st.session_state.uploader_key}"
+    )
 
-    # ----------------------------------------------------------------------
-    # TAB 1: PDF SANG WORD GIỮ NGUYÊN BỐ CỤC & HÌNH ẢNH (ENGINE PDF2DOCX)
-    # ----------------------------------------------------------------------
-    with tab_pdf:
-        st.subheader("Chuyển đổi PDF đa phương tiện sang Word")
-        st.caption("Thích hợp cho các file PDF báo cáo, tài liệu kỹ thuật có chèn biểu đồ, hình ảnh hoặc bảng số liệu.")
+    # Hàm hỗ trợ dựng viền bảng Word chuẩn mực
+    def set_cell_border(cell, **kwargs):
+        tcPr = cell._tc.get_or_add_tcPr()
+        tcBorders = OxmlElement('w:tcBorders')
+        for edge in ('top', 'left', 'bottom', 'right'):
+            edge_data = kwargs.get(edge)
+            if edge_data:
+                tag = f'w:{edge}'
+                element = OxmlElement(tag)
+                element.set(qn('w:val'), edge_data.get('val', 'single'))
+                element.set(qn('w:sz'), str(edge_data.get('sz', 4)))
+                element.set(qn('w:space'), '0')
+                element.set(qn('w:color'), edge_data.get('color', 'auto'))
+                tcBorders.append(element)
+        tcPr.append(tcBorders)
 
-        uploaded_pdf = st.file_uploader(
-            "Tải lên file PDF cần chuyển đổi:",
-            type=["pdf"],
-            key=f"app10_pdf_{st.session_state.uploader_key}"
-        )
+    # Hàm chuyển đổi nội dung Markdown từ AI thành phần tử Word thật (Paragraph & Table)
+    def parse_markdown_to_docx(doc, md_text):
+        lines = md_text.strip().split('\n')
+        in_table = False
+        table_rows = []
 
-        if uploaded_pdf:
-            st.info(f"📄 Đã nạp file: **{uploaded_pdf.name}** ({len(uploaded_pdf.getvalue()) / (1024*1024):.2f} MB)")
+        def build_table(rows_data):
+            if not rows_data:
+                return
+            # Chuẩn hóa số cột
+            num_cols = max(len(r) for r in rows_data)
+            tbl = doc.add_table(rows=len(rows_data), cols=num_cols)
+            tbl.alignment = WD_TABLE_ALIGNMENT.CENTER
 
-            if st.button("🚀 Bắt đầu Chuyển Đổi sang Word (.docx)", type="primary", key="btn_convert_pdf10"):
-                with st.spinner("Đang phân tích bố cục, trích xuất text, bảng biểu và hình ảnh..."):
-                    try:
-                        from pdf2docx import Converter
+            for r_idx, row in enumerate(rows_data):
+                for c_idx in range(num_cols):
+                    cell = tbl.cell(r_idx, c_idx)
+                    cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
+                    val = row[c_idx] if c_idx < len(row) else ""
+                    
+                    # Xử lý đoạn văn trong ô
+                    p = cell.paragraphs[0]
+                    p.alignment = WD_ALIGN_PARAGRAPH.CENTER if (c_idx == 0 or r_idx == 0) else WD_ALIGN_PARAGRAPH.LEFT
+                    run = p.add_run(val)
+                    run.font.name = "Times New Roman"
+                    run.font.size = Pt(11)
 
-                        # Tạo file tạm thời trên ổ đĩa để thư viện xử lý tối ưu bộ nhớ
-                        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_pdf:
-                            tmp_pdf.write(uploaded_pdf.getvalue())
-                            tmp_pdf_path = tmp_pdf.name
+                    # Hàng tiêu đề in đậm
+                    if r_idx == 0:
+                        run.bold = True
 
-                        tmp_docx_path = tmp_pdf_path.replace(".pdf", ".docx")
+                    # Kẻ viền ô rõ ràng
+                    border_kwargs = {
+                        'top': {'val': 'single', 'sz': 4, 'color': '000000'},
+                        'bottom': {'val': 'single', 'sz': 4, 'color': '000000'},
+                        'left': {'val': 'single', 'sz': 4, 'color': '000000'},
+                        'right': {'val': 'single', 'sz': 4, 'color': '000000'},
+                    }
+                    set_cell_border(cell, **border_kwargs)
 
-                        # Tiến hành phân tích layout và chuyển đổi
-                        cv = Converter(tmp_pdf_path)
-                        cv.convert(tmp_docx_path, start=0, end=None)
-                        cv.close()
+            # Cách 1 dòng sau bảng
+            doc.add_paragraph()
 
-                        # Đọc kết quả đầu ra
-                        with open(tmp_docx_path, "rb") as f:
-                            docx_bytes = f.read()
+        for line in lines:
+            line_str = line.strip()
 
-                        # Dọn dẹp tệp tạm
-                        if os.path.exists(tmp_pdf_path):
-                            os.remove(tmp_pdf_path)
-                        if os.path.exists(tmp_docx_path):
-                            os.remove(tmp_docx_path)
+            # Nhận diện dòng bảng Markdown
+            if line_str.startswith('|') and line_str.endswith('|'):
+                # Bỏ qua dòng phân cách |---|---|
+                if set(line_str.replace('|', '').strip()) <= {'-', ':', ' '}:
+                    continue
+                cols = [c.strip() for c in line_str.strip('|').split('|')]
+                table_rows.append(cols)
+                in_table = True
+                continue
+            else:
+                if in_table and table_rows:
+                    build_table(table_rows)
+                    table_rows = []
+                    in_table = False
 
-                        out_name = uploaded_pdf.name.rsplit('.', 1)[0] + ".docx"
-                        st.success("🎉 Chuyển đổi hoàn tất! File Word đã giữ nguyên hình ảnh, bảng và định dạng văn bản.")
+                if not line_str:
+                    continue
 
-                        st.download_button(
-                            label=f"📥 Tải xuống {out_name}",
-                            data=docx_bytes,
-                            file_name=out_name,
-                            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                            on_click=clear_file
-                        )
-                    except Exception as e:
-                        st.error(f"Lỗi trong quá trình chuyển đổi: {e}")
+                # Nhận diện Tiêu đề
+                if line_str.startswith('# '):
+                    p = doc.add_paragraph()
+                    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                    run = p.add_run(line_str[2:])
+                    run.bold = True
+                    run.font.size = Pt(14)
+                elif line_str.startswith('## '):
+                    p = doc.add_paragraph()
+                    run = p.add_run(line_str[3:])
+                    run.bold = True
+                    run.font.size = Pt(12)
+                elif line_str.startswith('### '):
+                    p = doc.add_paragraph()
+                    run = p.add_run(line_str[4:])
+                    run.bold = True
+                    run.font.size = Pt(11)
+                else:
+                    p = doc.add_paragraph()
+                    run = p.add_run(line_str)
+                    run.font.size = Pt(11)
+                
+                p.runs[0].font.name = "Times New Roman"
 
-    # ----------------------------------------------------------------------
-    # TAB 2: PDF SCAN HOẶC ẢNH SANG WORD (BÓC TÁCH BẰNG AI & NHÚNG ẢNH GỐC)
-    # ----------------------------------------------------------------------
-    with tab_ocr:
-        st.subheader("Chuyển đổi PDF Scan / File Ảnh chụp sang Word")
-        st.caption("Áp dụng cho tài liệu scan máy photo hoặc ảnh chụp (.png, .jpg) gồm cả chữ và sơ đồ.")
+        if in_table and table_rows:
+            build_table(table_rows)
 
-        uploaded_scan = st.file_uploader(
-            "Tải lên file Ảnh hoặc PDF Scan:",
-            type=["pdf", "png", "jpg", "jpeg"],
-            key=f"app10_ocr_{st.session_state.uploader_key}"
-        )
+    if uploaded_file:
+        file_bytes = uploaded_file.getvalue()
+        fname = uploaded_file.name
+        fext = fname.rsplit('.', 1)[-1].lower()
 
-        if uploaded_scan:
-            fname = uploaded_scan.name
-            fext = fname.rsplit('.', 1)[-1].lower()
+        st.info(f"📄 Đã nhận: **{fname}** ({len(file_bytes) / 1024:.1f} KB)")
 
-            if st.button("🚀 Bóc Tách Văn Bản & Tạo File Word", type="primary", key="btn_convert_ocr10"):
-                with st.spinner("Đang xử lý hình ảnh và bóc tách nội dung chi tiết..."):
-                    try:
-                        import google.generativeai as genai
+        if st.button("🚀 Bắt đầu Nhận Dạng & Xuất Word", type="primary"):
+            api_key = st.secrets.get("GEMINI_API_KEY", os.environ.get("GEMINI_API_KEY", ""))
+            if not api_key:
+                st.error("Chưa cấu hình GEMINI_API_KEY trong file secrets.toml!")
+                return
 
-                        # Cấu hình API Key (Lấy từ st.secrets hoặc biến môi trường)
-                        api_key = st.secrets.get("GEMINI_API_KEY", os.environ.get("GEMINI_API_KEY", ""))
-                        if not api_key:
-                            st.error("Chưa cấu hình GEMINI_API_KEY trong Streamlit Secrets!")
-                            return
+            with st.spinner("Đang sử dụng AI đọc từng trang scan và tái tạo bảng biểu..."):
+                try:
+                    import google.generativeai as genai
+                    genai.configure(api_key=api_key)
+                    model = genai.GenerativeModel("gemini-2.5-flash")
 
-                        genai.configure(api_key=api_key)
-                        model = genai.GenerativeModel("gemini-2.5-flash")
+                    doc_out = Document()
 
-                        doc_out = Document()
-                        doc_out.add_heading(f"TÀI LIỆU CHUYỂN ĐỔI: {fname}", level=1)
+                    # Căn lề chuẩn văn bản hành chính (Lề trái 3cm, phải 1.5cm, trên/dưới 2cm)
+                    for section in doc_out.sections:
+                        section.top_margin = Inches(0.79)
+                        section.bottom_margin = Inches(0.79)
+                        section.left_margin = Inches(1.18)
+                        section.right_margin = Inches(0.59)
 
-                        # Trường hợp đầu vào là PDF Scan: Lấy từng trang làm ảnh để phân tích
-                        if fext == "pdf":
-                            pdf_doc = fitz.open("pdf", uploaded_scan.getvalue())
-                            for p_no in range(len(pdf_doc)):
-                                page = pdf_doc[p_no]
-                                pix = page.get_pixmap(dpi=150)
-                                img_bytes = pix.tobytes("png")
-                                pil_img = Image.open(BytesIO(img_bytes))
+                    prompt = """
+Bạn là chuyên gia số hóa tài liệu hành chính và văn bản. 
+Hãy đọc bức ảnh chụp tài liệu scan này và tái cấu trúc lại toàn bộ nội dung một cách chính xác tuyệt đối:
+1. Đối với các tiêu đề (Quốc hiệu, Tên văn bản, Cơ quan ban hành): ghi rõ ở dạng tiêu đề.
+2. Đối với BẢNG BIỂU (Table): BẮT BUỘC xuất ra ở định dạng Bảng Markdown (| Cột 1 | Cột 2 | ... |), điền đúng tất cả các hàng, cột (STT, Họ tên, Ngày tháng năm, Số hiệu...). Nếu cột chữ ký có ký tên, ghi là '[Đã ký]' hoặc để trống.
+3. Không bỏ sót bất kỳ dòng chữ nào, kể cả ngày tháng năm, số hiệu hoặc dòng ghi chú chân trang.
+4. Chỉ trả về nội dung Markdown thuần, không kèm lời mở đầu hoặc kết thúc.
+"""
 
-                                # Gửi ảnh sang Gemini nhận diện toàn bộ văn bản và bảng biểu
-                                prompt = "Hãy bóc tách toàn bộ văn bản và dữ liệu trong trang này một cách chính xác tuyệt đối. Giữ nguyên tiêu đề, cấu trúc các mục và bảng biểu nếu có."
-                                response = model.generate_content([prompt, pil_img])
+                    # Trường hợp PDF: chuyển từng trang thành ảnh nét (DPI 200) rồi OCR
+                    if fext == "pdf":
+                        pdf_doc = fitz.open("pdf", file_bytes)
+                        total_p = len(pdf_doc)
+                        progress_bar = st.progress(0)
 
-                                doc_out.add_heading(f"Trang {p_no + 1}", level=2)
-                                doc_out.add_paragraph(response.text)
+                        for p_idx in range(total_p):
+                            page = pdf_doc[p_idx]
+                            pix = page.get_pixmap(dpi=200)
+                            pil_img = Image.open(BytesIO(pix.tobytes("png")))
+
+                            response = model.generate_content([prompt, pil_img])
+                            parse_markdown_to_docx(doc_out, response.text)
+
+                            if p_idx < total_p - 1:
                                 doc_out.add_page_break()
 
-                        # Trường hợp đầu vào là File Ảnh đơn lẻ (.png, .jpg)
-                        else:
-                            pil_img = Image.open(uploaded_scan)
-                            prompt = "Hãy bóc tách toàn bộ văn bản và dữ liệu trong bức ảnh này một cách chính xác tuyệt đối. Giữ nguyên cấu trúc các mục, bảng biểu."
-                            response = model.generate_content([prompt, pil_img])
+                            progress_bar.progress((p_idx + 1) / total_p)
 
-                            # Chèn ảnh gốc lên đầu làm đối chứng
-                            img_stream = BytesIO()
-                            pil_img.save(img_stream, format="PNG")
-                            img_stream.seek(0)
-                            doc_out.add_picture(img_stream, width=Inches(6.0))
+                    # Trường hợp ảnh đơn lẻ (PNG/JPG)
+                    else:
+                        pil_img = Image.open(BytesIO(file_bytes))
+                        response = model.generate_content([prompt, pil_img])
+                        parse_markdown_to_docx(doc_out, response.text)
 
-                            doc_out.add_heading("Nội Dung Văn Bản Trích Xuất:", level=2)
-                            doc_out.add_paragraph(response.text)
+                    out_stream = BytesIO()
+                    doc_out.save(out_stream)
 
-                        out_docx = BytesIO()
-                        doc_out.save(out_docx)
+                    base_name = fname.rsplit('.', 1)[0]
+                    st.success("🎉 Đã bóc tách thành công văn bản và tái tạo bảng Word có thể chỉnh sửa!")
 
-                        st.success("🎉 Bóc tách thành công văn bản và tạo tài liệu Word hoàn chỉnh!")
-                        st.download_button(
-                            label="📥 Tải xuống File Word (.docx)",
-                            data=out_docx.getvalue(),
-                            file_name=f"OCR_{fname.rsplit('.', 1)[0]}.docx",
-                            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                            on_click=clear_file
-                        )
+                    st.download_button(
+                        label="📥 Tải xuống File Word (.docx)",
+                        data=out_stream.getvalue(),
+                        file_name=f"So_Hoa_{base_name}.docx",
+                        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                        on_click=clear_file
+                    )
 
-                    except Exception as e:
-                        st.error(f"Lỗi xử lý OCR: {e}")
+                except Exception as e:
+                    st.error(f"Lỗi trong quá trình xử lý: {e}")
 # ==========================================                        
 # 5. KÍCH HOẠT ỨNG DỤNG THEO LỰA CHỌN MENU
 # ==========================================
