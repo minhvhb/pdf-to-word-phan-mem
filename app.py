@@ -1717,7 +1717,7 @@ def app_metadata_cleaner():
                 )
 
 # ==========================================
-# APP 10: PDF SCAN / ẢNH SANG WORD (CHUẨN HÓA HOÀN TOÀN) - SỬ DỤNG SDK CHÍNH QUY & MULTI-KEY
+# APP 10: PDF SCAN / ẢNH SANG WORD (CHUẨN HÓA HOÀN TOÀN) - SỬ DỤNG SDK CHÍNH QUY & MULTI-KEY (HỖ TRỢ ĐA TRANG)
 # ==========================================
 def app_pdf_image_to_word_advanced():
     import json
@@ -1743,26 +1743,18 @@ def app_pdf_image_to_word_advanced():
     def call_gemini_json_robust(api_key, img_bytes, page_type):
         client = genai.Client(api_key=api_key)
         
-        if page_type == 1:
-            schema = '''{
-                "header_left": "Dòng 1\\nDòng 2",
-                "header_right": "Dòng 1\\nDòng 2",
-                "title": "Tiêu đề",
-                "info": "Thông tin chi bộ...\\nSố lượng: 14",
-                "table_headers": ["STT", "Họ tên..."],
-                "table_rows": [["1", "Nguyễn Văn A..."]],
-                "footer_left": "Người kiểm tra...",
-                "footer_right": "Người kiểm tra...",
-                "page_number": "1/2..."
-            }'''
-        else:
-            schema = '''{
-                "footer_left_title": "Chức danh...",
-                "footer_left_name": "Họ tên...",
-                "footer_right_title": "Chức danh...",
-                "footer_right_name": "Họ tên...",
-                "page_number": "2/2..."
-            }'''
+        # Schema đơn giản và linh hoạt hơn để đọc bất kỳ nội dung nào
+        schema = '''{
+            "header_left": "Dòng 1\\nDòng 2",
+            "header_right": "Dòng 1\\nDòng 2",
+            "title": "Tiêu đề",
+            "info": "Thông tin...",
+            "table_headers": ["Cột 1", "Cột 2..."],
+            "table_rows": [["Dữ liệu 1", "Dữ liệu 2..."]],
+            "footer_left": "Chữ ký trái...",
+            "footer_right": "Chữ ký phải...",
+            "page_number": "Trang..."
+        }'''
             
         prompt = f"""
         Trích xuất văn bản từ ảnh scan này sang JSON.
@@ -1778,17 +1770,15 @@ def app_pdf_image_to_word_advanced():
             response_mime_type="application/json"
         )
 
-        # Cập nhật danh sách model cho App 10
         models_to_try = [
-            "gemini-3.8-flash",
-            "gemini-3.6-flash",
             "gemini-1.5-flash",
+            "gemini-2.0-flash",
             "gemini-1.5-pro"
         ]
         
         last_err = ""
         for model in models_to_try:
-            for attempt in range(2): 
+            for attempt in range(3):
                 try:
                     res = client.models.generate_content(
                         model=model,
@@ -1806,12 +1796,12 @@ def app_pdf_image_to_word_advanced():
                     if "404" in err_msg or "not found" in err_msg or "no longer available" in err_msg:
                         break 
                     if any(x in err_msg for x in ['429', 'quota', 'exhausted']):
-                        time.sleep(3) 
+                        time.sleep(5) 
                         continue
                     if any(x in err_msg for x in ['503', 'unavailable', 'overloaded']):
                         time.sleep(2)
                         continue
-                    break 
+                    break
         raise Exception(f"Đã cạn kiệt số lần thử trên máy chủ Google. Lỗi cuối: {last_err}")
 
     def set_cell_border(cell):
@@ -1849,123 +1839,123 @@ def app_pdf_image_to_word_advanced():
                         sec.left_margin = Inches(1.0)
                         sec.right_margin = Inches(0.6)
 
-                    # --- XỬ LÝ TRANG 1 ---
-                    if len(pdf_doc) > 0:
-                        page1 = pdf_doc[0]
-                        pix1 = page1.get_pixmap(dpi=200)
-                        img1_bytes = pix1.tobytes("png")
-                        pil_img1 = Image.open(BytesIO(img1_bytes))
-                        W, H = pil_img1.size
+                    # --- VÒNG LẶP XỬ LÝ TOÀN BỘ CÁC TRANG TRONG FILE ---
+                    total_pages = len(pdf_doc)
+                    for page_num in range(total_pages):
+                        if page_num > 0:
+                            doc_out.add_page_break()
 
-                        data = call_gemini_json_robust(api_key_input, img1_bytes, page_type=1)
-
-                        t_hdr = doc_out.add_table(rows=1, cols=2)
-                        t_hdr.alignment = WD_TABLE_ALIGNMENT.CENTER
-                        t_hdr.columns[0].width = Inches(3.0)
-                        t_hdr.columns[1].width = Inches(4.0)
-
-                        p_hl = t_hdr.cell(0, 0).paragraphs[0]; p_hl.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                        r_hl = p_hl.add_run(c_txt(data.get("header_left", ""))); r_hl.bold = True; r_hl.font.name = "Times New Roman"; r_hl.font.size = Pt(11)
-
-                        p_hr = t_hdr.cell(0, 1).paragraphs[0]; p_hr.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                        r_hr = p_hr.add_run(c_txt(data.get("header_right", ""))); r_hr.bold = True; r_hr.font.name = "Times New Roman"; r_hr.font.size = Pt(11)
+                        st.toast(f"Đang xử lý trang {page_num + 1}/{total_pages}...")
                         
-                        doc_out.add_paragraph()
+                        page = pdf_doc[page_num]
+                        pix = page.get_pixmap(dpi=200)
+                        img_bytes = pix.tobytes("png")
+                        pil_img = Image.open(BytesIO(img_bytes))
+                        W, H = pil_img.size
 
-                        p_title = doc_out.add_paragraph(); p_title.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                        r_title = p_title.add_run(c_txt(data.get("title", ""))); r_title.bold = True; r_title.font.name = "Times New Roman"; r_title.font.size = Pt(14)
-
-                        t_info = doc_out.add_table(rows=1, cols=2)
-                        t_info.alignment = WD_TABLE_ALIGNMENT.CENTER
-                        t_info.columns[0].width = Inches(5.0)
-                        t_info.columns[1].width = Inches(2.0)
-
-                        p_info = t_info.cell(0, 0).paragraphs[0]; p_info.paragraph_format.line_spacing = 1.15
-                        r_info = p_info.add_run(c_txt(data.get("info", ""))); r_info.font.name = "Times New Roman"; r_info.font.size = Pt(11)
-
-                        qr_crop = pil_img1.crop((int(W * 0.65), int(H * 0.12), int(W * 0.95), int(H * 0.38)))
-                        qr_stream = BytesIO(); qr_crop.save(qr_stream, format="PNG"); qr_stream.seek(0)
+                        # Xác định loại trang để cắt ảnh (trang cuối thường chứa chữ ký, các trang khác chứa QR)
+                        page_type = 2 if page_num == total_pages - 1 and total_pages > 1 else 1
                         
-                        p_qr = t_info.cell(0, 1).paragraphs[0]; p_qr.alignment = WD_ALIGN_PARAGRAPH.RIGHT
-                        p_qr.add_run().add_picture(qr_stream, width=Inches(1.4))
+                        data = call_gemini_json_robust(api_key_input, img_bytes, page_type)
 
-                        doc_out.add_paragraph()
+                        if page_type == 1:
+                            t_hdr = doc_out.add_table(rows=1, cols=2)
+                            t_hdr.alignment = WD_TABLE_ALIGNMENT.CENTER
+                            t_hdr.columns[0].width = Inches(3.0)
+                            t_hdr.columns[1].width = Inches(4.0)
 
-                        headers = data.get("table_headers", [])
-                        rows = data.get("table_rows", [])
-                        if headers and rows:
-                            cols_cnt = len(headers)
-                            tbl = doc_out.add_table(rows=len(rows)+1, cols=cols_cnt)
-                            tbl.alignment = WD_TABLE_ALIGNMENT.CENTER
-                            col_widths = [Inches(0.6), Inches(1.5), Inches(2.2), Inches(1.5), Inches(1.2)]
+                            p_hl = t_hdr.cell(0, 0).paragraphs[0]; p_hl.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                            r_hl = p_hl.add_run(c_txt(data.get("header_left", ""))); r_hl.bold = True; r_hl.font.name = "Times New Roman"; r_hl.font.size = Pt(11)
 
-                            for c_idx, h_text in enumerate(headers):
-                                cell = tbl.cell(0, c_idx); cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
-                                if c_idx < len(col_widths): cell.width = col_widths[c_idx]
-                                p = cell.paragraphs[0]; p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                                r = p.add_run(c_txt(h_text)); r.bold = True; r.font.name = "Times New Roman"; r.font.size = Pt(11)
-                                set_cell_border(cell)
+                            p_hr = t_hdr.cell(0, 1).paragraphs[0]; p_hr.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                            r_hr = p_hr.add_run(c_txt(data.get("header_right", ""))); r_hr.bold = True; r_hr.font.name = "Times New Roman"; r_hr.font.size = Pt(11)
+                            
+                            doc_out.add_paragraph()
 
-                            for r_idx, row_data in enumerate(rows):
-                                for c_idx in range(cols_cnt):
-                                    cell = tbl.cell(r_idx + 1, c_idx); cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
+                            p_title = doc_out.add_paragraph(); p_title.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                            r_title = p_title.add_run(c_txt(data.get("title", ""))); r_title.bold = True; r_title.font.name = "Times New Roman"; r_title.font.size = Pt(14)
+
+                            t_info = doc_out.add_table(rows=1, cols=2)
+                            t_info.alignment = WD_TABLE_ALIGNMENT.CENTER
+                            t_info.columns[0].width = Inches(5.0)
+                            t_info.columns[1].width = Inches(2.0)
+
+                            p_info = t_info.cell(0, 0).paragraphs[0]; p_info.paragraph_format.line_spacing = 1.15
+                            r_info = p_info.add_run(c_txt(data.get("info", ""))); r_info.font.name = "Times New Roman"; r_info.font.size = Pt(11)
+
+                            # Cắt QR góc trên bên phải
+                            qr_crop = pil_img.crop((int(W * 0.65), int(H * 0.12), int(W * 0.95), int(H * 0.38)))
+                            qr_stream = BytesIO(); qr_crop.save(qr_stream, format="PNG"); qr_stream.seek(0)
+                            
+                            p_qr = t_info.cell(0, 1).paragraphs[0]; p_qr.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+                            p_qr.add_run().add_picture(qr_stream, width=Inches(1.4))
+
+                            doc_out.add_paragraph()
+
+                            headers = data.get("table_headers", [])
+                            rows = data.get("table_rows", [])
+                            if headers and rows:
+                                cols_cnt = len(headers)
+                                tbl = doc_out.add_table(rows=len(rows)+1, cols=cols_cnt)
+                                tbl.alignment = WD_TABLE_ALIGNMENT.CENTER
+                                col_widths = [Inches(0.6), Inches(1.5), Inches(2.2), Inches(1.5), Inches(1.2)]
+
+                                for c_idx, h_text in enumerate(headers):
+                                    cell = tbl.cell(0, c_idx); cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
                                     if c_idx < len(col_widths): cell.width = col_widths[c_idx]
-                                    
-                                    val = row_data[c_idx] if c_idx < len(row_data) else ""
-                                    p = cell.paragraphs[0]; p.alignment = WD_ALIGN_PARAGRAPH.CENTER if c_idx != 2 else WD_ALIGN_PARAGRAPH.LEFT
-                                    r = p.add_run(c_txt(val)); r.font.name = "Times New Roman"; r.font.size = Pt(11)
+                                    p = cell.paragraphs[0]; p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                                    r = p.add_run(c_txt(h_text)); r.bold = True; r.font.name = "Times New Roman"; r.font.size = Pt(11)
                                     set_cell_border(cell)
 
-                        doc_out.add_paragraph()
+                                for r_idx, row_data in enumerate(rows):
+                                    for c_idx in range(cols_cnt):
+                                        cell = tbl.cell(r_idx + 1, c_idx); cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
+                                        if c_idx < len(col_widths): cell.width = col_widths[c_idx]
+                                        
+                                        val = row_data[c_idx] if c_idx < len(row_data) else ""
+                                        p = cell.paragraphs[0]; p.alignment = WD_ALIGN_PARAGRAPH.CENTER if c_idx != 2 else WD_ALIGN_PARAGRAPH.LEFT
+                                        r = p.add_run(c_txt(val)); r.font.name = "Times New Roman"; r.font.size = Pt(11)
+                                        set_cell_border(cell)
 
-                        t_chk = doc_out.add_table(rows=1, cols=2)
-                        t_chk.alignment = WD_TABLE_ALIGNMENT.CENTER
-                        
-                        p_chk1 = t_chk.cell(0, 0).paragraphs[0]; p_chk1.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                        r_chk1 = p_chk1.add_run(c_txt(data.get("footer_left", ""))); r_chk1.bold = True; r_chk1.font.name = "Times New Roman"; r_chk1.font.size = Pt(11)
+                            doc_out.add_paragraph()
 
-                        p_chk2 = t_chk.cell(0, 1).paragraphs[0]; p_chk2.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                        r_chk2 = p_chk2.add_run(c_txt(data.get("footer_right", ""))); r_chk2.bold = True; r_chk2.font.name = "Times New Roman"; r_chk2.font.size = Pt(11)
+                            t_chk = doc_out.add_table(rows=1, cols=2)
+                            t_chk.alignment = WD_TABLE_ALIGNMENT.CENTER
+                            
+                            p_chk1 = t_chk.cell(0, 0).paragraphs[0]; p_chk1.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                            r_chk1 = p_chk1.add_run(c_txt(data.get("footer_left", ""))); r_chk1.bold = True; r_chk1.font.name = "Times New Roman"; r_chk1.font.size = Pt(11)
 
-                        p_foot = doc_out.add_paragraph(); p_foot.alignment = WD_ALIGN_PARAGRAPH.RIGHT
-                        r_foot = p_foot.add_run(c_txt(data.get("page_number", ""))); r_foot.font.name = "Times New Roman"; r_foot.font.size = Pt(9)
+                            p_chk2 = t_chk.cell(0, 1).paragraphs[0]; p_chk2.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                            r_chk2 = p_chk2.add_run(c_txt(data.get("footer_right", ""))); r_chk2.bold = True; r_chk2.font.name = "Times New Roman"; r_chk2.font.size = Pt(11)
 
-                    # --- XỬ LÝ TRANG 2 ---
-                    if len(pdf_doc) > 1:
-                        doc_out.add_page_break()
-                        page2 = pdf_doc[1]
-                        pix2 = page2.get_pixmap(dpi=200)
-                        img2_bytes = pix2.tobytes("png")
-                        pil_img2 = Image.open(BytesIO(img2_bytes))
-                        W2, H2 = pil_img2.size
+                            p_foot = doc_out.add_paragraph(); p_foot.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+                            r_foot = p_foot.add_run(c_txt(data.get("page_number", ""))); r_foot.font.name = "Times New Roman"; r_foot.font.size = Pt(9)
 
-                        sig_crop = pil_img2.crop((0, 0, W2, int(H2 * 0.35)))
-                        sig_stream = BytesIO(); sig_crop.save(sig_stream, format="PNG"); sig_stream.seek(0)
-                        
-                        p_sig = doc_out.add_paragraph(); p_sig.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                        p_sig.add_run().add_picture(sig_stream, width=Inches(6.0))
-                        
-                        data2 = call_gemini_json_robust(api_key_input, img2_bytes, page_type=2)
+                        elif page_type == 2:
+                            # Cắt chữ ký nửa trên
+                            sig_crop = pil_img.crop((0, 0, W, int(H * 0.35)))
+                            sig_stream = BytesIO(); sig_crop.save(sig_stream, format="PNG"); sig_stream.seek(0)
+                            
+                            p_sig = doc_out.add_paragraph(); p_sig.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                            p_sig.add_run().add_picture(sig_stream, width=Inches(6.0))
+                            
+                            tbl_p2 = doc_out.add_table(rows=1, cols=2)
+                            tbl_p2.alignment = WD_TABLE_ALIGNMENT.CENTER
 
-                        tbl_p2 = doc_out.add_table(rows=1, cols=2)
-                        tbl_p2.alignment = WD_TABLE_ALIGNMENT.CENTER
+                            p2_l = tbl_p2.cell(0, 0).paragraphs[0]; p2_l.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                            r2_l1 = p2_l.add_run(c_txt(data.get("footer_left", "")) + "\n"); r2_l1.bold = True; r2_l1.font.name = "Times New Roman"; r2_l1.font.size=Pt(11)
 
-                        p2_l = tbl_p2.cell(0, 0).paragraphs[0]; p2_l.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                        r2_l1 = p2_l.add_run(c_txt(data2.get("footer_left_title", "")) + "\n"); r2_l1.bold = True; r2_l1.font.name = "Times New Roman"; r2_l1.font.size=Pt(11)
-                        r2_l2 = p2_l.add_run(c_txt(data2.get("footer_left_name", ""))); r2_l2.bold = True; r2_l2.font.name = "Times New Roman"; r2_l2.font.size=Pt(11)
+                            p2_r = tbl_p2.cell(0, 1).paragraphs[0]; p2_r.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                            r2_r1 = p2_r.add_run(c_txt(data.get("footer_right", "")) + "\n"); r2_r1.bold = True; r2_r1.font.name = "Times New Roman"; r2_r1.font.size=Pt(11)
 
-                        p2_r = tbl_p2.cell(0, 1).paragraphs[0]; p2_r.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                        r2_r1 = p2_r.add_run(c_txt(data2.get("footer_right_title", "")) + "\n"); r2_r1.bold = True; r2_r1.font.name = "Times New Roman"; r2_r1.font.size=Pt(11)
-                        r2_r2 = p2_r.add_run(c_txt(data2.get("footer_right_name", ""))); r2_r2.bold = True; r2_r2.font.name = "Times New Roman"; r2_r2.font.size=Pt(11)
-
-                        p_foot2 = doc_out.add_paragraph(); p_foot2.alignment = WD_ALIGN_PARAGRAPH.RIGHT
-                        r_foot2 = p_foot2.add_run(c_txt(data2.get("page_number", ""))); r_foot2.font.name = "Times New Roman"; r_foot2.font.size = Pt(9)
+                            p_foot2 = doc_out.add_paragraph(); p_foot2.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+                            r_foot2 = p_foot2.add_run(c_txt(data.get("page_number", ""))); r_foot2.font.name = "Times New Roman"; r_foot2.font.size = Pt(9)
 
                     out_stream = BytesIO()
                     doc_out.save(out_stream)
 
                     base_name = fname.rsplit('.', 1)[0]
-                    st.success("🎉 Tái tạo thành công tuyệt đối! Đã bóc tách 100% văn bản, tự động cắt ảnh QR & Chữ ký.")
+                    st.success("🎉 Tái tạo thành công tuyệt đối! Đã bóc tách toàn bộ tài liệu.")
                     st.download_button(
                         label="📥 Tải xuống File Word (.docx)",
                         data=out_stream.getvalue(),
