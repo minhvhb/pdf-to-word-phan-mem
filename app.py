@@ -1752,7 +1752,7 @@ def app_pdf_image_to_word_advanced():
     from PIL import Image
 
     st.title("📑 Chuyển PDF Scan / Ảnh sang Word (Tái Tạo Bảng & Ký Tự Thật)")
-    st.markdown("Giải pháp chuyên dụng cho **tài liệu scan và ảnh chụp**: Sử dụng AI để nhận dạng chữ viết, tái tạo lại **bảng biểu có thể chỉnh sửa** và văn bản thật sự trong Word.")
+    st.markdown("Giải pháp chuyên dụng cho **tài liệu scan và ảnh chụp**: Tự động nhận dạng chữ viết, tái tạo lại **bảng biểu có thể chỉnh sửa** và văn bản thật sự trong Word.")
 
     uploaded_file = st.file_uploader(
         "Tải lên file PDF Scan hoặc Ảnh tài liệu (Hỗ trợ PDF, PNG, JPG):",
@@ -1760,9 +1760,50 @@ def app_pdf_image_to_word_advanced():
         key=f"app10_ocr_{st.session_state.uploader_key}"
     )
 
-    # Hàm gọi trực tiếp Gemini REST API (Không cần thư viện google.generativeai)
+    # Hàm gọi Gemini REST API với cơ chế tự động dò tìm model khả dụng
     def call_gemini_vision_api(api_key, img_bytes, prompt):
-        models = ["gemini-2.5-flash", "gemini-1.5-flash"]
+        # 1. Tự động hỏi Google API xem API Key này đang hỗ trợ những model nào
+        candidates = []
+        try:
+            res_list = requests.get(
+                f"https://generativelanguage.googleapis.com/v1beta/models?key={api_key}",
+                timeout=10
+            )
+            if res_list.status_code == 200:
+                data = res_list.json()
+                for m in data.get("models", []):
+                    if "generateContent" in m.get("supportedGenerationMethods", []):
+                        name = m.get("name", "")
+                        if "gemini" in name:
+                            candidates.append(name)
+        except Exception:
+            pass
+
+        # 2. Danh sách dự phòng nếu không list được
+        fallback_models = [
+            "models/gemini-2.0-flash",
+            "models/gemini-2.5-flash",
+            "models/gemini-1.5-flash-latest",
+            "models/gemini-1.5-flash-002",
+            "models/gemini-1.5-flash-001",
+            "models/gemini-1.5-flash",
+            "models/gemini-1.5-pro-latest",
+            "models/gemini-1.5-pro"
+        ]
+
+        if not candidates:
+            candidates = fallback_models
+        else:
+            # Sắp xếp ưu tiên các dòng Flash tốc độ cao
+            def model_priority(m_name):
+                if "2.0-flash" in m_name: return 0
+                if "2.5-flash" in m_name: return 1
+                if "1.5-flash-latest" in m_name: return 2
+                if "1.5-flash-002" in m_name: return 3
+                if "1.5-flash" in m_name: return 4
+                return 5
+            candidates.sort(key=model_priority)
+
         b64_data = base64.b64encode(img_bytes).decode("utf-8")
         payload = {
             "contents": [{
@@ -1780,21 +1821,28 @@ def app_pdf_image_to_word_advanced():
         headers = {"Content-Type": "application/json"}
 
         last_error = ""
-        for model in models:
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
-            try:
-                res = requests.post(url, headers=headers, json=payload, timeout=90)
-                if res.status_code == 200:
-                    data = res.json()
-                    return data["candidates"][0]["content"]["parts"][0]["text"]
-                else:
-                    last_error = f"Model {model} phản hồi mã lỗi {res.status_code}: {res.text}"
-            except Exception as ex:
-                last_error = str(ex)
+        # 3. Thử lần lượt các model khả dụng trên cả 2 endpoint v1beta và v1
+        for model in candidates:
+            clean_model = model if model.startswith("models/") else f"models/{model}"
+            for version in ["v1beta", "v1"]:
+                url = f"https://generativelanguage.googleapis.com/{version}/{clean_model}:generateContent?key={api_key}"
+                try:
+                    res = requests.post(url, headers=headers, json=payload, timeout=90)
+                    if res.status_code == 200:
+                        data = res.json()
+                        candidates_resp = data.get("candidates", [])
+                        if candidates_resp:
+                            parts = candidates_resp[0].get("content", {}).get("parts", [])
+                            if parts:
+                                return "".join([p.get("text", "") for p in parts])
+                    else:
+                        last_error = f"{clean_model} ({version}) -> {res.status_code}: {res.text[:180]}"
+                except Exception as ex:
+                    last_error = str(ex)
 
         raise Exception(f"Không thể kết nối đến AI. Chi tiết: {last_error}")
 
-    # Hàm kẻ khung viền bảng trong Word
+    # Hàm kẻ viền bảng Word
     def set_cell_border(cell, **kwargs):
         tcPr = cell._tc.get_or_add_tcPr()
         tcBorders = OxmlElement('w:tcBorders')
@@ -1810,7 +1858,7 @@ def app_pdf_image_to_word_advanced():
                 tcBorders.append(element)
         tcPr.append(tcBorders)
 
-    # Hàm dựng Markdown thành phần tử Word thật (Paragraph & Table)
+    # Hàm chuyển đổi kết quả Markdown thành đoạn văn và Bảng biểu Word thật
     def parse_markdown_to_docx(doc, md_text):
         lines = md_text.strip().split('\n')
         in_table = False
