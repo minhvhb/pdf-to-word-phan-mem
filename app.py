@@ -111,15 +111,13 @@ class GeminiKeyPool:
         self.ok_calls = {k: 0 for k in self.keys}
         self.rr = 0
         self._clients = {}
+        self.last_err = {}                    # key -> mô tả lỗi gần nhất
 
     # ---- client
     def _client(self, key):
         c = self._clients.get(key)
         if c is None:
-            if key.startswith("AQ."):          # key Vertex AI (Express mode)
-                c = genai.Client(vertexai=True, api_key=key)
-            else:
-                c = genai.Client(api_key=key)
+            c = genai.Client(api_key=key)      # key AI Studio (AIza... hoặc AQ....) đều gọi Gemini API thường
             self._clients[key] = c
         return c
 
@@ -151,7 +149,8 @@ class GeminiKeyPool:
             code = int(m.group(1)) if m else None
         if any(x in low for x in ("api_key_invalid", "api key not valid", "permission_denied", "leaked", "suspended",
                                   "api key expired")) or code in (401, 403):
-            self._block(key, None, 24 * 3600, "Key không hợp lệ/bị khoá")
+            short = re.sub(r"\s+", " ", msg)[:170]
+            self._block(key, None, 600, "Bị từ chối truy cập (401/403): " + short)
             return "retry"
         if code == 429 or "resource_exhausted" in low:
             if "perday" in low.replace(" ", "") or "per day" in low:
@@ -191,17 +190,36 @@ class GeminiKeyPool:
                         return resp
                     except Exception as e:
                         last_err = e
+                        self.last_err[key] = re.sub(r"\s+", " ", str(e))[:200]
                         if self._classify(key, model, e) == "fatal":
                             raise
             if soonest is not None and soonest <= 30 and rnd < 2:
                 time.sleep(soonest + 0.5)       # chờ khoá ngắn (giới hạn/phút) rồi thử lại
                 continue
             break
-        nxt = self.next_available()
-        hint = f" Dự kiến có lại khoảng {_fmt_ts(nxt)}." if nxt else ""
-        raise RuntimeError("Tất cả API key/model Gemini đang hết hạn mức hoặc quá tải." + hint +
-                           " Vui lòng thử lại sau hoặc báo Quản trị viên bổ sung key. "
-                           f"(Lỗi cuối: {str(last_err)[:200]})")
+        raise RuntimeError(self._final_message(last_err))
+
+    def _final_message(self, last_err):
+        now = time.time()
+        auth_keys, lines = 0, []
+        with self.lock:
+            for k in self.keys:
+                b = self.blocks.get((k, None))
+                if b and b[0] > now and b[1].startswith("Bị từ chối"):
+                    auth_keys += 1
+                lines.append(f"• Key …{k[-4:]}: {self.last_err.get(k, 'chưa có lỗi')[:150]}")
+        if auth_keys == len(self.keys):
+            head = "Không có API key nào được Google chấp nhận (bị từ chối truy cập 401/403) — đây KHÔNG phải lỗi hết hạn mức."
+        else:
+            nxt = self.next_available()
+            head = "Các API key/model Gemini đang hết hạn mức hoặc quá tải." + (
+                f" Dự kiến có lại khoảng {_fmt_ts(nxt)}." if nxt else "")
+        return head + " Chi tiết từng key:\n" + "\n".join(lines)
+
+    def reset(self):
+        with self.lock:
+            self.blocks.clear()
+            self.last_err.clear()
 
     def next_available(self):
         now = time.time()
@@ -222,7 +240,7 @@ class GeminiKeyPool:
         out = []
         for k in self.keys:
             bl = [(p[1] or "toàn bộ", v[0], v[1]) for p, v in items if p[0] == k]
-            out.append({"key": "…" + k[-4:], "ok": calls.get(k, 0), "blocks": bl})
+            out.append({"key": "…" + k[-4:], "ok": calls.get(k, 0), "blocks": bl, "err": self.last_err.get(k, "")})
         mod = [(p[1], v[0], v[1]) for p, v in items if p[0] is None]
         return out, mod
 
@@ -280,8 +298,13 @@ def render_gemini_status():
             st.markdown(f"**{k['key']}** — {'🟢 sẵn sàng' if not k['blocks'] else '🟠 có khoá tạm'} • đã dùng {k['ok']} lượt")
             for scope, until, why in k["blocks"]:
                 st.caption(f"• {scope}: {why}, đến {_fmt_ts(until)}")
+            if k["err"]:
+                st.caption(f"Lỗi gần nhất: {k['err']}")
         for m, until, why in models_blocked:
             st.caption(f"Model {m}: {why}, đến {_fmt_ts(until)}")
+        if st.button("🔄 Xoá khoá tạm & thử lại", key="gemini_pool_reset"):
+            pool.reset()
+            st.rerun()
         st.caption("Số lượt chỉ tính từ lúc ứng dụng khởi động lại gần nhất.")
 
 # ==========================================
