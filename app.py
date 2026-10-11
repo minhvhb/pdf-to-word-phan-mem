@@ -256,7 +256,7 @@ app_mode = st.sidebar.radio(
         "🗜️ 7. Nén & Đóng Gói ZIP Gửi Mail",
         "🔄 8. Xoay Trang PDF",
         "🛡️ 9. Xóa Siêu Dữ Liệu Bảo Mật",
-        "📑 10. PDF/Ảnh sang Word (Giữ Hình Ảnh)"
+        "📑 10. PDF Scan / Ảnh sang Word"
     ],
     label_visibility="collapsed"
 )
@@ -1762,7 +1762,6 @@ def app_pdf_image_to_word_advanced():
 
     # Hàm gọi Gemini REST API với cơ chế tự động dò tìm model khả dụng
     def call_gemini_vision_api(api_key, img_bytes, prompt):
-        # 1. Tự động hỏi Google API xem API Key này đang hỗ trợ những model nào
         candidates = []
         try:
             res_list = requests.get(
@@ -1779,7 +1778,6 @@ def app_pdf_image_to_word_advanced():
         except Exception:
             pass
 
-        # 2. Danh sách dự phòng nếu không list được
         fallback_models = [
             "models/gemini-2.0-flash",
             "models/gemini-2.5-flash",
@@ -1794,7 +1792,6 @@ def app_pdf_image_to_word_advanced():
         if not candidates:
             candidates = fallback_models
         else:
-            # Sắp xếp ưu tiên các dòng Flash tốc độ cao
             def model_priority(m_name):
                 if "2.0-flash" in m_name: return 0
                 if "2.5-flash" in m_name: return 1
@@ -1821,7 +1818,6 @@ def app_pdf_image_to_word_advanced():
         headers = {"Content-Type": "application/json"}
 
         last_error = ""
-        # 3. Thử lần lượt các model khả dụng trên cả 2 endpoint v1beta và v1
         for model in candidates:
             clean_model = model if model.startswith("models/") else f"models/{model}"
             for version in ["v1beta", "v1"]:
@@ -2036,5 +2032,5 @@ elif "8. Xoay Trang PDF" in app_mode:
     app_rotate_pdf()
 elif "9. Xóa Siêu Dữ Liệu" in app_mode:
     app_metadata_cleaner()
-elif "10. PDF/Ảnh sang Word" in app_mode:
+elif "10. PDF Scan / Ảnh sang Word" in app_mode:
     app_pdf_image_to_word_advanced()
