@@ -1743,18 +1743,26 @@ def app_pdf_image_to_word_advanced():
     def call_gemini_json_robust(api_key, img_bytes, page_type):
         client = genai.Client(api_key=api_key)
         
-        # Schema đơn giản và linh hoạt hơn để đọc bất kỳ nội dung nào
-        schema = '''{
-            "header_left": "Dòng 1\\nDòng 2",
-            "header_right": "Dòng 1\\nDòng 2",
-            "title": "Tiêu đề",
-            "info": "Thông tin...",
-            "table_headers": ["Cột 1", "Cột 2..."],
-            "table_rows": [["Dữ liệu 1", "Dữ liệu 2..."]],
-            "footer_left": "Chữ ký trái...",
-            "footer_right": "Chữ ký phải...",
-            "page_number": "Trang..."
-        }'''
+        if page_type == 1:
+            schema = '''{
+                "header_left": "Dòng 1\\nDòng 2",
+                "header_right": "Dòng 1\\nDòng 2",
+                "title": "Tiêu đề",
+                "info": "Thông tin...",
+                "table_headers": ["Cột 1", "Cột 2..."],
+                "table_rows": [["Dữ liệu 1", "Dữ liệu 2..."]],
+                "footer_left": "Chữ ký trái...",
+                "footer_right": "Chữ ký phải...",
+                "page_number": "Trang..."
+            }'''
+        else:
+            schema = '''{
+                "footer_left_title": "Chức danh...",
+                "footer_left_name": "Họ tên...",
+                "footer_right_title": "Chức danh...",
+                "footer_right_name": "Họ tên...",
+                "page_number": "2/2..."
+            }'''
             
         prompt = f"""
         Trích xuất văn bản từ ảnh scan này sang JSON.
@@ -1770,10 +1778,11 @@ def app_pdf_image_to_word_advanced():
             response_mime_type="application/json"
         )
 
+        # Đã loại bỏ model 1.5-pro, chỉ dùng dòng Flash chịu tải cao
         models_to_try = [
             "gemini-1.5-flash",
             "gemini-2.0-flash",
-            "gemini-1.5-pro"
+            "gemini-1.5-flash-8b"
         ]
         
         last_err = ""
@@ -1793,16 +1802,26 @@ def app_pdf_image_to_word_advanced():
                 except Exception as e:
                     err_msg = str(e).lower()
                     last_err = str(e)
+                    
+                    # Lỗi 404: Tên model bị sai/khóa -> Bỏ qua ngay lập tức để sang model khác
                     if "404" in err_msg or "not found" in err_msg or "no longer available" in err_msg:
                         break 
+                    
+                    # Lỗi 429: Gửi trang quá nhanh -> Ngủ 10 giây để Google nhả block rồi thử lại
                     if any(x in err_msg for x in ['429', 'quota', 'exhausted']):
-                        time.sleep(5) 
+                        time.sleep(10) 
                         continue
+                    
+                    # Lỗi 503: Server bận -> Ngủ 3 giây
                     if any(x in err_msg for x in ['503', 'unavailable', 'overloaded']):
-                        time.sleep(2)
+                        time.sleep(3)
                         continue
-                    break
-        raise Exception(f"Đã cạn kiệt số lần thử trên máy chủ Google. Lỗi cuối: {last_err}")
+                    
+                    # Lỗi JSON (AI xuất sai format) -> Thử lại ngay
+                    time.sleep(1)
+                    continue
+                    
+        raise Exception(f"Đã cạn kiệt số lần thử. Nguyên nhân chính: Hệ thống Google đang chặn do gửi file quá nhanh. Vui lòng đợi 1 phút và thử lại. Lỗi hệ thống: {last_err}")
 
     def set_cell_border(cell):
         tcPr = cell._tc.get_or_add_tcPr()
