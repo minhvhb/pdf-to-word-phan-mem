@@ -51,10 +51,14 @@ def clear_file():
 # 0. HẠ TẦNG GỌI GEMINI: NHIỀU API KEY XOAY VÒNG + TỰ ĐỔI MODEL FLASH
 # ==========================================
 import threading
+import hashlib
+from collections import OrderedDict
 from datetime import datetime, timedelta
 
-# Thứ tự ưu tiên model (chất lượng cao -> nhẹ hơn, hạn mức riêng). Có thể ghi đè trong Secrets bằng GEMINI_MODELS.
-GEMINI_DEFAULT_MODELS = ["gemini-3.6-flash", "gemini-2.5-flash", "gemini-2.5-flash-lite"]
+# Hạn mức tính RIÊNG cho từng model -> dùng cả chuỗi Flash/Flash-Lite để cộng dồn lượt/ngày của 1 key.
+# Model nào key không có hạn mức hoặc không tồn tại sẽ tự bị bỏ qua. Ghi đè trong Secrets bằng GEMINI_MODELS.
+GEMINI_DEFAULT_MODELS = ["gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.5-flash", "gemini-3.5-flash-lite",
+                         "gemini-3.1-flash-lite", "gemini-2.5-flash", "gemini-2.5-flash-lite"]
 
 
 def _read_gemini_keys():
@@ -89,6 +93,33 @@ def _next_quota_reset_ts():
         return time.time() + 3 * 3600
 
 
+def _retry_delay(msg):
+    """Đọc thời gian chờ Google gợi ý (vd 'Please retry in 20.5s' / retryDelay: '20s'). None nếu không có."""
+    m = re.search(r"retry(?:Delay)?['\"]?\s*(?:in|:)\s*['\"]?([\d.]+)\s*s", msg, re.I)
+    try:
+        return float(m.group(1)) if m else None
+    except Exception:
+        return None
+
+
+def _payload_hash(contents, config):
+    h = hashlib.sha256()
+    items = contents if isinstance(contents, (list, tuple)) else [contents]
+    for it in items:
+        if isinstance(it, str):
+            h.update(it.encode("utf-8", "ignore"))
+        else:
+            inl = getattr(it, "inline_data", None)
+            if inl is not None and getattr(inl, "data", None) is not None:
+                h.update(str(getattr(inl, "mime_type", "")).encode())
+                h.update(inl.data)
+            else:
+                h.update(repr(it).encode("utf-8", "ignore"))
+        h.update(b"\x00")
+    h.update(repr(config).encode("utf-8", "ignore"))
+    return h.hexdigest()
+
+
 def _fmt_ts(ts):
     try:
         from zoneinfo import ZoneInfo
@@ -104,7 +135,7 @@ class GeminiKeyPool:
     Hết key ở model này mới hạ xuống model flash kế tiếp. Lỗi tạm thời ngắn (<=30s) thì chờ rồi thử lại.
     """
 
-    def __init__(self, keys, models, mode="sequential"):
+    def __init__(self, keys, models, mode="sequential", max_concurrent=3, cache_ttl=6 * 3600, cache_size=40):
         self.keys, self.models, self.mode = list(keys), list(models), mode
         self.lock = threading.Lock()
         self.blocks = {}                      # (key|None, model|None) -> (đến_lúc, lý_do)
@@ -112,6 +143,10 @@ class GeminiKeyPool:
         self.rr = 0
         self._clients = {}
         self.last_err = {}                    # key -> mô tả lỗi gần nhất
+        self.model_calls = {}                 # model -> số lượt thành công
+        self.cache = OrderedDict()            # hash -> (thời điểm, response): tránh gọi lại cùng file + cùng yêu cầu
+        self.cache_ttl, self.cache_size, self.cache_hits = cache_ttl, cache_size, 0
+        self.sem = threading.Semaphore(max(1, int(max_concurrent)))   # giới hạn số cuộc gọi đồng thời (chống vọt RPM)
 
     # ---- client
     def _client(self, key):
@@ -153,12 +188,13 @@ class GeminiKeyPool:
             self._block(key, None, 600, "Bị từ chối truy cập (401/403): " + short)
             return "retry"
         if code == 429 or "resource_exhausted" in low:
-            if "perday" in low.replace(" ", "") or "per day" in low:
+            if "limit: 0" in low:
+                self._block(key, model, 6 * 3600, "Model không có hạn mức (miễn phí) với key này")
+            elif "perday" in low.replace(" ", "") or "per day" in low:
                 self._block(key, model, max(60, _next_quota_reset_ts() - time.time()), "Hết hạn mức ngày")
-            elif "limit: 0" in low:
-                self._block(key, model, 6 * 3600, "Model không có hạn mức")
             else:
-                self._block(key, model, 65, "Quá giới hạn/phút")
+                d = _retry_delay(msg)
+                self._block(key, model, min(max(d + 1, 2), 65) if d else 65, "Quá giới hạn/phút")
             return "retry"
         if code in (500, 502, 503, 504) or any(x in low for x in ("unavailable", "overloaded", "high demand",
                                                                   "deadline")):
@@ -170,6 +206,22 @@ class GeminiKeyPool:
         return "fatal"                         # lỗi do dữ liệu (file sai định dạng, quá lớn...) -> báo ngay
 
     def generate(self, contents, config=None):
+        ck = _payload_hash(contents, config)
+        now0 = time.time()
+        with self.lock:
+            hit = self.cache.get(ck)
+            if hit and now0 - hit[0] < self.cache_ttl:
+                self.cache.move_to_end(ck)
+                self.cache_hits += 1
+                return hit[1]
+        resp = self._generate_uncached(contents, config)
+        with self.lock:
+            self.cache[ck] = (time.time(), resp)
+            while len(self.cache) > self.cache_size:
+                self.cache.popitem(last=False)
+        return resp
+
+    def _generate_uncached(self, contents, config=None):
         last_err = None
         for rnd in range(3):
             soonest = None
@@ -184,15 +236,18 @@ class GeminiKeyPool:
                         kw = {"model": model, "contents": contents}
                         if config is not None:
                             kw["config"] = config
-                        resp = self._client(key).models.generate_content(**kw)
+                        with self.sem:
+                            resp = self._client(key).models.generate_content(**kw)
                         with self.lock:
                             self.ok_calls[key] = self.ok_calls.get(key, 0) + 1
+                            self.model_calls[model] = self.model_calls.get(model, 0) + 1
                         return resp
                     except Exception as e:
                         last_err = e
                         self.last_err[key] = re.sub(r"\s+", " ", str(e))[:200]
                         if self._classify(key, model, e) == "fatal":
                             raise
+            soonest = self._min_wait()
             if soonest is not None and soonest <= 30 and rnd < 2:
                 time.sleep(soonest + 0.5)       # chờ khoá ngắn (giới hạn/phút) rồi thử lại
                 continue
@@ -221,6 +276,17 @@ class GeminiKeyPool:
             self.blocks.clear()
             self.last_err.clear()
 
+    def _min_wait(self):
+        """Số giây ngắn nhất để có ít nhất 1 tổ hợp (key, model) dùng lại được."""
+        now = time.time()
+        best = None
+        for model in self.models:
+            for key in self.keys:
+                u = self._blocked_until(key, model, now)
+                w = max(0.0, u - now) if u else 0.0
+                best = w if best is None else min(best, w)
+        return best
+
     def next_available(self):
         now = time.time()
         best = None
@@ -246,8 +312,8 @@ class GeminiKeyPool:
 
 
 @st.cache_resource(show_spinner=False)
-def _build_gemini_pool(keys, models, mode):
-    return GeminiKeyPool(keys, models, mode)
+def _build_gemini_pool(keys, models, mode, max_conc):
+    return GeminiKeyPool(keys, models, mode, max_concurrent=max_conc)
 
 
 def get_gemini_pool():
@@ -262,7 +328,11 @@ def get_gemini_pool():
         mode = str(st.secrets.get("GEMINI_KEY_MODE", "sequential")).lower()
     except Exception:
         mode = "sequential"
-    return _build_gemini_pool(tuple(keys), tuple(models), mode)
+    try:
+        max_conc = int(st.secrets.get("GEMINI_MAX_CONCURRENT", 3))
+    except Exception:
+        max_conc = 3
+    return _build_gemini_pool(tuple(keys), tuple(models), mode, max_conc)
 
 
 def require_gemini_key():
@@ -305,7 +375,10 @@ def render_gemini_status():
         if st.button("🔄 Xoá khoá tạm & thử lại", key="gemini_pool_reset"):
             pool.reset()
             st.rerun()
-        st.caption("Số lượt chỉ tính từ lúc ứng dụng khởi động lại gần nhất.")
+        if pool.model_calls:
+            st.caption("Lượt thành công theo model: " + ", ".join(f"{m}: {n}" for m, n in pool.model_calls.items()))
+        st.caption(f"Tiết kiệm nhờ bộ nhớ đệm (cùng file + cùng yêu cầu): {pool.cache_hits} lượt")
+        st.caption("Số liệu chỉ tính từ lúc ứng dụng khởi động lại gần nhất.")
 
 # ==========================================
 # 1. ĐỌC DỮ LIỆU TÀI KHOẢN VÀ ĐĂNG NHẬP
