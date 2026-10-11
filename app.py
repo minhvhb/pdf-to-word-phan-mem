@@ -1739,11 +1739,12 @@ def app_pdf_image_to_word_advanced():
     import os
     import json
     import base64
+    import re
     import requests
     from io import BytesIO
     import fitz
     from docx import Document
-    from docx.shared import Pt, Inches, RGBColor
+    from docx.shared import Pt, Inches
     from docx.enum.text import WD_ALIGN_PARAGRAPH
     from docx.enum.table import WD_TABLE_ALIGNMENT, WD_ALIGN_VERTICAL
     from docx.oxml import OxmlElement
@@ -1759,7 +1760,7 @@ def app_pdf_image_to_word_advanced():
         key=f"app10_final_{st.session_state.uploader_key}"
     )
 
-    # 1. Hàm gọi API Gemini ép xuất JSON chuẩn
+    # 1. Hàm gọi API Gemini ép xuất JSON siêu chuẩn (Bảo mật chống lỗi 'candidates')
     def extract_data_via_gemini(api_key, img_bytes):
         b64_data = base64.b64encode(img_bytes).decode("utf-8")
         prompt = """
@@ -1783,22 +1784,40 @@ def app_pdf_image_to_word_advanced():
         """
         payload = {
             "contents": [{"parts": [{"text": prompt}, {"inline_data": {"mime_type": "image/png", "data": b64_data}}]}],
-            "generationConfig": {"response_mime_type": "application/json", "temperature": 0.1}
+            "generationConfig": {"temperature": 0.1}
         }
         
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={api_key}"
-        res = requests.post(url, headers={"Content-Type": "application/json"}, json=payload, timeout=90)
-        if res.status_code == 200:
-            text = res.json()["candidates"][0]["content"]["parts"][0]["text"]
-            return json.loads(text)
-        elif res.status_code == 404:
-            # Fallback model nếu API báo lỗi 404
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key={api_key}"
-            res = requests.post(url, headers={"Content-Type": "application/json"}, json=payload, timeout=90)
-            text = res.json()["candidates"][0]["content"]["parts"][0]["text"]
-            return json.loads(text)
-        else:
-            raise Exception(f"Lỗi API: {res.text}")
+        # Danh sách các model fallback an toàn nhất hiện nay
+        models = ["gemini-1.5-flash", "gemini-1.5-flash-latest", "gemini-1.5-pro"]
+        last_error = ""
+
+        for model in models:
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
+            try:
+                res = requests.post(url, headers={"Content-Type": "application/json"}, json=payload, timeout=90)
+                data = res.json()
+                
+                # Check an toàn trước khi lấy 'candidates' để tránh lỗi
+                if res.status_code == 200 and "candidates" in data:
+                    text = data["candidates"][0]["content"]["parts"][0]["text"]
+                    
+                    # Làm sạch chuỗi JSON nếu AI trả về kèm thẻ ```json ... ```
+                    text = text.strip()
+                    if text.startswith("```json"):
+                        text = text[7:]
+                    if text.startswith("```"):
+                        text = text[3:]
+                    if text.endswith("```"):
+                        text = text[:-3]
+                        
+                    return json.loads(text.strip())
+                else:
+                    last_error = f"Model {model} lỗi: {data.get('error', {}).get('message', 'Không rõ')}"
+            except Exception as e:
+                last_error = str(e)
+                continue
+                
+        raise Exception(f"API trả về lỗi hoặc quá tải. Chi tiết: {last_error}")
 
     # 2. Hàm Kẻ viền bảng trong Word
     def set_cell_border(cell):
@@ -1821,7 +1840,7 @@ def app_pdf_image_to_word_advanced():
     if uploaded_file:
         file_bytes = uploaded_file.getvalue()
         fname = uploaded_file.name
-        st.info(f"📄 Đã nhận: **{fname}**")
+        st.info(f"📄 Đã nhận: **{fname}** ({len(file_bytes) / 1024:.1f} KB)")
 
         if st.button("🚀 Bắt đầu Bóc Tách & Dựng Layout Word", type="primary"):
             api_key = st.secrets.get("GEMINI_API_KEY", os.environ.get("GEMINI_API_KEY", ""))
@@ -1844,7 +1863,6 @@ def app_pdf_image_to_word_advanced():
                     # --- XỬ LÝ TRANG 1 ---
                     if len(pdf_doc) > 0:
                         page1 = pdf_doc[0]
-                        W, H = page1.rect.width, page1.rect.height
                         pix1 = page1.get_pixmap(dpi=200)
                         img1_bytes = pix1.tobytes("png")
                         pil_img1 = Image.open(BytesIO(img1_bytes))
@@ -1886,7 +1904,7 @@ def app_pdf_image_to_word_advanced():
                         r_info = p_info.add_run(clean_txt(data.get("info", "")))
                         r_info.font.name = "Times New Roman"; r_info.font.size = Pt(11)
 
-                        # THUẬT TOÁN CẮT MÃ QR: Lấy góc trên bên phải của tài liệu (chiếm 30% rộng, 25% cao)
+                        # THUẬT TOÁN CẮT MÃ QR: Lấy góc trên bên phải của tài liệu
                         qr_crop = pil_img1.crop((int(pix1.width * 0.65), int(pix1.height * 0.15), int(pix1.width * 0.95), int(pix1.height * 0.40)))
                         qr_stream = BytesIO()
                         qr_crop.save(qr_stream, format="PNG")
@@ -1957,7 +1975,7 @@ def app_pdf_image_to_word_advanced():
                         img2_bytes = pix2.tobytes("png")
                         pil_img2 = Image.open(BytesIO(img2_bytes))
 
-                        # THUẬT TOÁN CẮT CHỮ KÝ: Cắt toàn bộ nửa trên của trang 2 để lấy trọn vẹn nét ký
+                        # THUẬT TOÁN CẮT CHỮ KÝ: Cắt toàn bộ nửa trên của trang 2
                         sig_crop = pil_img2.crop((0, 0, pix2.width, int(pix2.height * 0.35)))
                         sig_stream = BytesIO()
                         sig_crop.save(sig_stream, format="PNG")
