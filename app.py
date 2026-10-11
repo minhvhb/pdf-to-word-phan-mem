@@ -1735,286 +1735,824 @@ def app_metadata_cleaner():
 # ==========================================
 # APP 10: CHUYỂN PDF SCAN SANG WORD (TỰ ĐỘNG SĂN MODEL API + DỰNG LAYOUT CHUẨN)
 # ==========================================
+# ==========================================
+# APP 10: PDF SCAN / ẢNH SANG WORD (GIỮ NGUYÊN BỐ CỤC) - GEMINI ONLINE
+# ==========================================
+# Nguyên lý: mỗi trang -> ảnh độ phân giải cao -> Gemini (vision) trả về "bản đồ bố cục" JSON
+# (đoạn văn, bảng, ảnh + toạ độ) -> cắt ảnh gốc cho logo/QR/chữ ký/hình -> dựng Word thật:
+# đúng khổ giấy, lề, khoảng cách dòng, thụt lề, bảng gộp ô, ảnh nội tuyến/nổi.
+import io
+import json
+import re
+import time
+import math
+from collections import Counter
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
+from PIL import Image
+from docx import Document
+from docx.shared import Pt, Mm, Emu, RGBColor
+from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_LINE_SPACING
+from docx.enum.section import WD_SECTION, WD_ORIENT
+from docx.enum.table import WD_ALIGN_VERTICAL, WD_ROW_HEIGHT_RULE
+from docx.oxml import OxmlElement, parse_xml
+from docx.oxml.ns import qn, nsdecls
+
+# Danh sách model thử lần lượt (tự chuyển khi lỗi/quá tải/không tồn tại). Sửa tên ở đây nếu cần.
+A10_MODELS_PRECISE = ["gemini-2.5-pro", "gemini-3.6-flash", "gemini-2.5-flash"]
+A10_MODELS_FAST = ["gemini-3.6-flash", "gemini-2.5-flash", "gemini-2.5-pro"]
+A10_RENDER_DPI = 250          # độ phân giải dựng ảnh trang (cắt logo/QR/chữ ký rất nét)
+A10_API_MAX_SIDE = 2600       # cạnh dài tối đa của ảnh gửi lên API
+
+_A10_SCHEMA_TXT = '''{
+  "font_family": "serif",
+  "blocks": [
+    {"type": "paragraph", "bbox": [ymin, xmin, ymax, xmax], "align": "left|center|right|justify",
+     "lines": 2, "first_indent_pt": 0,
+     "runs": [{"t": "văn bản", "b": 0, "i": 0, "u": 0, "c": ""}]},
+    {"type": "table", "bbox": [ymin, xmin, ymax, xmax], "borders": true, "font_size_pt": 11,
+     "col_pct": [10, 40, 50], "row_pct": [20, 40, 40],
+     "rows": [[{"runs": [{"t": "ô", "b": 0, "i": 0, "u": 0, "c": ""}], "align": "left|center|right",
+                "valign": "top|middle|bottom", "colspan": 1, "rowspan": 1, "fill": "", "image": null}]]},
+    {"type": "image", "bbox": [ymin, xmin, ymax, xmax], "floating": false}
+  ]
+}'''
+
+_A10_PROMPT = """Bạn là hệ thống OCR + phân tích bố cục tài liệu có độ chính xác cao nhất. Nhiệm vụ: đọc ảnh một trang tài liệu và trả về BẢN ĐỒ BỐ CỤC dạng JSON để dựng lại file Word giống bản gốc đến từng chi tiết.
+
+TOẠ ĐỘ: mọi "bbox" là [ymin, xmin, ymax, xmax], thang 0-1000 theo kích thước ảnh trang (0,0 là góc trên-trái). bbox phải ÔM SÁT vùng chữ/ảnh thật.
+
+QUY TẮC:
+1. Chép CHÍNH XÁC từng ký tự: dấu tiếng Việt, số, ngày tháng, số hiệu, dấu câu, chữ in hoa/thường. Không sửa, không dịch, không tóm tắt, không bỏ sót dòng nào (kể cả đầu trang, chân trang, số trang, ghi chú nhỏ).
+2. KHÔNG dùng markdown (không **, *, #). Đậm/nghiêng/gạch chân biểu diễn bằng cờ b/i/u (1 hoặc 0) trong từng run. "c" là mã màu hex (vd "#C00000") chỉ khi chữ KHÔNG phải màu đen, còn lại để "".
+3. Khối chữ chạy liên tục (đoạn văn tự xuống dòng theo lề) -> 1 block "paragraph", KHÔNG chèn \\n tại chỗ xuống dòng tự nhiên. Chỉ dùng \\n khi bản gốc chủ động ngắt dòng (tiêu đề nhiều dòng căn giữa, địa chỉ, danh sách từng dòng, khối chữ ký).
+4. "lines" = số dòng thực tế của khối đó trong ảnh. "align" theo thực tế. "first_indent_pt" = độ thụt đầu dòng đầu tiên (pt, 0 nếu không có).
+5. Nội dung đặt NGANG HÀNG nhau (quốc hiệu 2 cột, khối ký tên 2-3 cột, logo bên cạnh tên cơ quan...) -> gộp thành 1 block "table" với "borders": false. Bảng có kẻ ô thật -> "borders": true.
+6. Bảng: liệt kê đủ mọi hàng/cột; ô gộp dùng colspan/rowspan (các ô bị gộp KHÔNG khai báo lại). "col_pct" = % độ rộng từng cột (tổng 100), "row_pct" = % chiều cao từng hàng (tổng 100). "fill" = màu nền hex nếu ô có tô nền (vd "#D9D9D9"), còn lại "". "font_size_pt" = cỡ chữ ước lượng trong bảng. Nếu trong ô có hình (logo, QR, chữ ký, con dấu) -> điền "image": [ymin,xmin,ymax,xmax] của hình đó (toạ độ trang), ô vẫn có thể có chữ kèm theo.
+7. Hình ảnh/biểu đồ/sơ đồ/logo/mã QR/ảnh chụp/chữ ký tay/con dấu đứng riêng -> block "image" (KHÔNG chép chữ nằm bên trong logo/con dấu). Con dấu hoặc chữ ký đè lên chữ khác -> "floating": true; còn lại false.
+8. Sắp xếp blocks theo thứ tự đọc từ trên xuống dưới. Các block không được chồng bbox lên nhau (trừ ảnh floating).
+9. "font_family": "serif" nếu chữ có chân (kiểu Times New Roman), "sans" nếu không chân (kiểu Arial/Calibri).
+10. Trang trống hoặc chỉ có nền -> "blocks": [].
+
+Chỉ trả về MỘT đối tượng JSON thuần theo cấu trúc sau, không giải thích:
+""" + _A10_SCHEMA_TXT + """
+<<HINT>>"""
+
+
+# ------------------------------------------------------------------ tiện ích nhỏ
+def _a10_clean(t):
+    if t is None:
+        return ""
+    t = str(t).replace("**", "").replace("`", "")
+    return t.replace("\u200b", "")
+
+
+def _a10_clamp(v, lo, hi):
+    return max(lo, min(hi, v))
+
+
+def _a10_num(v, default=0.0):
+    try:
+        return float(v)
+    except Exception:
+        return default
+
+
+def _a10_hex(c):
+    """'#C00000' -> RGBColor, trả None nếu rỗng/đen/không hợp lệ."""
+    if not c:
+        return None
+    c = str(c).strip().lstrip("#")
+    if not re.fullmatch(r"[0-9a-fA-F]{6}", c):
+        return None
+    r, g, b = int(c[0:2], 16), int(c[2:4], 16), int(c[4:6], 16)
+    if r < 40 and g < 40 and b < 40:
+        return None
+    return RGBColor(r, g, b)
+
+
+def _a10_bbox(b):
+    try:
+        y0, x0, y1, x1 = [float(v) for v in b]
+    except Exception:
+        return None
+    y0, y1 = sorted((_a10_clamp(y0, 0, 1000), _a10_clamp(y1, 0, 1000)))
+    x0, x1 = sorted((_a10_clamp(x0, 0, 1000), _a10_clamp(x1, 0, 1000)))
+    if y1 - y0 < 0.5 or x1 - x0 < 0.5:
+        return None
+    return [y0, x0, y1, x1]
+
+
+def _a10_parse_json(text):
+    text = (text or "").strip()
+    text = re.sub(r"^```(?:json)?", "", text).strip()
+    text = re.sub(r"```$", "", text).strip()
+    try:
+        return json.loads(text)
+    except Exception:
+        s, e = text.find("{"), text.rfind("}")
+        if s != -1 and e > s:
+            return json.loads(text[s:e + 1])
+        raise
+
+
+def _a10_sanitize(layout):
+    """Chuẩn hoá JSON từ AI: bỏ khối hỏng, ép kiểu, trả về (layout, số khối bị bỏ)."""
+    dropped = 0
+    out = {"font_family": "sans" if str(layout.get("font_family", "")).lower().startswith("sans") else "serif",
+           "blocks": []}
+    for blk in layout.get("blocks", []) or []:
+        if not isinstance(blk, dict):
+            dropped += 1
+            continue
+        bb = _a10_bbox(blk.get("bbox"))
+        t = str(blk.get("type", "")).lower()
+        if bb is None or t not in ("paragraph", "table", "image"):
+            dropped += 1
+            continue
+        blk["bbox"] = bb
+        blk["type"] = t
+        if t == "table":
+            rows = blk.get("rows") or []
+            if not rows:
+                dropped += 1
+                continue
+            for row in rows:
+                for cell in row:
+                    if "image" in cell:
+                        cell["image"] = _a10_bbox(cell.get("image")) if cell.get("image") else None
+        out["blocks"].append(blk)
+    out["blocks"].sort(key=lambda b: (b["bbox"][0], b["bbox"][1]))
+    return out, dropped
+
+
+# ------------------------------------------------------------------ gọi Gemini online
+def _a10_call_gemini(api_key, img_bytes, hint_text, models):
+    from google import genai
+    from google.genai import types
+
+    client = genai.Client(api_key=api_key)
+    hint = ""
+    if hint_text:
+        hint = ("\nVĂN BẢN GỐC lấy từ lớp text của PDF (đáng tin hơn OCR về mặt ký tự; hãy dùng để chép đúng "
+                "chính tả, số liệu, dấu tiếng Việt, nhưng bố cục/vị trí vẫn lấy theo ảnh):\n<<<\n"
+                + hint_text[:12000] + "\n>>>")
+    prompt = _A10_PROMPT.replace("<<HINT>>", hint)
+    last_err = None
+    for model in models:
+        for attempt in range(3):
+            try:
+                resp = client.models.generate_content(
+                    model=model,
+                    contents=[types.Part.from_bytes(data=img_bytes, mime_type="image/jpeg"), prompt],
+                    config=types.GenerateContentConfig(
+                        temperature=0.0,
+                        response_mime_type="application/json",
+                        max_output_tokens=32000,
+                    ),
+                )
+                return _a10_parse_json(resp.text), model
+            except json.JSONDecodeError as e:          # JSON lỗi/cụt -> thử lại
+                last_err = e
+                continue
+            except Exception as e:
+                last_err = e
+                msg = str(e)
+                if any(x in msg for x in ("503", "429", "UNAVAILABLE", "RESOURCE_EXHAUSTED", "overloaded", "high demand")):
+                    time.sleep(2 * (attempt + 1))
+                    continue
+                break                                   # 404/không hỗ trợ -> sang model kế tiếp
+    raise RuntimeError(f"Tất cả model đều thất bại. Lỗi cuối: {last_err}")
+
+
+# ------------------------------------------------------------------ đọc số liệu gốc của PDF (nếu có text layer)
+_A10_FONT_MAP = [("times", "Times New Roman"), ("arial", "Arial"), ("helvet", "Arial"), ("calibri", "Calibri"),
+                 ("cambria", "Cambria"), ("tahoma", "Tahoma"), ("verdana", "Verdana"), ("segoe", "Segoe UI"),
+                 ("courier", "Courier New"), ("georgia", "Georgia"), ("garamond", "Garamond"),
+                 ("palatino", "Palatino Linotype"), ("book antiqua", "Book Antiqua"), ("vni-times", "Times New Roman"),
+                 ("timesnew", "Times New Roman")]
+
+
+def _a10_map_font(raw):
+    raw = (raw or "").lower()
+    for key, name in _A10_FONT_MAP:
+        if key in raw:
+            return name
+    return None
+
+
+def _a10_native_stats(page, bbox_pt):
+    """Cỡ chữ / font / số dòng / bước dòng thật từ text layer trong vùng bbox (pt). None nếu không có."""
+    try:
+        x0, y0, x1, y1 = bbox_pt
+        d = page.get_text("dict")
+    except Exception:
+        return None
+    sizes, fonts, cys = Counter(), Counter(), []
+    for b in d.get("blocks", []):
+        if b.get("type") != 0:
+            continue
+        for ln in b.get("lines", []):
+            lb = ln["bbox"]
+            cx, cy = (lb[0] + lb[2]) / 2, (lb[1] + lb[3]) / 2
+            if not (x0 - 3 <= cx <= x1 + 3 and y0 - 3 <= cy <= y1 + 3):
+                continue
+            has = False
+            for s in ln.get("spans", []):
+                tx = s.get("text", "").strip()
+                if tx:
+                    has = True
+                    sizes[round(s["size"] * 2) / 2] += len(tx)
+                    fonts[_a10_map_font(s.get("font", ""))] += len(tx)
+            if has:
+                cys.append(cy)
+    if not sizes:
+        return None
+    cys.sort()
+    lines = [cys[0]]
+    for c in cys[1:]:
+        if c - lines[-1] > 2.0:
+            lines.append(c)
+    pitch = (lines[-1] - lines[0]) / (len(lines) - 1) if len(lines) > 1 else None
+    fnt = [f for f, _ in fonts.most_common() if f]
+    return {"size": sizes.most_common(1)[0][0], "font": fnt[0] if fnt else None,
+            "lines": len(lines), "pitch": pitch}
+
+
+# ------------------------------------------------------------------ cắt ảnh
+def _a10_crop_bytes(img, bbox, w_pt, transparent=False, pad=0.002):
+    y0, x0, y1, x1 = bbox
+    W, H = img.size
+    box = (int(_a10_clamp((x0 / 1000 - pad) * W, 0, W)), int(_a10_clamp((y0 / 1000 - pad) * H, 0, H)),
+           int(_a10_clamp((x1 / 1000 + pad) * W, 0, W)), int(_a10_clamp((y1 / 1000 + pad) * H, 0, H)))
+    if box[2] - box[0] < 2 or box[3] - box[1] < 2:
+        return None
+    crop = img.crop(box).convert("RGB")
+    out = io.BytesIO()
+    if transparent:
+        import numpy as np
+        from PIL import ImageFilter
+        arr = np.asarray(crop).astype("int16")
+        mx, mn = arr.max(axis=2), arr.min(axis=2)
+        sat = (mx - mn) / np.maximum(mx, 1)
+        nonwhite = mn < 225
+        colored = nonwhite & (sat > 0.30)
+        if colored.sum() > 50 and colored.sum() > 0.02 * nonwhite.sum():
+            # con dấu / mực màu: chỉ giữ mực màu, loại chữ đen nằm bên dưới để không bị lặp chữ
+            m = Image.fromarray((colored * 255).astype("uint8")).filter(ImageFilter.MaxFilter(3))
+            keep = np.asarray(m) > 0
+        else:
+            keep = nonwhite                                  # chữ ký mực đen
+        rgba = crop.convert("RGBA")
+        alpha = Image.fromarray((keep * 255).astype("uint8"))
+        rgba.putalpha(alpha)
+        rgba.save(out, format="PNG")
+    elif crop.size[0] * crop.size[1] > 350000:
+        crop.save(out, format="JPEG", quality=90)
+    else:
+        crop.save(out, format="PNG")
+    out.seek(0)
+    return out
+
+
+# ------------------------------------------------------------------ thao tác docx mức thấp
+def _a10_mark_size(p, half_points):
+    pPr = p._p.get_or_add_pPr()
+    rPr = pPr.find(qn("w:rPr"))
+    if rPr is None:
+        rPr = OxmlElement("w:rPr")
+        sect = pPr.find(qn("w:sectPr"))
+        if sect is not None:
+            sect.addprevious(rPr)
+        else:
+            pPr.append(rPr)
+    for tag in ("w:sz", "w:szCs"):
+        el = rPr.find(qn(tag))
+        if el is None:
+            el = OxmlElement(tag)
+            rPr.append(el)
+        el.set(qn("w:val"), str(half_points))
+
+
+def _a10_tiny(p, height_pt=1.0):
+    """Biến đoạn thành dải đệm cao đúng height_pt (dùng làm khoảng cách / đoạn cuối trang)."""
+    pf = p.paragraph_format
+    pf.space_before = Pt(0)
+    pf.space_after = Pt(0)
+    pf.line_spacing_rule = WD_LINE_SPACING.EXACTLY
+    pf.line_spacing = Pt(_a10_clamp(height_pt, 1, 1500))
+    _a10_mark_size(p, 2)
+
+
+def _a10_set_run_font(run, name, size, bold=False, italic=False, underline=False, color=None):
+    run.font.name = name
+    rPr = run._r.get_or_add_rPr()
+    rf = rPr.find(qn("w:rFonts"))
+    if rf is None:
+        rf = OxmlElement("w:rFonts")
+        rPr.insert(0, rf)
+    for a in ("w:ascii", "w:hAnsi", "w:eastAsia", "w:cs"):
+        rf.set(qn(a), name)
+    run.font.size = Pt(size)
+    run.bold = bool(bold)
+    run.italic = bool(italic)
+    run.underline = bool(underline)
+    if color is not None:
+        run.font.color.rgb = color
+
+
+def _a10_add_runs(par, runs, font, size, force_bold=False):
+    for r in runs or []:
+        if not isinstance(r, dict):
+            r = {"t": str(r)}
+        text = _a10_clean(r.get("t", ""))
+        for k, part in enumerate(text.split("\n")):
+            if k > 0:
+                par.add_run().add_break()
+            if part == "":
+                continue
+            run = par.add_run(part)
+            _a10_set_run_font(run, font, size, bool(r.get("b")) or force_bold, bool(r.get("i")), bool(r.get("u")),
+                              _a10_hex(r.get("c")))
+
+
+_A10_ALIGN = {"left": WD_ALIGN_PARAGRAPH.LEFT, "center": WD_ALIGN_PARAGRAPH.CENTER,
+              "right": WD_ALIGN_PARAGRAPH.RIGHT, "justify": WD_ALIGN_PARAGRAPH.JUSTIFY}
+_A10_VALIGN = {"top": WD_ALIGN_VERTICAL.TOP, "middle": WD_ALIGN_VERTICAL.CENTER, "center": WD_ALIGN_VERTICAL.CENTER,
+               "bottom": WD_ALIGN_VERTICAL.BOTTOM}
+
+
+def _a10_set_page(sec, w, h, ml, mr, mt, mb):
+    if abs(w - 595.28) < 8 and abs(h - 841.89) < 8:
+        sec.page_width, sec.page_height = Mm(210), Mm(297)
+    elif abs(w - 841.89) < 8 and abs(h - 595.28) < 8:
+        sec.page_width, sec.page_height = Mm(297), Mm(210)
+    else:
+        sec.page_width, sec.page_height = Pt(w), Pt(h)
+    sec.orientation = WD_ORIENT.LANDSCAPE if w > h else WD_ORIENT.PORTRAIT
+    sec.left_margin, sec.right_margin = Pt(ml), Pt(mr)
+    sec.top_margin, sec.bottom_margin = Pt(mt), Pt(mb)
+    sec.header_distance = Pt(0)
+    sec.footer_distance = Pt(0)
+
+
+def _a10_make_floating(run, img_stream, x_pt, y_pt, w_pt, h_pt, behind=True):
+    """Chèn ảnh nổi (không đẩy chữ) tại toạ độ tuyệt đối so với trang."""
+    shape = run.add_picture(img_stream, width=Pt(w_pt), height=Pt(h_pt))
+    inline = shape._inline
+    graphic = inline.find(qn("a:graphic"))
+    docPr = inline.find(qn("wp:docPr"))
+    anchor = parse_xml(
+        '<wp:anchor %s distT="0" distB="0" distL="0" distR="0" simplePos="0" relativeHeight="251659264" '
+        'behindDoc="%d" locked="0" layoutInCell="1" allowOverlap="1">'
+        '<wp:simplePos x="0" y="0"/>'
+        '<wp:positionH relativeFrom="page"><wp:posOffset>%d</wp:posOffset></wp:positionH>'
+        '<wp:positionV relativeFrom="page"><wp:posOffset>%d</wp:posOffset></wp:positionV>'
+        '<wp:extent cx="%d" cy="%d"/><wp:effectExtent l="0" t="0" r="0" b="0"/><wp:wrapNone/>'
+        '<wp:docPr id="%s" name="%s"/><wp:cNvGraphicFramePr/></wp:anchor>'
+        % (nsdecls("wp", "a"), 1 if behind else 0, int(Pt(x_pt)), int(Pt(y_pt)), int(Pt(w_pt)), int(Pt(h_pt)),
+           docPr.get("id"), docPr.get("name")))
+    anchor.append(graphic)
+    drawing = inline.getparent()
+    drawing.remove(inline)
+    drawing.append(anchor)
+
+
+def _a10_table_props(tbl, x_off_pt, width_pt, borders):
+    tblPr = tbl._tbl.tblPr
+    for tag in ("w:tblW", "w:tblInd", "w:tblLayout", "w:tblCellMar"):
+        el = tblPr.find(qn(tag))
+        if el is not None:
+            tblPr.remove(el)
+    tblW = OxmlElement("w:tblW")
+    tblW.set(qn("w:w"), str(int(width_pt * 20)))
+    tblW.set(qn("w:type"), "dxa")
+    ind = OxmlElement("w:tblInd")
+    ind.set(qn("w:w"), str(int(x_off_pt * 20)))
+    ind.set(qn("w:type"), "dxa")
+    lay = OxmlElement("w:tblLayout")
+    lay.set(qn("w:type"), "fixed")
+    mar = OxmlElement("w:tblCellMar")
+    for side, v in (("top", 15), ("left", 70), ("bottom", 15), ("right", 70)):
+        e = OxmlElement("w:" + side)
+        e.set(qn("w:w"), str(v))
+        e.set(qn("w:type"), "dxa")
+        mar.append(e)
+    # thứ tự schema: tblStyle, ..., tblW, jc, ..., tblInd, tblBorders, shd, tblLayout, tblCellMar, tblLook
+    look = tblPr.find(qn("w:tblLook"))
+    for el in (tblW, ind, lay, mar):
+        if look is not None:
+            look.addprevious(el)
+        else:
+            tblPr.append(el)
+    if borders:
+        tbl.style = "Table Grid"
+
+
+def _a10_shade(cell, hexcolor):
+    h = str(hexcolor).strip().lstrip("#")
+    if not re.fullmatch(r"[0-9a-fA-F]{6}", h):
+        return
+    tcPr = cell._tc.get_or_add_tcPr()
+    shd = OxmlElement("w:shd")
+    shd.set(qn("w:val"), "clear")
+    shd.set(qn("w:color"), "auto")
+    shd.set(qn("w:fill"), h.upper())
+    tcPr.append(shd)
+
+
+
+def _a10_w_em(s, bold=False):
+    """Ước lượng độ rộng chuỗi theo đơn vị em (serif, tiếng Việt)."""
+    tot = 0.0
+    for ch in s:
+        if ch == " ":
+            tot += 0.25
+        elif ch.isupper():
+            tot += 0.68
+        elif ch.isdigit():
+            tot += 0.5
+        elif ch.isalpha():
+            tot += 0.47
+        else:
+            tot += 0.33
+    return tot * (1.04 if bold else 1.0)
+
+
+def _a10_cell_fit_size(runs, fs, col_w, span_h):
+    """Thu nhỏ nhẹ cỡ chữ trong ô (tối đa -20%) nếu chữ không vừa ô -> tránh tràn/xuống dòng thừa do khác phông."""
+    plain = "".join(_a10_clean(r.get("t", "")) if isinstance(r, dict) else str(r) for r in (runs or []))
+    bold = any(isinstance(r, dict) and r.get("b") for r in (runs or []))
+    segs = plain.split("\n")
+    avail = max(col_w - 8.0, 6.0)
+    for sc in (1.0, 0.95, 0.9, 0.85, 0.8):
+        f = fs * sc
+        need = sum(max(1, math.ceil(_a10_w_em(sg, bold) * f / avail)) for sg in segs)
+        cap = max(1, int(span_h / (f * 1.25) + 0.3))
+        if need <= cap:
+            return round(f * 2) / 2
+    return round(fs * 0.8 * 2) / 2
+
+
+# ------------------------------------------------------------------ dựng Word từ bản đồ bố cục
+def a10_build_docx(pages):
+    """
+    pages: list dict(layout=dict|None, img=PIL.Image, w=pt, h=pt, native=fitz.Page|None, hint_ok=bool)
+    Trả về (docx_bytes, danh_sách_cảnh_báo)
+    """
+    warnings = []
+    fams = Counter((p["layout"] or {}).get("font_family", "serif") for p in pages if p.get("layout"))
+    default_font = "Arial" if fams and fams.most_common(1)[0][0] == "sans" else "Times New Roman"
+
+    doc = Document()
+    normal = doc.styles["Normal"]
+    normal.font.name = default_font
+    normal.font.size = Pt(11)
+    rf = normal.element.get_or_add_rPr().find(qn("w:rFonts"))
+    if rf is not None:
+        rf.set(qn("w:eastAsia"), default_font)
+    npf = normal.paragraph_format
+    npf.space_before = Pt(0)
+    npf.space_after = Pt(0)
+    npf.line_spacing = 1.0
+
+    n_pages = len(pages)
+    for pi, pg in enumerate(pages):
+        sec = doc.sections[-1]
+        w, h, img, layout, native = pg["w"], pg["h"], pg["img"], pg.get("layout"), pg.get("native")
+        floats = []
+
+        if not layout or not layout["blocks"]:
+            # Dự phòng: trang không đọc được -> chèn nguyên ảnh trang để KHÔNG mất nội dung
+            if layout is None:
+                warnings.append(f"Trang {pi + 1}: AI không phản hồi được, đã chèn nguyên trang dạng ảnh.")
+                _a10_set_page(sec, w, h, 0, 0, 0, 0)
+                p = doc.add_paragraph()
+                stream = io.BytesIO()
+                img.convert("RGB").save(stream, format="JPEG", quality=92)
+                stream.seek(0)
+                p.add_run().add_picture(stream, width=Pt(w * 0.995))
+            else:
+                _a10_set_page(sec, w, h, 36, 36, 36, 36)
+            host = None
+        else:
+            blocks = layout["blocks"]
+            flow = [b for b in blocks if not (b["type"] == "image" and b.get("floating"))]
+            P = lambda v, tot: v / 1000.0 * tot  # noqa: E731
+            bbp = lambda b: (P(b["bbox"][1], w), P(b["bbox"][0], h), P(b["bbox"][3], w), P(b["bbox"][2], h))  # noqa: E731
+
+            xs0 = [bbp(b)[0] for b in flow] or [36]
+            xs1 = [bbp(b)[2] for b in flow] or [w - 36]
+            ys0 = [bbp(b)[1] for b in flow] or [36]
+            ys1 = [bbp(b)[3] for b in flow] or [h - 36]
+            ml = _a10_clamp(min(xs0), 0, 0.4 * w)
+            mr = _a10_clamp(w - max(xs1), 0, 0.4 * w)
+            mt = _a10_clamp(min(ys0), 0, 0.35 * h)
+            mb = _a10_clamp(h - max(ys1) - 6, 0, 54)
+            _a10_set_page(sec, w, h, ml, mr, mt, mb)
+            text_w = w - ml - mr
+            flow_y = mt
+
+            for blk in flow:
+                x0, y0, x1, y1 = bbp(blk)
+                gap_top = max(0.0, y0 - flow_y)
+
+                # ---------------- ĐOẠN VĂN ----------------
+                if blk["type"] == "paragraph":
+                    runs = blk.get("runs") or []
+                    plain = "".join(_a10_clean(r.get("t", "")) if isinstance(r, dict) else str(r) for r in runs)
+                    if not plain.strip():
+                        continue
+                    n = max(1, int(_a10_num(blk.get("lines"), 1)))
+                    nat = _a10_native_stats(native, (x0, y0, x1, y1)) if native is not None else None
+                    fname = default_font
+                    hb = y1 - y0
+                    if nat:
+                        n, fs, fname = nat["lines"], nat["size"], nat["font"] or default_font
+                        pitch = nat["pitch"] or fs * 1.2
+                        if not (fs * 1.0 <= pitch <= fs * 1.8):
+                            pitch = fs * 1.2
+                    else:
+                        pitch = hb / (n - 0.15)
+                        fs = pitch / 1.2
+                        bold_any = any(isinstance(r, dict) and r.get("b") for r in runs)
+                        segs = plain.split("\n")
+                        bw = x1 - x0
+                        if len(segs) > 1 or n == 1:      # mỗi dòng độc lập: dòng dài nhất phải lọt khung
+                            wmax = max(_a10_w_em(sg, bold_any) for sg in segs) or 1
+                            fs = min(fs, bw * 1.04 / wmax)
+                        else:                            # đoạn tự xuống dòng: chặn trên theo tổng độ dài
+                            wt = _a10_w_em(plain, bold_any) or 1
+                            fs = min(fs, bw * n / wt)
+                        fs = _a10_clamp(round(fs * 2) / 2, 6, 30)
+                        pitch = _a10_clamp(pitch, fs * 1.1, fs * 1.6)
+                    pitch = _a10_clamp(pitch, fs, fs * 2.5)
+                    top_target = y0 - 0.075 * pitch
+                    space_before = max(0.0, top_target - flow_y)
+
+                    p = doc.add_paragraph()
+                    pf = p.paragraph_format
+                    pf.space_before = Pt(space_before)
+                    pf.space_after = Pt(0)
+                    al = str(blk.get("align", "left")).lower()
+                    li, ri = max(0.0, x0 - ml), max(0.0, (w - mr) - x1)
+                    if "\n" in plain or n == 1:         # dòng độc lập: nới khung để khỏi xuống dòng thừa
+                        ext = max(8.0, 0.08 * (x1 - x0))
+                        if al == "center":
+                            li, ri = max(0.0, li - ext), max(0.0, ri - ext)
+                        elif al == "right":
+                            li = 0.0
+                        else:
+                            ri = 0.0
+                    pf.left_indent = Pt(li)
+                    pf.right_indent = Pt(ri)
+                    fi = _a10_num(blk.get("first_indent_pt"), 0)
+                    if fi > 1:
+                        pf.first_line_indent = Pt(min(fi, 80))
+                    pf.line_spacing = Pt(pitch)                      # chính xác -> giữ nguyên nhịp dòng
+                    pf.alignment = _A10_ALIGN.get(str(blk.get("align", "left")).lower(), WD_ALIGN_PARAGRAPH.LEFT)
+                    _a10_add_runs(p, runs, fname, fs)
+                    flow_y = max(flow_y, top_target) + n * pitch
+                    continue
+
+                # ---------------- ẢNH NỘI TUYẾN ----------------
+                if blk["type"] == "image":
+                    stream = _a10_crop_bytes(img, blk["bbox"], x1 - x0)
+                    if stream is None:
+                        continue
+                    wp = min(x1 - x0, text_w)
+                    hp = (y1 - y0) * wp / max(x1 - x0, 1)
+                    p = doc.add_paragraph()
+                    pf = p.paragraph_format
+                    pf.space_before = Pt(gap_top)
+                    pf.space_after = Pt(0)
+                    pf.left_indent = Pt(max(0.0, x0 - ml))
+                    p.add_run().add_picture(stream, width=Pt(wp), height=Pt(hp))
+                    flow_y = max(flow_y, y0) + hp + 2
+                    continue
+
+                # ---------------- BẢNG ----------------
+                rows = blk["rows"]
+                placements, occ, ncols = [], set(), 0
+                for r_i, row in enumerate(rows):
+                    c = 0
+                    for cell in row:
+                        while (r_i, c) in occ:
+                            c += 1
+                        cs = max(1, int(_a10_num(cell.get("colspan"), 1)))
+                        rs = max(1, min(int(_a10_num(cell.get("rowspan"), 1)), len(rows) - r_i))
+                        for rr in range(r_i, r_i + rs):
+                            for cc in range(c, c + cs):
+                                occ.add((rr, cc))
+                        placements.append((r_i, c, cs, rs, cell))
+                        c += cs
+                        ncols = max(ncols, c)
+                nrows = len(rows)
+
+                tw = x1 - x0
+                cp = blk.get("col_pct") or []
+                if len(cp) != ncols or sum(_a10_num(v) for v in cp) <= 0:
+                    cp = [100.0 / ncols] * ncols
+                s = sum(_a10_num(v) for v in cp)
+                col_w = [tw * _a10_num(v) / s for v in cp]
+                rp = blk.get("row_pct") or []
+                th = y1 - y0
+                if len(rp) != nrows or sum(_a10_num(v) for v in rp) <= 0:
+                    rp = [100.0 / nrows] * nrows
+                s = sum(_a10_num(v) for v in rp)
+                row_h = [th * _a10_num(v) / s for v in rp]
+
+                nat = _a10_native_stats(native, (x0, y0, x1, y1)) if native is not None else None
+                fs = nat["size"] if nat else _a10_clamp(_a10_num(blk.get("font_size_pt"), 11), 6, 18)
+                fname = (nat["font"] if nat and nat["font"] else default_font)
+
+                # dải đệm tạo khoảng cách phía trên bảng (bảng không có space_before)
+                sp = doc.add_paragraph()
+                _a10_tiny(sp, max(gap_top, 1.0))
+
+                tbl = doc.add_table(rows=nrows, cols=ncols)
+                tbl.autofit = False
+                _a10_table_props(tbl, max(0.0, x0 - ml), tw, bool(blk.get("borders")))
+                for ci, wv in enumerate(col_w):
+                    tbl.columns[ci].width = Pt(wv)
+                for ri, hv in enumerate(row_h):
+                    tbl.rows[ri].height = Pt(max(hv, 4))
+                    tbl.rows[ri].height_rule = WD_ROW_HEIGHT_RULE.AT_LEAST
+
+                for r_i, c_i, cs, rs, cell in placements:
+                    if c_i >= ncols:
+                        continue
+                    cs = min(cs, ncols - c_i)
+                    target = tbl.cell(r_i, c_i)
+                    if cs > 1 or rs > 1:
+                        target = target.merge(tbl.cell(r_i + rs - 1, c_i + cs - 1))
+                    target.width = Pt(sum(col_w[c_i:c_i + cs]))
+                    target.vertical_alignment = _A10_VALIGN.get(str(cell.get("valign", "top")).lower(),
+                                                                WD_ALIGN_VERTICAL.TOP)
+                    if cell.get("fill"):
+                        _a10_shade(target, cell["fill"])
+                    # xoá đoạn rỗng thừa sau khi gộp ô
+                    while len(target.paragraphs) > 1 and not target.paragraphs[-1].text.strip():
+                        target._tc.remove(target.paragraphs[-1]._p)
+                    par = target.paragraphs[0]
+                    par.paragraph_format.alignment = _A10_ALIGN.get(str(cell.get("align", "left")).lower(),
+                                                                   WD_ALIGN_PARAGRAPH.LEFT)
+                    span_h = sum(row_h[r_i:r_i + rs])
+                    cfs = _a10_cell_fit_size(cell.get("runs"), fs, sum(col_w[c_i:c_i + cs]), span_h)
+                    _a10_add_runs(par, cell.get("runs"), fname, cfs)
+                    if cell.get("image"):
+                        ib = cell["image"]
+                        iw = P(ib[3] - ib[1], w)
+                        ih = P(ib[2] - ib[0], h)
+                        stream = _a10_crop_bytes(img, ib, iw)
+                        if stream is not None:
+                            iw2 = min(iw, sum(col_w[c_i:c_i + cs]) - 8)
+                            ih2 = ih * iw2 / max(iw, 1)
+                            ip = par if not par.text.strip() else target.add_paragraph()
+                            ip.paragraph_format.alignment = par.paragraph_format.alignment
+                            ip.add_run().add_picture(stream, width=Pt(iw2), height=Pt(ih2))
+                flow_y = max(flow_y, y0) + th
+
+            # ảnh nổi (con dấu / chữ ký đè lên chữ)
+            for blk in blocks:
+                if blk["type"] == "image" and blk.get("floating"):
+                    x0, y0, x1, y1 = bbp(blk)
+                    stream = _a10_crop_bytes(img, blk["bbox"], x1 - x0, transparent=True)
+                    if stream is not None:
+                        floats.append((stream, x0, y0, x1 - x0, y1 - y0))
+
+        # đoạn cuối trang (chứa ngắt section + ảnh nổi)
+        if pi < n_pages - 1:
+            doc.add_section(WD_SECTION.NEW_PAGE)
+            host = doc.paragraphs[-1]
+        else:
+            host = doc.add_paragraph()
+        _a10_tiny(host, 1.0)
+        for stream, fx, fy, fw, fh in floats:
+            _a10_make_floating(host.add_run(), stream, fx, fy, fw, fh, behind=True)
+
+    out = io.BytesIO()
+    doc.save(out)
+    return out.getvalue(), warnings
+
+
+# ------------------------------------------------------------------ giao diện Streamlit
 def app_pdf_image_to_word_advanced():
     import os
-    import json
-    import base64
-    import requests
-    from io import BytesIO
-    import fitz
-    from docx import Document
-    from docx.shared import Pt, Inches
-    from docx.enum.text import WD_ALIGN_PARAGRAPH
-    from docx.enum.table import WD_TABLE_ALIGNMENT, WD_ALIGN_VERTICAL
-    from docx.oxml import OxmlElement
-    from docx.oxml.ns import qn
-    from PIL import Image
     import streamlit as st
+    import fitz
 
-    st.title("📑 Chuyển PDF Scan sang Word (Chuẩn Hóa Hoàn Toàn)")
-    st.markdown("Sử dụng thuật toán **Săn Model API tự động** để chống lỗi 404. Kết hợp bóc tách dữ liệu JSON sạch 100% và tự động cắt ảnh mã QR, chữ ký dán vào văn bản.")
-
-    uploaded_file = st.file_uploader(
-        "Tải lên file PDF Scan:",
-        type=["pdf"],
-        key=f"app10_hunter_{st.session_state.uploader_key}"
+    st.title("📑 PDF Scan / Ảnh sang Word (Giữ nguyên bố cục)")
+    st.markdown(
+        "Dùng **Gemini online** đọc từng trang (chữ, bảng, ô gộp, logo, mã QR, chữ ký, con dấu), "
+        "rồi dựng lại file Word **đúng khổ giấy, lề, cỡ chữ, khoảng cách dòng, thụt lề và vị trí hình ảnh**. "
+        "Dùng được cho **mọi loại văn bản** (công văn, quyết định, biểu mẫu, hợp đồng, báo cáo...)."
     )
 
-    # 1. Hàm Săn Model API an toàn tuyệt đối
-    def call_gemini_json_robust(api_key, img_bytes, page_type):
-        b64_data = base64.b64encode(img_bytes).decode("utf-8")
-        
-        if page_type == 1:
-            schema = '''{
-                "header_left": "Dòng 1\\nDòng 2",
-                "header_right": "Dòng 1\\nDòng 2",
-                "title": "Tiêu đề",
-                "info": "Thông tin chi bộ...\\nSố lượng: 14",
-                "table_headers": ["STT", "Họ tên..."],
-                "table_rows": [["1", "Nguyễn Văn A..."]],
-                "footer_left": "Người kiểm tra...",
-                "footer_right": "Người kiểm tra...",
-                "page_number": "1/2..."
-            }'''
-        else:
-            schema = '''{
-                "footer_left_title": "Chức danh...",
-                "footer_left_name": "Họ tên...",
-                "footer_right_title": "Chức danh...",
-                "footer_right_name": "Họ tên...",
-                "page_number": "2/2..."
-            }'''
-            
-        prompt = f"""
-        Trích xuất văn bản từ ảnh scan này sang JSON.
-        TUYỆT ĐỐI KHÔNG DÙNG DẤU MARKDOWN NHƯ ** HAY *.
-        Bám sát chính xác cấu trúc JSON sau:
-        {schema}
-        Nếu ô nào không có dữ liệu, để chuỗi rỗng "". Trả về thuần JSON, không có văn bản nào khác.
-        """
-        
-        payload = {
-            "contents": [{"parts": [{"text": prompt}, {"inline_data": {"mime_type": "image/png", "data": b64_data}}]}],
-            "generationConfig": {"temperature": 0.0}
-        }
+    col1, col2 = st.columns(2)
+    with col1:
+        mode = st.radio("Chế độ xử lý:", ["🎯 Chính xác tối đa (khuyên dùng)", "⚡ Nhanh"], index=0)
+    with col2:
+        use_hint = st.checkbox("Dùng lớp chữ gốc của PDF (nếu có) để sửa lỗi nhận dạng", value=True)
+        workers = st.slider("Số trang xử lý song song", 1, 4, 3)
 
-        # Danh sách săn lùng (Sẽ thử lần lượt từ trên xuống dưới, rớt cái này bắt cái kia)
-        models_to_try = [
-            "gemini-2.5-flash",
-            "gemini-1.5-flash-latest",
-            "gemini-1.5-flash-002",
-            "gemini-1.5-flash",
-            "gemini-2.0-flash",
-            "gemini-1.5-pro-latest",
-            "gemini-1.5-pro"
-        ]
-        api_versions = ["v1beta", "v1"]
-        
-        last_error = ""
-        for model in models_to_try:
-            for version in api_versions:
-                url = f"https://generativelanguage.googleapis.com/{version}/models/{model}:generateContent?key={api_key}"
-                try:
-                    res = requests.post(url, headers={"Content-Type": "application/json"}, json=payload, timeout=60)
-                    if res.status_code == 200:
-                        data = res.json()
-                        if "candidates" in data and len(data["candidates"]) > 0:
-                            text = data["candidates"][0]["content"]["parts"][0]["text"].strip()
-                            
-                            # Dọn rác markdown nếu AI trả về kèm thẻ code block
-                            if text.startswith("```json"): text = text[7:]
-                            if text.startswith("```"): text = text[3:]
-                            if text.endswith("```"): text = text[:-3]
-                            
-                            return json.loads(text.strip())
-                    else:
-                        last_error = f"{model} ({version}) -> Lỗi {res.status_code}"
-                except Exception as e:
-                    last_error = str(e)
-                    
-        raise Exception(f"Đã thử 14 luồng kết nối nhưng máy chủ Google đều từ chối hoặc báo 404. Lỗi cuối: {last_error}")
+    uploaded_file = st.file_uploader(
+        "Tải lên file PDF Scan hoặc ảnh (PDF / PNG / JPG):",
+        type=["pdf", "png", "jpg", "jpeg"],
+        key=f"app10_{st.session_state.uploader_key}",
+    )
+    if not uploaded_file:
+        return
 
-    # 2. Hàm kẻ viền bảng Word
-    def set_cell_border(cell):
-        tcPr = cell._tc.get_or_add_tcPr()
-        tcBorders = OxmlElement('w:tcBorders')
-        for edge in ('top', 'left', 'bottom', 'right'):
-            element = OxmlElement(f'w:{edge}')
-            element.set(qn('w:val'), 'single')
-            element.set(qn('w:sz'), '4')
-            element.set(qn('w:space'), '0')
-            element.set(qn('w:color'), '000000')
-            tcBorders.append(element)
-        tcPr.append(tcBorders)
+    file_bytes = uploaded_file.getvalue()
+    fname = uploaded_file.name
+    st.info(f"📄 Đã nhận: **{fname}** ({len(file_bytes) / 1024:.1f} KB)")
 
-    # Hàm làm sạch text (Chống lỗi font và dấu rác)
-    def c_txt(val):
-        if not val: return ""
-        return str(val).replace("**", "").replace("*", "").replace("`", "").strip()
+    if not st.button("🚀 Bắt đầu chuyển đổi sang Word", type="primary"):
+        return
 
-    if uploaded_file:
-        file_bytes = uploaded_file.getvalue()
-        fname = uploaded_file.name
-        st.info(f"📄 Đã nhận: **{fname}** ({len(file_bytes) / 1024:.1f} KB)")
+    try:
+        api_key = st.secrets["GEMINI_API_KEY"]
+    except Exception:
+        api_key = os.environ.get("GEMINI_API_KEY", "")
+    if not api_key:
+        st.error("Chưa cấu hình GEMINI_API_KEY!")
+        return
 
-        if st.button("🚀 Bắt đầu Bóc Tách & Dựng Layout Word", type="primary"):
-            api_key = st.secrets.get("GEMINI_API_KEY", os.environ.get("GEMINI_API_KEY", ""))
-            if not api_key:
-                st.error("Chưa cấu hình GEMINI_API_KEY!")
+    models = A10_MODELS_PRECISE if mode.startswith("🎯") else A10_MODELS_FAST
+
+    try:
+        # 1) Dựng ảnh từng trang
+        pages, pdf_doc = [], None
+        if fname.lower().endswith(".pdf"):
+            pdf_doc = fitz.open("pdf", file_bytes)
+            if len(pdf_doc) == 0:
+                st.error("File PDF không có trang nào.")
                 return
+            if len(pdf_doc) > 30:
+                st.warning("File trên 30 trang - thời gian xử lý sẽ lâu và dễ chạm giới hạn API.")
+            for i in range(len(pdf_doc)):
+                pg = pdf_doc[i]
+                pix = pg.get_pixmap(dpi=A10_RENDER_DPI)
+                img = Image.open(io.BytesIO(pix.tobytes("png"))).convert("RGB")
+                txt = pg.get_text("text").strip() if use_hint else ""
+                pages.append({"img": img, "w": pg.rect.width, "h": pg.rect.height, "native": pg if txt else None,
+                              "hint": txt if len(txt) > 20 else ""})
+        else:
+            img = Image.open(io.BytesIO(file_bytes)).convert("RGB")
+            pages.append({"img": img, "w": img.size[0] * 72 / 200.0, "h": img.size[1] * 72 / 200.0,
+                          "native": None, "hint": ""})
 
-            with st.spinner("Đang săn Model API khả dụng và bóc tách bố cục (10-15 giây)..."):
+        # 2) Gửi Gemini (song song), có tiến trình
+        def api_bytes(im):
+            s = im.copy()
+            s.thumbnail((A10_API_MAX_SIDE, A10_API_MAX_SIDE))
+            b = io.BytesIO()
+            s.save(b, format="JPEG", quality=92)
+            return b.getvalue()
+
+        def work(idx):
+            data, used = _a10_call_gemini(api_key, api_bytes(pages[idx]["img"]), pages[idx]["hint"], models)
+            return idx, data, used
+
+        bar = st.progress(0.0, text="Đang gửi các trang lên Gemini...")
+        notes, done = [], 0
+        with ThreadPoolExecutor(max_workers=workers) as ex:
+            futs = {ex.submit(work, i): i for i in range(len(pages))}
+            for fu in as_completed(futs):
+                i = futs[fu]
                 try:
-                    pdf_doc = fitz.open("pdf", file_bytes)
-                    doc_out = Document()
-
-                    # Chỉnh lề chuẩn
-                    for sec in doc_out.sections:
-                        sec.top_margin = Inches(0.8)
-                        sec.bottom_margin = Inches(0.8)
-                        sec.left_margin = Inches(1.0)
-                        sec.right_margin = Inches(0.6)
-
-                    # ----------------------------------------------------
-                    # XỬ LÝ TRANG 1: VĂN BẢN, BẢNG VÀ MÃ QR CODE
-                    # ----------------------------------------------------
-                    if len(pdf_doc) > 0:
-                        page1 = pdf_doc[0]
-                        pix1 = page1.get_pixmap(dpi=200)
-                        img1_bytes = pix1.tobytes("png")
-                        pil_img1 = Image.open(BytesIO(img1_bytes))
-                        W, H = pil_img1.size
-
-                        # Gọi API (Có cơ chế săn model tự động)
-                        data = call_gemini_json_robust(api_key, img1_bytes, page_type=1)
-
-                        # Dựng Header
-                        t_hdr = doc_out.add_table(rows=1, cols=2)
-                        t_hdr.alignment = WD_TABLE_ALIGNMENT.CENTER
-                        t_hdr.columns[0].width = Inches(3.0)
-                        t_hdr.columns[1].width = Inches(4.0)
-
-                        p_hl = t_hdr.cell(0, 0).paragraphs[0]; p_hl.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                        r_hl = p_hl.add_run(c_txt(data.get("header_left", ""))); r_hl.bold = True; r_hl.font.name = "Times New Roman"; r_hl.font.size = Pt(11)
-
-                        p_hr = t_hdr.cell(0, 1).paragraphs[0]; p_hr.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                        r_hr = p_hr.add_run(c_txt(data.get("header_right", ""))); r_hr.bold = True; r_hr.font.name = "Times New Roman"; r_hr.font.size = Pt(11)
-                        
-                        doc_out.add_paragraph()
-
-                        # Dựng Title
-                        p_title = doc_out.add_paragraph(); p_title.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                        r_title = p_title.add_run(c_txt(data.get("title", ""))); r_title.bold = True; r_title.font.name = "Times New Roman"; r_title.font.size = Pt(14)
-
-                        # Dựng Khối Info & Nhúng ảnh cắt QR
-                        t_info = doc_out.add_table(rows=1, cols=2)
-                        t_info.alignment = WD_TABLE_ALIGNMENT.CENTER
-                        t_info.columns[0].width = Inches(5.0)
-                        t_info.columns[1].width = Inches(2.0)
-
-                        p_info = t_info.cell(0, 0).paragraphs[0]; p_info.paragraph_format.line_spacing = 1.15
-                        r_info = p_info.add_run(c_txt(data.get("info", ""))); r_info.font.name = "Times New Roman"; r_info.font.size = Pt(11)
-
-                        # Cắt tọa độ QR Code (Góc trên bên phải)
-                        qr_crop = pil_img1.crop((int(W * 0.65), int(H * 0.12), int(W * 0.95), int(H * 0.38)))
-                        qr_stream = BytesIO(); qr_crop.save(qr_stream, format="PNG"); qr_stream.seek(0)
-                        
-                        p_qr = t_info.cell(0, 1).paragraphs[0]; p_qr.alignment = WD_ALIGN_PARAGRAPH.RIGHT
-                        p_qr.add_run().add_picture(qr_stream, width=Inches(1.4))
-
-                        doc_out.add_paragraph()
-
-                        # Dựng BẢNG THẬT
-                        headers = data.get("table_headers", [])
-                        rows = data.get("table_rows", [])
-                        if headers and rows:
-                            cols_cnt = len(headers)
-                            tbl = doc_out.add_table(rows=len(rows)+1, cols=cols_cnt)
-                            tbl.alignment = WD_TABLE_ALIGNMENT.CENTER
-                            col_widths = [Inches(0.6), Inches(1.5), Inches(2.2), Inches(1.5), Inches(1.2)]
-
-                            for c_idx, h_text in enumerate(headers):
-                                cell = tbl.cell(0, c_idx); cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
-                                if c_idx < len(col_widths): cell.width = col_widths[c_idx]
-                                p = cell.paragraphs[0]; p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                                r = p.add_run(c_txt(h_text)); r.bold = True; r.font.name = "Times New Roman"; r.font.size = Pt(11)
-                                set_cell_border(cell)
-
-                            for r_idx, row_data in enumerate(rows):
-                                for c_idx in range(cols_cnt):
-                                    cell = tbl.cell(r_idx + 1, c_idx); cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
-                                    if c_idx < len(col_widths): cell.width = col_widths[c_idx]
-                                    
-                                    val = row_data[c_idx] if c_idx < len(row_data) else ""
-                                    p = cell.paragraphs[0]; p.alignment = WD_ALIGN_PARAGRAPH.CENTER if c_idx != 2 else WD_ALIGN_PARAGRAPH.LEFT
-                                    r = p.add_run(c_txt(val)); r.font.name = "Times New Roman"; r.font.size = Pt(11)
-                                    set_cell_border(cell)
-
-                        doc_out.add_paragraph()
-
-                        # Dựng Footer Trang 1
-                        t_chk = doc_out.add_table(rows=1, cols=2)
-                        t_chk.alignment = WD_TABLE_ALIGNMENT.CENTER
-                        
-                        p_chk1 = t_chk.cell(0, 0).paragraphs[0]; p_chk1.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                        r_chk1 = p_chk1.add_run(c_txt(data.get("footer_left", ""))); r_chk1.bold = True; r_chk1.font.name = "Times New Roman"; r_chk1.font.size = Pt(11)
-
-                        p_chk2 = t_chk.cell(0, 1).paragraphs[0]; p_chk2.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                        r_chk2 = p_chk2.add_run(c_txt(data.get("footer_right", ""))); r_chk2.bold = True; r_chk2.font.name = "Times New Roman"; r_chk2.font.size = Pt(11)
-
-                        p_foot = doc_out.add_paragraph(); p_foot.alignment = WD_ALIGN_PARAGRAPH.RIGHT
-                        r_foot = p_foot.add_run(c_txt(data.get("page_number", ""))); r_foot.font.name = "Times New Roman"; r_foot.font.size = Pt(9)
-
-                    # ----------------------------------------------------
-                    # XỬ LÝ TRANG 2: CHỮ KÝ VÀ TỔNG CÔNG TY
-                    # ----------------------------------------------------
-                    if len(pdf_doc) > 1:
-                        doc_out.add_page_break()
-                        page2 = pdf_doc[1]
-                        pix2 = page2.get_pixmap(dpi=200)
-                        img2_bytes = pix2.tobytes("png")
-                        pil_img2 = Image.open(BytesIO(img2_bytes))
-                        W2, H2 = pil_img2.size
-
-                        # Cắt nửa trên trang 2 để lấy vùng chữ ký nguyên bản
-                        sig_crop = pil_img2.crop((0, 0, W2, int(H2 * 0.35)))
-                        sig_stream = BytesIO(); sig_crop.save(sig_stream, format="PNG"); sig_stream.seek(0)
-                        
-                        p_sig = doc_out.add_paragraph(); p_sig.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                        p_sig.add_run().add_picture(sig_stream, width=Inches(6.0))
-                        
-                        # AI bóc chữ phần chân chữ ký
-                        data2 = call_gemini_json_robust(api_key, img2_bytes, page_type=2)
-
-                        tbl_p2 = doc_out.add_table(rows=1, cols=2)
-                        tbl_p2.alignment = WD_TABLE_ALIGNMENT.CENTER
-
-                        p2_l = tbl_p2.cell(0, 0).paragraphs[0]; p2_l.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                        r2_l1 = p2_l.add_run(c_txt(data2.get("footer_left_title", "")) + "\n"); r2_l1.bold = True; r2_l1.font.name = "Times New Roman"; r2_l1.font.size=Pt(11)
-                        r2_l2 = p2_l.add_run(c_txt(data2.get("footer_left_name", ""))); r2_l2.bold = True; r2_l2.font.name = "Times New Roman"; r2_l2.font.size=Pt(11)
-
-                        p2_r = tbl_p2.cell(0, 1).paragraphs[0]; p2_r.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                        r2_r1 = p2_r.add_run(c_txt(data2.get("footer_right_title", "")) + "\n"); r2_r1.bold = True; r2_r1.font.name = "Times New Roman"; r2_r1.font.size=Pt(11)
-                        r2_r2 = p2_r.add_run(c_txt(data2.get("footer_right_name", ""))); r2_r2.bold = True; r2_r2.font.name = "Times New Roman"; r2_r2.font.size=Pt(11)
-
-                        p_foot2 = doc_out.add_paragraph(); p_foot2.alignment = WD_ALIGN_PARAGRAPH.RIGHT
-                        r_foot2 = p_foot2.add_run(c_txt(data2.get("page_number", ""))); r_foot2.font.name = "Times New Roman"; r_foot2.font.size = Pt(9)
-
-                    out_stream = BytesIO()
-                    doc_out.save(out_stream)
-
-                    base_name = fname.rsplit('.', 1)[0]
-                    st.success("🎉 Tái tạo thành công tuyệt đối! Đã bóc tách 100% văn bản, tự động cắt ảnh QR & Chữ ký.")
-                    st.download_button(
-                        label="📥 Tải xuống File Word (.docx)",
-                        data=out_stream.getvalue(),
-                        file_name=f"{base_name}_Chuan_HoanHao.docx",
-                        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                        on_click=clear_file
-                    )
-
+                    _, data, used = fu.result()
+                    lay, dropped = _a10_sanitize(data)
+                    pages[i]["layout"] = lay
+                    if dropped:
+                        notes.append(f"Trang {i + 1}: bỏ {dropped} khối dữ liệu lỗi từ AI.")
                 except Exception as e:
-                    st.error(f"Lỗi: {e}")
+                    pages[i]["layout"] = None
+                    notes.append(f"Trang {i + 1}: {e}")
+                done += 1
+                bar.progress(done / len(pages), text=f"Đã xử lý {done}/{len(pages)} trang")
+
+        # 3) Dựng Word
+        with st.spinner("Đang dựng file Word..."):
+            docx_bytes, warns = a10_build_docx(pages)
+        bar.empty()
+
+        st.success(f"🎉 Hoàn tất {len(pages)} trang. Hãy mở file và đối chiếu nhanh với bản gốc.")
+        for m in notes + warns:
+            st.warning(m)
+        base = fname.rsplit(".", 1)[0]
+        st.download_button(
+            label="📥 Tải xuống File Word (.docx)",
+            data=docx_bytes,
+            file_name=f"{base}_Word.docx",
+            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            on_click=clear_file,
+        )
+    except Exception as e:
+        st.error(f"Lỗi: {e}")
+
+
 # ==========================================                        
 # 5. KÍCH HOẠT ỨNG DỤNG THEO LỰA CHỌN MENU
 # ==========================================
