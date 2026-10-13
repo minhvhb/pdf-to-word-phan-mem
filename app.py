@@ -544,6 +544,1131 @@ st.sidebar.markdown(f"<h5 style='text-align: center; margin-top: 5px; margin-bot
 st.sidebar.markdown("---")
 
 st.sidebar.markdown("### 📌 Menu Công Cụ")
+# ==========================================
+# APP 12: PDF SANG WORD - OFFLINE (GIỮ NGUYÊN BỐ CỤC)
+# ==========================================
+# Engine A: pdf2docx (thư viện chuyên dụng, văn bản trôi theo dòng, dễ chỉnh sửa)
+# Engine B: dựng lại từ lớp chữ của PDF (tự viết): đúng khổ giấy, lề, cỡ chữ, khoảng cách dòng, bảng, cột,
+#           ảnh/logo/con dấu đặt tại toạ độ tuyệt đối. Không dùng AI, không cần mạng.
+import io as _io
+import re as _re
+import math as _math
+import unicodedata as _ud
+import statistics as _stat
+from collections import Counter as _Counter
+
+P2W_DESC = 0.215          # tỉ lệ phần "đuôi" dưới đường cơ sở của dòng (Word/LibreOffice giữ nguyên khi dòng cố định)
+
+_P2W_FONT_MAP = [
+    ("arialnarrow", "Arial Narrow"), ("timesnewroman", "Times New Roman"), ("liberationserif", "Times New Roman"),
+    ("dejavuserif", "Times New Roman"), ("times", "Times New Roman"), ("liberationsans", "Arial"),
+    ("dejavusans", "Arial"), ("arial", "Arial"), ("helvetica", "Arial"), ("liberationmono", "Courier New"),
+    ("couriernew", "Courier New"), ("courier", "Courier New"), ("calibri", "Calibri"), ("cambria", "Cambria"),
+    ("tahoma", "Tahoma"), ("verdana", "Verdana"), ("segoeui", "Segoe UI"), ("georgia", "Georgia"),
+    ("garamond", "Garamond"), ("palatino", "Palatino Linotype"), ("bookantiqua", "Book Antiqua"),
+    ("trebuchet", "Trebuchet MS"), ("centurygothic", "Century Gothic"), ("consolas", "Consolas"),
+    ("candara", "Candara"), ("roboto", "Roboto"), ("opensans", "Open Sans"), ("symbol", "Symbol"),
+    ("wingdings", "Wingdings"),
+]
+
+
+# ------------------------------------------------------------------ tiện ích
+def _p2w_font(fontname):
+    n = _re.sub(r"^[A-Z]{6}\+", "", fontname or "")
+    low = n.lower()
+    bold = bool(_re.search(r"bold|black|heavy|semibold|demibold", low))
+    ital = bool(_re.search(r"italic|oblique|ital\b|-it\b", low))
+    key = _re.sub(r"[^a-z]", "", _re.split(r"[-,]", low)[0])
+    for k, v in _P2W_FONT_MAP:
+        if k in key:
+            return v, bold, ital
+    base = _re.split(r"[-,]", n)[0]
+    base = _re.sub(r"(PSMT|MT|PS)$", "", base)
+    base = _re.sub(r"(?<=[a-z])(?=[A-Z])", " ", base).strip()
+    return (base or "Times New Roman"), bold, ital
+
+
+def _p2w_color(c):
+    """màu chữ của pdfplumber -> 'RRGGBB' hoặc None (đen/không rõ)."""
+    if c is None or isinstance(c, str):
+        return None
+    try:
+        t = tuple(float(x) for x in (c if isinstance(c, (list, tuple)) else (c,)))
+    except Exception:
+        return None
+    if len(t) == 1:
+        r = g = b = t[0]
+    elif len(t) == 3:
+        r, g, b = t
+    elif len(t) == 4:
+        cc, m, y, k = t
+        r, g, b = (1 - cc) * (1 - k), (1 - m) * (1 - k), (1 - y) * (1 - k)
+    else:
+        return None
+    if max(r, g, b) < 0.16:
+        return None
+    return "%02X%02X%02X" % tuple(int(round(max(0, min(1, v)) * 255)) for v in (r, g, b))
+
+
+def _p2w_is_white(c):
+    if c is None:
+        return True
+    hx = _p2w_color(c) if not isinstance(c, str) else None
+    if hx is None:
+        try:
+            t = tuple(float(x) for x in (c if isinstance(c, (list, tuple)) else (c,)))
+            return max(t) < 0.16 and False
+        except Exception:
+            return True
+    return min(int(hx[i:i + 2], 16) for i in (0, 2, 4)) >= 245
+
+
+def _p2w_fix_char(t):
+    if len(t) > 1 or 0xFB00 <= ord(t[0]) <= 0xFB06:
+        return _ud.normalize("NFKC", t)
+    return t
+
+
+def _p2w_cluster(vals, tol):
+    vals = sorted(vals)
+    out, cur = [], [vals[0]]
+    for v in vals[1:]:
+        if v - cur[-1] <= tol:
+            cur.append(v)
+        else:
+            out.append(sum(cur) / len(cur))
+            cur = [v]
+    out.append(sum(cur) / len(cur))
+    return out
+
+
+def _p2w_idx(vals, v):
+    return min(range(len(vals)), key=lambda i: abs(vals[i] - v))
+
+
+# ------------------------------------------------------------------ 1) chữ -> các đoạn dòng
+def _p2w_segments(page):
+    ph = float(page.height)
+    chars = []
+    for c in page.chars:
+        t = c.get("text", "")
+        if not t or t.isspace() or not c.get("upright", True):
+            continue
+        m = c.get("matrix")
+        base = ph - m[5] if m else c["bottom"] - 0.217 * c["size"]
+        if not (c["top"] - 1 <= base <= c["bottom"] + 1):
+            base = c["bottom"] - 0.217 * c["size"]
+        chars.append({"t": _p2w_fix_char(t), "x0": c["x0"], "x1": c["x1"], "base": base, "size": float(c["size"]),
+                      "font": c.get("fontname", ""), "col": c.get("non_stroking_color")})
+    if not chars:
+        return []
+    chars.sort(key=lambda c: (c["base"], c["x0"]))
+    lines = []
+    for c in chars:
+        if lines and abs(c["base"] - lines[-1]["mb"]) <= 0.42 * max(c["size"], lines[-1]["ms"]):
+            ln = lines[-1]
+            ln["cs"].append(c)
+            ln["mb"] = sum(x["base"] for x in ln["cs"]) / len(ln["cs"])
+            ln["ms"] = max(ln["ms"], c["size"])
+        else:
+            lines.append({"cs": [c], "mb": c["base"], "ms": c["size"]})
+    segs = []
+    for ln in lines:
+        cs = sorted(ln["cs"], key=lambda c: c["x0"])
+        dd = []                                             # bỏ ký tự vẽ chồng (chữ đậm giả)
+        for c in cs:
+            if dd and c["t"] == dd[-1]["t"] and abs(c["x0"] - dd[-1]["x0"]) < 0.25 * c["size"] and abs(c["base"] - dd[-1]["base"]) < 1.0:
+                continue
+            dd.append(c)
+        cs = dd
+        sz_dom = _Counter(round(c["size"] * 2) / 2 for c in cs).most_common(1)[0][0]
+        groups, cur = [], [cs[0]]
+        for c in cs[1:]:
+            if c["x0"] - cur[-1]["x1"] > 2.0 * sz_dom:
+                groups.append(cur)
+                cur = [c]
+            else:
+                cur.append(c)
+        groups.append(cur)
+        for g in groups:
+            segs.append(_p2w_make_seg(g))
+    return segs
+
+
+def _p2w_make_seg(g):
+    sz_dom = _Counter(round(c["size"] * 2) / 2 for c in g).most_common(1)[0][0]
+    base_dom = _stat.median([c["base"] for c in g if abs(c["size"] - sz_dom) < 1] or [g[0]["base"]])
+    runs, prev = [], None
+    for c in g:
+        gap = (c["x0"] - prev["x1"]) if prev else 0
+        if prev and gap > 0.15 * c["size"]:
+            n = 1 if gap < 0.9 * c["size"] else min(8, max(1, round(gap / (0.27 * c["size"]))))
+            sp = " " * n
+        else:
+            sp = ""
+        font, b, i = _p2w_font(c["font"])
+        sup = 0
+        if c["size"] <= 0.8 * sz_dom and (base_dom - c["base"]) >= 0.2 * c["size"]:
+            sup = 1
+        elif c["size"] <= 0.8 * sz_dom and (c["base"] - base_dom) >= 0.2 * c["size"]:
+            sup = -1
+        key = (font, round(c["size"] * 2) / 2, b, i, _p2w_color(c["col"]), sup)
+        if runs and runs[-1]["key"] == key:
+            runs[-1]["t"] += sp + c["t"]
+            runs[-1]["x1"] = c["x1"]
+        else:
+            if runs and sp:
+                runs[-1]["t"] += sp
+            runs.append({"key": key, "t": c["t"], "x0": c["x0"], "x1": c["x1"]})
+        prev = c
+    out_runs = []
+    for r in runs:
+        f, s, b, i, col, sup = r["key"]
+        out_runs.append({"t": r["t"], "font": f, "size": s, "b": b, "i": i, "u": False, "c": col, "sup": sup,
+                         "x0": r["x0"], "x1": r["x1"]})
+    x0, x1 = g[0]["x0"], max(c["x1"] for c in g)
+    return {"kind": "seg", "x0": x0, "x1": x1, "base": base_dom, "size": sz_dom, "runs": out_runs,
+            "y0": base_dom - 0.78 * sz_dom, "y1": base_dom + 0.22 * sz_dom}
+
+
+# ------------------------------------------------------------------ 2) bảng có kẻ
+def _p2w_find_tables(page, segs):
+    pw, ph = float(page.width), float(page.height)
+    res = []
+    try:
+        tabs = page.find_tables()
+    except Exception:
+        return res
+    for t in tabs:
+        cells = [tuple(c) for c in (t.cells or [])]
+        if not cells:
+            continue
+        x0, top, x1, bot = t.bbox
+        if len(cells) == 1 and (x1 - x0) * (bot - top) > 0.5 * pw * ph:
+            continue                                         # khung viền cả trang, không phải bảng
+        xs = _p2w_cluster([v for c in cells for v in (c[0], c[2])], 2.0)
+        ys = _p2w_cluster([v for c in cells for v in (c[1], c[3])], 2.0)
+        occ, spans = {}, []
+        for c in cells:
+            c0, c1 = _p2w_idx(xs, c[0]), _p2w_idx(xs, c[2])
+            r0, r1 = _p2w_idx(ys, c[1]), _p2w_idx(ys, c[3])
+            if c1 <= c0 or r1 <= r0:
+                continue
+            if any((r, cc) in occ for r in range(r0, r1) for cc in range(c0, c1)):
+                continue
+            for r in range(r0, r1):
+                for cc in range(c0, c1):
+                    occ[(r, cc)] = True
+            spans.append({"r0": r0, "r1": r1, "c0": c0, "c1": c1})
+        for r in range(len(ys) - 1):                         # ô thiếu -> ô trống 1x1
+            for cc in range(len(xs) - 1):
+                if (r, cc) not in occ:
+                    spans.append({"r0": r, "r1": r + 1, "c0": cc, "c1": cc + 1})
+        res.append({"kind": "tbl", "xs": xs, "ys": ys, "cells": spans, "x0": xs[0], "x1": xs[-1], "y0": ys[0],
+                    "y1": ys[-1]})
+    return res
+
+
+def _p2w_assign_to_tables(segs, tables):
+    rest = []
+    for s in segs:
+        cx, cy = (s["x0"] + s["x1"]) / 2, s["base"] - 0.3 * s["size"]
+        placed = False
+        for t in tables:
+            if t["x0"] - 2 <= cx <= t["x1"] + 2 and t["y0"] - 2 <= cy <= t["y1"] + 2:
+                for c in t["cells"]:
+                    if t["xs"][c["c0"]] - 1 <= cx <= t["xs"][c["c1"]] + 1 and t["ys"][c["r0"]] - 1 <= cy <= t["ys"][c["r1"]] + 1:
+                        c.setdefault("items", []).append(s)
+                        placed = True
+                        break
+                if placed:
+                    break
+        if not placed:
+            rest.append(s)
+    return rest
+
+
+def _p2w_cell_fills(page, tables):
+    rects = []
+    for r in page.rects:
+        if r.get("fill") and not _p2w_is_white(r.get("non_stroking_color")):
+            hx = _p2w_color(r.get("non_stroking_color"))
+            rects.append((r["x0"], r["top"], r["x1"], r["bottom"], hx))
+    for t in tables:
+        for c in t["cells"]:
+            cx0, cx1, cy0, cy1 = t["xs"][c["c0"]], t["xs"][c["c1"]], t["ys"][c["r0"]], t["ys"][c["r1"]]
+            area = max((cx1 - cx0) * (cy1 - cy0), 1)
+            for (a, b, d, e, hx) in rects:
+                ix = max(0, min(cx1, d) - max(cx0, a))
+                iy = max(0, min(cy1, e) - max(cy0, b))
+                if ix * iy / area >= 0.8 and hx:
+                    c["fill"] = hx
+                    break
+
+
+# ------------------------------------------------------------------ 3) ảnh + đồ họa vector -> khối nổi
+def _p2w_graphics(page, segs, tables, prefer_text, rpt):
+    pw, ph = float(page.width), float(page.height)
+    boxes = []
+    for im in page.images:
+        w, h = im["x1"] - im["x0"], im["bottom"] - im["top"]
+        if w < 2 or h < 2:
+            continue
+        cov = (w * h) / (pw * ph)
+        boxes.append({"box": [im["x0"], im["top"], im["x1"], im["bottom"]], "img": True, "fill": False, "cov": cov})
+    page_image = any(b["cov"] >= 0.85 for b in boxes)
+    # đường kẻ mảnh nằm sát dưới chữ => gạch chân
+    thin = []
+    for ln in list(page.lines) + list(page.rects):
+        w, h = ln["x1"] - ln["x0"], ln["bottom"] - ln["top"]
+        if h < 2.0 and w > 4:
+            thin.append(ln)
+    used = set()
+    for ti, ln in enumerate(thin):
+        for s in segs:
+            if abs(ln["top"] - (s["base"] + 0.06 * s["size"])) <= 0.12 * s["size"] + 0.8 and ln["x0"] >= s["x0"] - 2 \
+                    and ln["x1"] <= s["x1"] + 2 and (ln["x1"] - ln["x0"]) >= 2.5 * s["size"]:
+                for r in s["runs"]:
+                    ov = min(r["x1"], ln["x1"]) - max(r["x0"], ln["x0"])
+                    if ov > 0.5 * (r["x1"] - r["x0"]):
+                        r["u"] = True
+                used.add(id(ln))
+                break
+
+    def in_table(b):
+        cx, cy = (b[0] + b[2]) / 2, (b[1] + b[3]) / 2
+        return any(t["x0"] - 3 <= cx <= t["x1"] + 3 and t["y0"] - 3 <= cy <= t["y1"] + 3 for t in tables)
+
+    vec = []
+    for kind, lst in (("l", page.lines), ("c", page.curves), ("r", page.rects)):
+        for g in lst:
+            if id(g) in used:
+                continue
+            b = [g["x0"], g["top"], g["x1"], g["bottom"]]
+            w, h = b[2] - b[0], b[3] - b[1]
+            if w < 0.3 and h < 0.3:
+                continue
+            if kind == "r":
+                filled = bool(g.get("fill")) and not _p2w_is_white(g.get("non_stroking_color"))
+                if not (g.get("stroke") or filled) or w * h > 0.5 * pw * ph:
+                    continue
+            else:
+                filled = bool(g.get("fill")) and not _p2w_is_white(g.get("non_stroking_color"))
+            if in_table(b):
+                continue
+            vec.append({"box": b, "fill": filled})
+    # gộp các nét vẽ gần nhau thành một cụm
+    n = len(vec)
+    parent = list(range(n))
+
+    def find(a):
+        while parent[a] != a:
+            parent[a] = parent[parent[a]]
+            a = parent[a]
+        return a
+    for i in range(n):
+        for j in range(i + 1, n):
+            a, b = vec[i]["box"], vec[j]["box"]
+            if a[0] - 2 <= b[2] and b[0] - 2 <= a[2] and a[1] - 2 <= b[3] and b[1] - 2 <= a[3]:
+                parent[find(i)] = find(j)
+    cl = {}
+    for i in range(n):
+        cl.setdefault(find(i), []).append(vec[i])
+    for items in cl.values():
+        box = [min(v["box"][0] for v in items), min(v["box"][1] for v in items),
+               max(v["box"][2] for v in items), max(v["box"][3] for v in items)]
+        boxes.append({"box": box, "img": False, "fill": any(v["fill"] for v in items), "cov": 0})
+    # chữ xoay -> coi như hình
+    rot = [c for c in page.chars if not c.get("upright", True) and c.get("text", "").strip()]
+    if rot:
+        boxes.append({"box": [min(c["x0"] for c in rot), min(c["top"] for c in rot), max(c["x1"] for c in rot),
+                              max(c["bottom"] for c in rot)], "img": True, "fill": True, "cov": 0})
+        rpt.append("Có chữ xoay ngang/dọc: được giữ dạng hình ảnh.")
+    return boxes, page_image
+
+
+def _p2w_blank(img, boxes_px):
+    import numpy as np
+    a = np.asarray(img).copy()
+    H, W = a.shape[:2]
+    for (x0, y0, x1, y1) in boxes_px:
+        x0, y0, x1, y1 = max(0, x0 - 1), max(0, y0 - 1), min(W, x1 + 1), min(H, y1 + 1)
+        if x1 - x0 < 2 or y1 - y0 < 2:
+            continue
+        X0, Y0, X1, Y1 = max(0, x0 - 4), max(0, y0 - 4), min(W, x1 + 4), min(H, y1 + 4)
+        ring = np.concatenate([a[Y0:y0, X0:X1].reshape(-1, a.shape[2]), a[y1:Y1, X0:X1].reshape(-1, a.shape[2]),
+                               a[y0:y1, X0:x0].reshape(-1, a.shape[2]), a[y0:y1, x1:X1].reshape(-1, a.shape[2])])
+        col = np.median(ring, axis=0) if len(ring) else np.array([255] * a.shape[2])
+        a[y0:y1, x0:x1] = col
+    from PIL import Image
+    return Image.fromarray(a)
+
+
+def _p2w_crop(full, box, pw, ph, blank_boxes=None, transparent=False):
+    from PIL import Image
+    import numpy as np
+    W, H = full.size
+    sx, sy = W / pw, H / ph
+    x0, y0 = int(max(0, math_floor(box[0] * sx) - 1)), int(max(0, math_floor(box[1] * sy) - 1))
+    x1, y1 = int(min(W, _math.ceil(box[2] * sx) + 1)), int(min(H, _math.ceil(box[3] * sy) + 1))
+    if x1 - x0 < 2 or y1 - y0 < 2:
+        return None
+    crop = full.crop((x0, y0, x1, y1)).convert("RGB")
+    if blank_boxes:
+        px = []
+        for b in blank_boxes:
+            bx0, by0, bx1, by1 = int(b[0] * sx) - x0, int(b[1] * sy) - y0, int(b[2] * sx) - x0, int(b[3] * sy) - y0
+            if bx1 > 0 and by1 > 0 and bx0 < crop.size[0] and by0 < crop.size[1]:
+                px.append((bx0, by0, bx1, by1))
+        if px:
+            crop = _p2w_blank(crop, px)
+    out = _io.BytesIO()
+    if transparent:
+        arr = np.asarray(crop).astype("float32")
+        alpha = 255.0 - arr.min(axis=2)
+        a = np.clip(alpha, 1, 255)[..., None]
+        col = np.clip((arr - (255.0 - a)) * 255.0 / a, 0, 255)
+        rgba = np.dstack([col, alpha]).astype("uint8")
+        Image.fromarray(rgba, "RGBA").save(out, format="PNG")
+    elif crop.size[0] * crop.size[1] > 300000:
+        crop.save(out, format="JPEG", quality=92)
+    else:
+        crop.save(out, format="PNG")
+    return out.getvalue()
+
+
+def math_floor(v):
+    return int(_math.floor(v))
+
+
+# ------------------------------------------------------------------ 4) XY-cut: chia cột / chia khối
+def _p2w_gaps(intervals):
+    iv = sorted(intervals)
+    gaps, cur_end = [], iv[0][1]
+    for a, b in iv[1:]:
+        if a > cur_end:
+            gaps.append((a - cur_end, (a + cur_end) / 2.0))
+        cur_end = max(cur_end, b)
+    return gaps
+
+
+def _p2w_leaf(items):
+    nodes, cur = [], []
+    for it in sorted(items, key=lambda i: (i["y0"], i["x0"])):
+        if it["kind"] == "tbl":
+            if cur:
+                nodes.append(("lines", cur))
+                cur = []
+            nodes.append(("tbl", it))
+        else:
+            cur.append(it)
+    if cur:
+        nodes.append(("lines", cur))
+    return _p2w_merge_lines(nodes)
+
+
+def _p2w_merge_lines(nodes):
+    out = []
+    for n in nodes:
+        if n[0] == "lines" and out and out[-1][0] == "lines":
+            out[-1] = ("lines", out[-1][1] + n[1])
+        else:
+            out.append(n)
+    return out
+
+
+def _p2w_xycut(items):
+    if not items:
+        return []
+    if len(items) == 1:
+        return _p2w_leaf(items)
+    sizes = [i["size"] for i in items if i["kind"] == "seg"] or [12.0]
+    ms = _stat.median(sizes)
+    vg = _p2w_gaps([(i["x0"], i["x1"]) for i in items])
+    hg = _p2w_gaps([(i["y0"], i["y1"]) for i in items])
+    vmin, hmin = max(14.0, 1.6 * ms), 0.25 * ms
+    vbest = max([g for g, _ in vg], default=0)
+    hbest = max([g for g, _ in hg], default=0)
+    if vbest >= vmin and vbest >= hbest:
+        cuts = sorted(p for g, p in vg if g >= vmin)
+        groups = [[] for _ in range(len(cuts) + 1)]
+        for it in items:
+            cx = (it["x0"] + it["x1"]) / 2
+            groups[sum(1 for c in cuts if cx > c)].append(it)
+        groups = [g for g in groups if g]
+        if len(groups) >= 2:
+            cols = [{"items": g, "x0": min(i["x0"] for i in g), "x1": max(i["x1"] for i in g),
+                     "nodes": _p2w_xycut(g)} for g in groups]
+            return [("cols", cols)]
+    if hbest >= hmin:
+        pos = max(hg)[1]
+        top = [i for i in items if (i["y0"] + i["y1"]) / 2 < pos]
+        bot = [i for i in items if (i["y0"] + i["y1"]) / 2 >= pos]
+        if top and bot:
+            return _p2w_merge_lines(_p2w_xycut(top) + _p2w_xycut(bot))
+    return _p2w_leaf(items)
+
+
+# ------------------------------------------------------------------ 5) gom dòng thành đoạn văn
+def _p2w_pair_kind(a, b, regL):
+    ca, cb = (a["x0"] + a["x1"]) / 2, (b["x0"] + b["x1"]) / 2
+    dx0, dx1 = abs(a["x0"] - b["x0"]), abs(a["x1"] - b["x1"])
+    if dx0 <= 3:
+        return "left"
+    if abs(ca - cb) <= 3:
+        return "center"
+    if dx1 <= 3:
+        return "indent" if abs(b["x0"] - regL) <= 4 or abs(a["x0"] - regL) <= 4 else "right"
+    d = a["x0"] - b["x0"]
+    if abs(d) <= 5 * max(a["size"], b["size"]) and (abs(b["x0"] - regL) <= 4 or abs(a["x0"] - regL) <= 4):
+        return "indent"
+    return None
+
+
+def _p2w_form_paras(segs, regL, regR):
+    segs = sorted(segs, key=lambda s: (s["base"], s["x0"]))
+    paras, cur, kind = [], [], None
+    for s in segs:
+        if not cur:
+            cur, kind = [s], None
+            continue
+        p = cur[-1]
+        gap = s["base"] - p["base"]
+        ok = abs(s["size"] - p["size"]) <= 1.0
+        if ok:
+            if len(cur) == 1:
+                ok = 0.85 * p["size"] <= gap <= 1.75 * p["size"]
+                k = _p2w_pair_kind(p, s, regL) if ok else None
+                ok = k is not None
+            else:
+                ref = (cur[-1]["base"] - cur[0]["base"]) / (len(cur) - 1)
+                ok = abs(gap - ref) <= 0.15 * ref + 1.0
+                if ok:
+                    k = kind
+                    if k == "left" or k == "indent":
+                        ok = abs(s["x0"] - cur[-1]["x0"]) <= 3 if len(cur) > 2 or kind == "left" else \
+                            abs(s["x0"] - cur[1]["x0"]) <= 3
+                        if kind == "indent" and len(cur) == 2 and abs(s["x0"] - cur[1]["x0"]) > 3:
+                            ok = False
+                    elif k == "center":
+                        ok = abs((s["x0"] + s["x1"]) / 2 - (cur[-1]["x0"] + cur[-1]["x1"]) / 2) <= 3
+                    elif k == "right":
+                        ok = abs(s["x1"] - cur[-1]["x1"]) <= 3
+        if ok:
+            if len(cur) == 1:
+                kind = k
+            cur.append(s)
+        else:
+            paras.append(cur)
+            cur, kind = [s], None
+    if cur:
+        paras.append(cur)
+    return [_p2w_para_info(p, regL, regR) for p in paras]
+
+
+def _p2w_para_info(segs, regL, regR):
+    n = len(segs)
+    W = max(regR - regL, 1.0)
+    x0s, x1s = [s["x0"] for s in segs], [s["x1"] for s in segs]
+    cs = [(a + b) / 2 for a, b in zip(x0s, x1s)]
+    rc = (regL + regR) / 2
+    fs0 = segs[0]["size"]
+    align = "left"
+    if n == 1:
+        if x0s[0] - regL <= max(4.0, 0.02 * W):
+            align = "left"
+        elif abs(cs[0] - rc) <= max(6.0, 0.03 * W):
+            align = "center"
+        elif regR - x1s[0] <= max(4.0, 0.015 * W):
+            align = "right"
+    else:
+        ref0 = _stat.median(x0s[1:]) if n > 1 else x0s[0]
+        if max(cs) - min(cs) <= 3 and (max(x0s) - min(x0s)) > 4:
+            align = "center"
+        elif max(x0s[1:]) - min(x0s[1:]) <= 3.5:
+            rights = x1s[:-1]
+            if len(rights) >= 1 and max(rights) - min(rights) <= 3 and max(rights) >= regR - 0.06 * W and \
+                    abs(x0s[0] - ref0) <= 5 * fs0:
+                align = "justify"
+        elif max(x1s) - min(x1s) <= 3:
+            align = "right"
+    pitches = [segs[i + 1]["base"] - segs[i]["base"] for i in range(n - 1)]
+    pitch = _stat.median(pitches) if pitches else 1.2 * fs0
+    pitch = max(pitch, 0.9 * fs0)
+    ref = _stat.median(x0s[1:]) if n > 1 else x0s[0]
+    return {"segs": segs, "align": align, "pitch": pitch, "fs0": fs0, "base0": segs[0]["base"], "n": n,
+            "ref": ref, "fi": (x0s[0] - ref) if n > 1 else 0.0, "x0": min(x0s), "x1": max(x1s),
+            "cmean": _stat.mean(cs), "rights": x1s}
+
+
+def _p2w_para_top(p):
+    return p["base0"] - p["pitch"] + P2W_DESC * p["fs0"]
+
+
+def _p2w_nodes_top(nodes, regL, regR):
+    tops = []
+    for n in nodes:
+        if n[0] == "lines":
+            tops += [_p2w_para_top(p) for p in _p2w_form_paras(n[1], regL, regR)]
+        elif n[0] == "cols":
+            tops += [_p2w_nodes_top(c["nodes"], c["x0"], c["x1"]) for c in n[1]]
+        else:
+            tops.append(n[1]["y0"])
+    return min(tops) if tops else 0.0
+
+
+def _p2w_nodes_bottom(nodes):
+    bs = []
+    for n in nodes:
+        if n[0] == "lines":
+            bs += [s["y1"] for s in n[1]]
+        elif n[0] == "cols":
+            bs += [_p2w_nodes_bottom(c["nodes"]) for c in n[1]]
+        else:
+            bs.append(n[1]["y1"])
+    return max(bs) if bs else 0.0
+
+
+# ------------------------------------------------------------------ 6) thao tác Word mức thấp
+def _p2w_xml():
+    from docx.oxml import OxmlElement, parse_xml
+    from docx.oxml.ns import qn, nsdecls
+    return OxmlElement, parse_xml, qn, nsdecls
+
+
+def _p2w_mark_size(p, half_points):
+    OxmlElement, _, qn, _ = _p2w_xml()
+    pPr = p._p.get_or_add_pPr()
+    rPr = pPr.find(qn("w:rPr"))
+    if rPr is None:
+        rPr = OxmlElement("w:rPr")
+        sect = pPr.find(qn("w:sectPr"))
+        (sect.addprevious(rPr) if sect is not None else pPr.append(rPr))
+    for tag in ("w:sz", "w:szCs"):
+        el = rPr.find(qn(tag))
+        if el is None:
+            el = OxmlElement(tag)
+            rPr.append(el)
+        el.set(qn("w:val"), str(half_points))
+
+
+def _p2w_tiny(p, h=1.0):
+    from docx.shared import Pt
+    from docx.enum.text import WD_LINE_SPACING
+    pf = p.paragraph_format
+    pf.space_before = Pt(0)
+    pf.space_after = Pt(0)
+    pf.line_spacing_rule = WD_LINE_SPACING.EXACTLY
+    pf.line_spacing = Pt(max(1.0, min(h, 1500.0)))
+    _p2w_mark_size(p, 2)
+
+
+def _p2w_run(run, name, size, b, i, u, color, sup):
+    from docx.shared import Pt, RGBColor
+    OxmlElement, _, qn, _ = _p2w_xml()
+    run.font.name = name
+    rPr = run._r.get_or_add_rPr()
+    rf = rPr.find(qn("w:rFonts"))
+    if rf is None:
+        rf = OxmlElement("w:rFonts")
+        rPr.insert(0, rf)
+    for a in ("w:ascii", "w:hAnsi", "w:eastAsia", "w:cs"):
+        rf.set(qn(a), name)
+    run.font.size = Pt(max(1.0, round(size * 2) / 2))
+    run.bold, run.italic, run.underline = bool(b), bool(i), bool(u)
+    if color:
+        run.font.color.rgb = RGBColor(int(color[0:2], 16), int(color[2:4], 16), int(color[4:6], 16))
+    if sup == 1:
+        run.font.superscript = True
+    elif sup == -1:
+        run.font.subscript = True
+
+
+def _p2w_add_text(par, runs):
+    for r in runs:
+        for k, part in enumerate(r["t"].split("\n")):
+            if k > 0:
+                par.add_run().add_break()
+            if part == "":
+                continue
+            run = par.add_run(part)
+            _p2w_run(run, r["font"], r["size"], r["b"], r["i"], r["u"], r["c"], r["sup"])
+
+
+def _p2w_page_setup(sec, w, h, ml, mr, mt, mb):
+    from docx.shared import Pt, Mm
+    from docx.enum.section import WD_ORIENT
+    if abs(w - 595.28) < 8 and abs(h - 841.89) < 8:
+        sec.page_width, sec.page_height = Mm(210), Mm(297)
+    elif abs(w - 841.89) < 8 and abs(h - 595.28) < 8:
+        sec.page_width, sec.page_height = Mm(297), Mm(210)
+    else:
+        sec.page_width, sec.page_height = Pt(w), Pt(h)
+    sec.orientation = WD_ORIENT.LANDSCAPE if w > h else WD_ORIENT.PORTRAIT
+    sec.left_margin, sec.right_margin = Pt(ml), Pt(mr)
+    sec.top_margin, sec.bottom_margin = Pt(mt), Pt(mb)
+    sec.header_distance = Pt(0)
+    sec.footer_distance = Pt(0)
+
+
+def _p2w_float(run, data, x, y, w, h, behind=True):
+    from docx.shared import Pt
+    OxmlElement, parse_xml, qn, nsdecls = _p2w_xml()
+    shape = run.add_picture(_io.BytesIO(data), width=Pt(max(w, 1)), height=Pt(max(h, 1)))
+    inline = shape._inline
+    graphic = inline.find(qn("a:graphic"))
+    docPr = inline.find(qn("wp:docPr"))
+    anchor = parse_xml(
+        '<wp:anchor %s distT="0" distB="0" distL="0" distR="0" simplePos="0" relativeHeight="251659264" '
+        'behindDoc="%d" locked="0" layoutInCell="1" allowOverlap="1"><wp:simplePos x="0" y="0"/>'
+        '<wp:positionH relativeFrom="page"><wp:posOffset>%d</wp:posOffset></wp:positionH>'
+        '<wp:positionV relativeFrom="page"><wp:posOffset>%d</wp:posOffset></wp:positionV>'
+        '<wp:extent cx="%d" cy="%d"/><wp:effectExtent l="0" t="0" r="0" b="0"/><wp:wrapNone/>'
+        '<wp:docPr id="%s" name="%s"/><wp:cNvGraphicFramePr/></wp:anchor>'
+        % (nsdecls("wp", "a"), 1 if behind else 0, int(Pt(x)), int(Pt(y)), int(Pt(w)), int(Pt(h)),
+           docPr.get("id"), docPr.get("name")))
+    anchor.append(graphic)
+    drawing = inline.getparent()
+    drawing.remove(inline)
+    drawing.append(anchor)
+
+
+def _p2w_tbl_props(tbl, ind_pt, width_pt, borders, mar_lr, mar_tb):
+    OxmlElement, _, qn, _ = _p2w_xml()
+    tblPr = tbl._tbl.tblPr
+    for tag in ("w:tblW", "w:tblInd", "w:tblLayout", "w:tblCellMar", "w:jc"):
+        el = tblPr.find(qn(tag))
+        if el is not None:
+            tblPr.remove(el)
+    tblW = OxmlElement("w:tblW")
+    tblW.set(qn("w:w"), str(int(width_pt * 20)))
+    tblW.set(qn("w:type"), "dxa")
+    ind = OxmlElement("w:tblInd")
+    ind.set(qn("w:w"), str(int(ind_pt * 20)))
+    ind.set(qn("w:type"), "dxa")
+    lay = OxmlElement("w:tblLayout")
+    lay.set(qn("w:type"), "fixed")
+    mar = OxmlElement("w:tblCellMar")
+    for side, v in (("top", mar_tb), ("left", mar_lr), ("bottom", mar_tb), ("right", mar_lr)):
+        e = OxmlElement("w:" + side)
+        e.set(qn("w:w"), str(int(v * 20)))
+        e.set(qn("w:type"), "dxa")
+        mar.append(e)
+    look = tblPr.find(qn("w:tblLook"))
+    for el in (tblW, ind, lay, mar):
+        (look.addprevious(el) if look is not None else tblPr.append(el))
+    if borders:
+        tbl.style = "Table Grid"
+
+
+def _p2w_shade(cell, hexcolor):
+    OxmlElement, _, qn, _ = _p2w_xml()
+    tcPr = cell._tc.get_or_add_tcPr()
+    shd = OxmlElement("w:shd")
+    shd.set(qn("w:val"), "clear")
+    shd.set(qn("w:color"), "auto")
+    shd.set(qn("w:fill"), hexcolor)
+    tcPr.append(shd)
+
+
+def _p2w_compat15(doc):
+    OxmlElement, _, qn, _ = _p2w_xml()
+    st = doc.settings.element
+    compat = st.find(qn("w:compat"))
+    if compat is None:
+        compat = OxmlElement("w:compat")
+        st.append(compat)
+    for cs in compat.findall(qn("w:compatSetting")):
+        if cs.get(qn("w:name")) == "compatibilityMode":
+            cs.set(qn("w:val"), "15")
+            return
+    cs = OxmlElement("w:compatSetting")
+    cs.set(qn("w:name"), "compatibilityMode")
+    cs.set(qn("w:uri"), "http://schemas.microsoft.com/office/word")
+    cs.set(qn("w:val"), "15")
+    compat.append(cs)
+
+
+# ------------------------------------------------------------------ 7) phát (emit) nội dung vào Word
+class _P2WCtx:
+    def __init__(self, doc, cell, regL, regR, flow_y, ml, reflow):
+        self.doc, self.cell, self.regL, self.regR, self.flow_y, self.ml, self.reflow = doc, cell, regL, regR, flow_y, ml, reflow
+        self.fresh = cell is not None
+        self.emitted = 0
+
+    def new_par(self):
+        self.emitted += 1
+        if self.cell is not None:
+            if self.fresh:
+                self.fresh = False
+                return self.cell.paragraphs[0]
+            return self.cell.add_paragraph()
+        return self.doc.add_paragraph()
+
+
+def _p2w_emit_para(ctx, p):
+    from docx.shared import Pt
+    from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_LINE_SPACING
+    AL = {"left": WD_ALIGN_PARAGRAPH.LEFT, "center": WD_ALIGN_PARAGRAPH.CENTER, "right": WD_ALIGN_PARAGRAPH.RIGHT,
+          "justify": WD_ALIGN_PARAGRAPH.JUSTIFY}
+    segs, al = p["segs"], p["align"]
+    top = _p2w_para_top(p)
+    par = ctx.new_par()
+    pf = par.paragraph_format
+    pf.space_before = Pt(max(0.0, top - ctx.flow_y))
+    pf.space_after = Pt(0)
+    pf.line_spacing_rule = WD_LINE_SPACING.EXACTLY
+    pf.line_spacing = Pt(p["pitch"])
+    pf.alignment = AL[al]
+    regL, regR = ctx.regL, ctx.regR
+    ext = max(14.0, 0.12 * (regR - regL))
+    if al == "center":
+        half = max((p["x1"] - p["x0"]) / 2.0 + ext, 1.0)
+        left, right = p["cmean"] - half - regL, regR - (p["cmean"] + half)
+        li, ri, fi = max(0.0, left), max(0.0, right), 0.0
+    elif al == "right":
+        li, ri, fi = max(0.0, p["x0"] - ext - regL), max(0.0, regR - max(p["rights"])), 0.0
+    elif al == "justify":
+        rr = _stat.median(p["rights"][:-1]) if p["n"] > 1 else p["x1"]
+        li, ri, fi = max(0.0, p["ref"] - regL), max(0.0, regR - rr), p["fi"]
+    else:
+        li, ri, fi = max(0.0, p["ref"] - regL), max(-ext, regR - (p["x1"] + ext)), p["fi"]
+    pf.left_indent = Pt(li)
+    pf.right_indent = Pt(ri)
+    if abs(fi) > 1.5:
+        pf.first_line_indent = Pt(max(-li, fi))
+    # chữ: mỗi dòng PDF = 1 dòng Word (ngắt mềm) -> giữ đúng điểm xuống dòng; reflow=True thì nối các dòng "đầy"
+    runs = []
+    for k, s in enumerate(segs):
+        sr = [dict(r) for r in s["runs"]]
+        if k < len(segs) - 1:
+            soft = ctx.reflow and al in ("left", "justify") and s["x1"] >= regR - 0.05 * (regR - regL)
+            sr[-1]["t"] = sr[-1]["t"] + (" " if soft else "\n")
+        runs += sr
+    _p2w_add_text(par, runs)
+    ctx.flow_y = max(ctx.flow_y, top) + p["n"] * p["pitch"]
+
+
+def _p2w_emit_nodes(ctx, nodes):
+    for n in nodes:
+        if n[0] == "lines":
+            for p in _p2w_form_paras(n[1], ctx.regL, ctx.regR):
+                _p2w_emit_para(ctx, p)
+        elif n[0] == "cols":
+            _p2w_emit_cols(ctx, n[1])
+        else:
+            _p2w_emit_table(ctx, n[1])
+
+
+def _p2w_spacer(ctx, gap):
+    from docx.shared import Pt
+    sp = ctx.new_par()
+    _p2w_tiny(sp, max(gap, 1.0))
+    ctx.flow_y += max(gap, 1.0)
+
+
+def _p2w_empty_cell(cell):
+    for p in cell.paragraphs:
+        if not p.text.strip() and not p.runs:
+            _p2w_tiny(p, 1.0)
+
+
+def _p2w_emit_cols(ctx, cols):
+    from docx.shared import Pt
+    regL, regR = ctx.regL, ctx.regR
+    top = min(_p2w_nodes_top(c["nodes"], c["x0"], c["x1"]) for c in cols)
+    bot = max(_p2w_nodes_bottom(c["nodes"]) for c in cols)
+    bounds = [min(c["x0"] for c in cols)]
+    for a, b in zip(cols, cols[1:]):
+        bounds.append((a["x1"] + b["x0"]) / 2.0)
+    bounds.append(max(c["x1"] for c in cols) + 2.0)
+    _p2w_spacer(ctx, top - ctx.flow_y)
+    tbl = (ctx.cell.add_table(1, len(cols)) if ctx.cell is not None else ctx.doc.add_table(rows=1, cols=len(cols)))
+    tbl.autofit = False
+    _p2w_tbl_props(tbl, bounds[0] - ctx.ml if ctx.cell is None else max(0.0, bounds[0] - ctx.regL), bounds[-1] - bounds[0],
+                   False, 0.0, 0.0)
+    tbl.rows[0].height = Pt(max(bot - top, 2.0))
+    from docx.enum.table import WD_ROW_HEIGHT_RULE
+    tbl.rows[0].height_rule = WD_ROW_HEIGHT_RULE.AT_LEAST
+    for i, c in enumerate(cols):
+        w = bounds[i + 1] - bounds[i]
+        tbl.columns[i].width = Pt(w)
+        cell = tbl.cell(0, i)
+        cell.width = Pt(w)
+        sub = _P2WCtx(ctx.doc, cell, bounds[i], bounds[i + 1], top, ctx.ml, ctx.reflow)
+        _p2w_emit_nodes(sub, c["nodes"])
+        if sub.emitted == 0:
+            _p2w_empty_cell(cell)
+    ctx.flow_y = max(ctx.flow_y, bot)
+
+
+def _p2w_emit_table(ctx, t):
+    from docx.shared import Pt
+    from docx.enum.table import WD_ROW_HEIGHT_RULE, WD_ALIGN_VERTICAL
+    xs, ys = t["xs"], t["ys"]
+    nr, nc = len(ys) - 1, len(xs) - 1
+    MAR_LR, MAR_TB = 3.5, 0.75
+    _p2w_spacer(ctx, t["y0"] - ctx.flow_y)
+    tbl = ctx.doc.add_table(rows=nr, cols=nc) if ctx.cell is None else ctx.cell.add_table(nr, nc)
+    tbl.autofit = False
+    _p2w_tbl_props(tbl, (xs[0] - ctx.ml) if ctx.cell is None else max(0.0, xs[0] - ctx.regL), xs[-1] - xs[0], True,
+                   MAR_LR, MAR_TB)
+    for i in range(nc):
+        tbl.columns[i].width = Pt(xs[i + 1] - xs[i])
+    for r in range(nr):
+        tbl.rows[r].height = Pt(max(ys[r + 1] - ys[r], 2.0))
+        tbl.rows[r].height_rule = WD_ROW_HEIGHT_RULE.AT_LEAST
+    jobs = []
+    for c in t["cells"]:
+        a = tbl.cell(c["r0"], c["c0"])
+        if c["r1"] - c["r0"] > 1 or c["c1"] - c["c0"] > 1:
+            a = a.merge(tbl.cell(c["r1"] - 1, c["c1"] - 1))
+            while len(a.paragraphs) > 1 and not a.paragraphs[-1].text.strip():
+                a._tc.remove(a.paragraphs[-1]._p)
+        jobs.append((a, c))
+    for cell, c in jobs:
+        x0c, x1c, y0c, y1c = xs[c["c0"]], xs[c["c1"]], ys[c["r0"]], ys[c["r1"]]
+        cell.width = Pt(x1c - x0c)
+        if c.get("fill"):
+            _p2w_shade(cell, c["fill"])
+        items = c.get("items") or []
+        regL, regR = x0c + MAR_LR, x1c - MAR_LR
+        nodes = _p2w_xycut(items)
+        start = y0c + MAR_TB
+        if nodes:
+            ctop, cbot = _p2w_nodes_top(nodes, regL, regR), _p2w_nodes_bottom(nodes)
+            gt, gb = ctop - y0c, y1c - cbot
+            if gt > 1.5 and abs(gt - gb) <= max(2.0, 0.15 * (y1c - y0c)):
+                cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
+                start = ctop
+        sub = _P2WCtx(ctx.doc, cell, regL, regR, start, ctx.ml, ctx.reflow)
+        _p2w_emit_nodes(sub, nodes)
+        if sub.emitted == 0:
+            _p2w_empty_cell(cell)
+    ctx.flow_y = max(ctx.flow_y, t["y1"])
+
+
+# ------------------------------------------------------------------ 8) mô hình trang + dựng file
+def p2w_page_model(page, full_img, opts, rpt, pno):
+    pw, ph = float(page.width), float(page.height)
+    segs = _p2w_segments(page)
+    boxes, page_image = _p2w_graphics(page, segs, [], opts.get("prefer_text", False), rpt) if False else (None, None)
+    tables = _p2w_find_tables(page, segs)
+    boxes, page_image = _p2w_graphics(page, segs, tables, opts.get("prefer_text", False), rpt)
+    # trang quét (ảnh phủ kín trang) hoặc trang chỉ có hình
+    if page_image and not opts.get("prefer_text", False):
+        data = _p2w_crop(full_img, [0, 0, pw, ph], pw, ph)
+        if segs:
+            rpt.append(f"Trang {pno}: là trang quét có lớp chữ ẩn -> giữ nguyên dạng ảnh để bố cục chính xác 100% "
+                       f"(chữ không sửa được).")
+        else:
+            rpt.append(f"Trang {pno}: là trang quét (không có lớp chữ) -> giữ dạng ảnh. Muốn chữ sửa được hãy dùng "
+                       f"app 1 (AI/OCR).")
+        return {"w": pw, "h": ph, "mode": "image", "floats": [(data, 0.0, 0.0, pw, ph)], "nodes": []}
+    if not segs and not tables and not boxes:
+        return {"w": pw, "h": ph, "mode": "blank", "floats": [], "nodes": []}
+    if page_image:
+        boxes = [b for b in boxes if b["cov"] < 0.85]
+    segs = _p2w_assign_to_tables(segs, tables)
+    _p2w_cell_fills(page, tables)
+    floats = []
+    word_boxes = [[s["x0"], s["base"] - 0.85 * s["size"], s["x1"], s["base"] + 0.25 * s["size"]] for s in segs]
+    for t in tables:
+        for c in t["cells"]:
+            for s in c.get("items", []):
+                word_boxes.append([s["x0"], s["base"] - 0.85 * s["size"], s["x1"], s["base"] + 0.25 * s["size"]])
+    for b in boxes:
+        x0, y0, x1, y1 = b["box"]
+        if b["img"]:
+            data = _p2w_crop(full_img, b["box"], pw, ph)
+        else:
+            inside = [w for w in word_boxes if w[0] < x1 and w[2] > x0 and w[1] < y1 and w[3] > y0]
+            data = _p2w_crop(full_img, [x0 - 1, y0 - 1, x1 + 1, y1 + 1], pw, ph, blank_boxes=inside,
+                             transparent=not b["fill"])
+            x0, y0, x1, y1 = x0 - 1, y0 - 1, x1 + 1, y1 + 1
+        if data:
+            floats.append((data, x0, y0, x1 - x0, y1 - y0))
+    items = segs + tables
+    nodes = _p2w_xycut(items) if items else []
+    return {"w": pw, "h": ph, "mode": "flow", "floats": floats, "nodes": nodes, "items": items}
+
+
+def p2w_build_docx(models, opts):
+    from docx import Document
+    from docx.shared import Pt
+    from docx.enum.section import WD_SECTION
+    OxmlElement, _, qn, _ = _p2w_xml()
+    doc = Document()
+    _p2w_compat15(doc)
+    nm = doc.styles["Normal"]
+    nm.font.name = "Times New Roman"
+    nm.font.size = Pt(11)
+    rf = nm.element.get_or_add_rPr().find(qn("w:rFonts"))
+    if rf is not None:
+        rf.set(qn("w:eastAsia"), "Times New Roman")
+    npf = nm.paragraph_format
+    npf.space_before = npf.space_after = Pt(0)
+    npf.line_spacing = 1.0
+    n_pages = len(models)
+    for pi, m in enumerate(models):
+        sec = doc.sections[-1]
+        w, h = m["w"], m["h"]
+        if m["mode"] == "flow":
+            its = m["items"]
+            ml = max(0.0, min(i["x0"] for i in its))
+            mr = max(0.0, w - max(i["x1"] for i in its))
+            ml, mr = min(ml, 0.45 * w), min(mr, 0.45 * w)
+            tops = [(_p2w_nodes_top([n], i0, i1)) for n in m["nodes"]
+                    for i0, i1 in [(ml, w - mr)]] or [36.0]
+            mt = max(0.0, min(tops) - 1.0)
+            mb = max(0.0, min(70.0, h - max(i["y1"] for i in its) - 14.0))
+            _p2w_page_setup(sec, w, h, ml, mr, mt, mb)
+        else:
+            ml = mr = mt = mb = 0.0
+            _p2w_page_setup(sec, w, h, 0, 0, 0, 0)
+        host = doc.add_paragraph()
+        _p2w_tiny(host, 1.0)
+        for data, x, y, fw, fh in m["floats"]:
+            _p2w_float(host.add_run(), data, x, y, fw, fh, behind=True)
+        if m["mode"] == "flow":
+            ctx = _P2WCtx(doc, None, ml, w - mr, mt + 1.0, ml, opts.get("reflow", False))
+            _p2w_emit_nodes(ctx, m["nodes"])
+        if pi < n_pages - 1:
+            doc.add_section(WD_SECTION.NEW_PAGE)
+            _p2w_tiny(doc.paragraphs[-1], 1.0)
+        else:
+            _p2w_tiny(doc.add_paragraph(), 1.0)
+    out = _io.BytesIO()
+    doc.save(out)
+    return out.getvalue()
+
+
+def p2w_engine_b(pdf_bytes, opts, progress=None):
+    import pdfplumber
+    import pypdfium2 as pdfium
+    rpt, models = [], []
+    pdf = pdfplumber.open(_io.BytesIO(pdf_bytes))
+    pdfi = pdfium.PdfDocument(pdf_bytes)
+    n = len(pdf.pages)
+    for i, page in enumerate(pdf.pages):
+        full = pdfi[i].render(scale=opts.get("dpi", 200) / 72.0).to_pil().convert("RGB")
+        models.append(p2w_page_model(page, full, opts, rpt, i + 1))
+        if progress:
+            progress((i + 1) / n, f"Đang phân tích trang {i + 1}/{n}...")
+    pdf.close()
+    return p2w_build_docx(models, opts), rpt
+
+
+# ------------------------------------------------------------------ Engine A + kiểm tra độ phủ chữ
+def p2w_engine_a(pdf_bytes):
+    import tempfile
+    import os
+    from pdf2docx import Converter
+    with tempfile.TemporaryDirectory() as td:
+        src, dst = os.path.join(td, "in.pdf"), os.path.join(td, "out.docx")
+        with open(src, "wb") as f:
+            f.write(pdf_bytes)
+        cv = Converter(src)
+        try:
+            cv.convert(dst)
+        finally:
+            cv.close()
+        with open(dst, "rb") as f:
+            return f.read()
+
+
+def _p2w_words(text):
+    return _re.findall(r"\w+", _ud.normalize("NFC", text).lower())
+
+
+def p2w_text_coverage(pdf_bytes, docx_bytes):
+    """So khớp từng từ giữa chữ trong PDF và chữ trong file Word -> (tỉ lệ phủ, số từ PDF, số từ thiếu, số từ thừa)."""
+    import pdfplumber
+    from docx import Document
+    OxmlElement, _, qn, _ = _p2w_xml()
+    with pdfplumber.open(_io.BytesIO(pdf_bytes)) as pdf:
+        pw = []
+        for p in pdf.pages:
+            pw += _p2w_words(" ".join(c["text"] if not c["text"].isspace() else " " for c in p.chars)) if False else \
+                _p2w_words(p.extract_text() or "")
+    d = Document(_io.BytesIO(docx_bytes))
+    dw = _p2w_words(" ".join((t.text or "") for t in d.element.body.iter(qn("w:t"))))
+    a, b = _Counter(pw), _Counter(dw)
+    hit = sum((a & b).values())
+    total = max(sum(a.values()), 1)
+    return hit / total, sum(a.values()), sum((a - b).values()), sum((b - a).values())
+
+
+
+# =====================================================================================
+# APP 12: PDF -> WORD (OFFLINE)
+# =====================================================================================
+def app_pdf_to_word_offline():
+    st.header("📝 12. PDF sang Word (Offline)")
+    st.caption("Chạy hoàn toàn trên máy chủ, không gửi dữ liệu cho AI. Giữ nguyên vị trí chữ, bảng, hình ảnh, con dấu.")
+    up = st.file_uploader("Tải lên file PDF:", type=["pdf"], key=f"app12_{st.session_state.uploader_key}")
+    c1, c2 = st.columns(2)
+    with c1:
+        engine = st.radio("Bộ máy chuyển đổi:", ["🅱️ Giữ đúng vị trí (khuyên dùng)", "🅰️ pdf2docx (dễ chỉnh sửa)", "⚖️ Cả hai (tải ZIP để so sánh)"], key="p2w_engine")
+    with c2:
+        reflow = st.checkbox("Cho phép chữ tự xuống dòng (dễ sửa hơn, có thể lệch ngắt dòng)", value=False, key="p2w_reflow")
+        prefer_text = st.checkbox("PDF scan có lớp chữ (searchable): ưu tiên chữ gõ được", value=False, key="p2w_pt")
+        dpi = st.select_slider("Độ nét hình ảnh (DPI):", options=[150, 200, 300], value=200, key="p2w_dpi")
+    if not up:
+        st.info("💡 PDF tạo từ Word/Excel cho kết quả ~100%. PDF scan (ảnh) sẽ được giữ nguyên dạng ảnh; muốn chữ sửa được hãy dùng App 1 (AI online).")
+        return
+    if st.button("🚀 Chuyển sang Word", type="primary"):
+        data = up.getvalue()
+        base = os.path.splitext(up.name)[0]
+        prog = st.progress(0.0, "Đang bắt đầu...")
+        outs = {}
+        try:
+            opts = {"dpi": int(dpi), "reflow": bool(reflow), "prefer_text": bool(prefer_text)}
+            if not engine.startswith("🅰️"):
+                db, rpt = p2w_engine_b(data, opts, lambda f, t: prog.progress(min(f, 0.99), t))
+                outs["B"] = (db, rpt)
+            if not engine.startswith("🅱️"):
+                prog.progress(0.9, "Đang chạy pdf2docx...")
+                try:
+                    outs["A"] = (p2w_engine_a(data), [])
+                except Exception as e:
+                    st.warning(f"pdf2docx không chạy được ({e}). " + ("" if "B" in outs else "Chuyển sang bộ máy B."))
+                    if "B" not in outs:
+                        db, rpt = p2w_engine_b(data, opts, None)
+                        outs["B"] = (db, rpt)
+            prog.progress(1.0, "Hoàn tất!")
+        except Exception as e:
+            prog.empty()
+            st.error(f"Lỗi chuyển đổi: {e}")
+            return
+        st.session_state["p2w_result"] = {"base": base, "outs": outs, "pdf": data}
+    res = st.session_state.get("p2w_result")
+    if not res:
+        return
+    base, outs = res["base"], res["outs"]
+    for k, (d, rpt) in outs.items():
+        name = "Giữ đúng vị trí" if k == "B" else "pdf2docx"
+        try:
+            cov, n_pdf, miss, extra = p2w_text_coverage(res["pdf"], d)
+            st.success(f"✅ {name}: khớp {cov*100:.1f}% chữ ({n_pdf - miss}/{n_pdf} từ), thiếu {miss}, thừa {extra}.")
+        except Exception:
+            st.success(f"✅ {name}: đã chuyển xong.")
+        for w in rpt[:10]:
+            st.warning(w if isinstance(w, str) else str(w))
+    if len(outs) == 1:
+        k, (d, _) = next(iter(outs.items()))
+        st.download_button("📥 Tải file Word (.docx)", d, file_name=f"{base}.docx",
+                           mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+    else:
+        zb = BytesIO()
+        with zipfile.ZipFile(zb, "w", zipfile.ZIP_DEFLATED) as z:
+            z.writestr(f"{base}_GiuViTri.docx", outs["B"][0])
+            z.writestr(f"{base}_pdf2docx.docx", outs["A"][0])
+        st.download_button("📥 Tải ZIP (2 bản Word)", zb.getvalue(), file_name=f"{base}_2ban.zip", mime="application/zip")
+    st.button("🗑️ Xóa & làm file mới", on_click=clear_file, key="p2w_clear")
+    st.caption("⚠️ Font lạ chưa cài trên máy sẽ được Word thay bằng font gần nhất; PDF dùng font VNI/.Vn cũ có thể sai chữ khi trích xuất.")
+
+
 app_mode = st.sidebar.radio(
     "Vui lòng chọn ứng dụng:",
     [
@@ -557,7 +1682,8 @@ app_mode = st.sidebar.radio(
         "🔄 8. Xoay Trang PDF",
         "🛡️ 9. Xóa Siêu Dữ Liệu Bảo Mật",
         "✒️ 10. Tách Nền Chữ Ký",
-        "🔳 11. Tạo Mã QR"
+        "🔳 11. Tạo Mã QR",
+        "📝 12. PDF sang Word (Offline)"
     ],
     label_visibility="collapsed"
 )
@@ -2649,3 +3775,5 @@ elif "10. Tách Nền Chữ Ký" in app_mode:
     app_signature_extractor()
 elif "11. Tạo Mã QR" in app_mode:
     app_qr_generator()
+elif "12. PDF sang Word" in app_mode:
+    app_pdf_to_word_offline()
