@@ -692,7 +692,8 @@ def _p2w_segments(page, tables=()):
         for c in cs[1:]:
             xcut = c["x0"] - cur[-1]["x1"] > 0.3 * c["size"] and any(t["y0"] - 2 <= c["base"] <= t["y1"] + 2 and any(cur[-1]["x1"] <= xb + 1.5 and c["x0"] >= xb - 1.5 for xb in t["xs"][1:-1])
                        for t in tables)
-            if c["x0"] - cur[-1]["x1"] > 2.0 * sz_dom or xcut:
+            intab = any(t["y0"] - 2 <= c["base"] <= t["y1"] + 2 and t["x0"] - 2 <= c["x0"] <= t["x1"] + 2 for t in tables)
+            if c["x0"] - cur[-1]["x1"] > (6.0 if intab else 2.0) * sz_dom or xcut:
                 groups.append(cur)
                 cur = [c]
             else:
@@ -999,10 +1000,23 @@ def _p2w_xycut(items):
     vg = _p2w_gaps([(i["x0"], i["x1"]) for i in items])
     hg = _p2w_gaps([(i["y0"], i["y1"]) for i in items])
     vmin, hmin = max(14.0, 1.6 * ms), 0.25 * ms
+
+    def _rows_both(pos):
+        rows = {}
+        for it in items:
+            k = round((it["y0"] + it["y1"]) / (1.2 * ms))
+            r = rows.setdefault(k, [False, False])
+            if it["x1"] <= pos + 0.5:
+                r[0] = True
+            if it["x0"] >= pos - 0.5:
+                r[1] = True
+        return sum(1 for a_, b_ in rows.values() if a_ and b_)
+
+    vg = [(g, p) for g, p in vg if g >= vmin or (g >= max(9.0, 0.7 * ms) and _rows_both(p) >= 2)]
     vbest = max([g for g, _ in vg], default=0)
     hbest = max([g for g, _ in hg], default=0)
-    if vbest >= vmin and vbest >= hbest:
-        cuts = sorted(p for g, p in vg if g >= vmin)
+    if vg and vbest >= hbest:
+        cuts = sorted(p for g, p in vg)
         groups = [[] for _ in range(len(cuts) + 1)]
         for it in items:
             cx = (it["x0"] + it["x1"]) / 2
@@ -1348,7 +1362,7 @@ def _p2w_emit_para(ctx, p):
         li, ri, fi = max(0.0, p["x0"] - ext - regL), max(0.0, regR - max(p["rights"])), 0.0
     elif al == "justify":
         rr = max(p["rights"][:-1]) if p["n"] > 1 else p["x1"]
-        li, ri, fi = max(0.0, p["ref"] - regL), max(0.0, regR - rr), p["fi"]
+        li, ri, fi = max(0.0, p["ref"] - regL), regR - rr - max(1.5, 0.015 * (regR - regL)), p["fi"]
     else:
         li, ri, fi = max(0.0, p["ref"] - regL), max(-ext, regR - (p["x1"] + ext)), p["fi"]
     pf.left_indent = Pt(li)
@@ -1459,7 +1473,7 @@ def _p2w_emit_table(ctx, t):
         if nodes:
             ctop, cbot = _p2w_nodes_top(nodes, regL, regR), _p2w_nodes_bottom(nodes)
             gt, gb = ctop - y0c, y1c - cbot
-            if gt > 1.5 and abs(gt - gb) <= max(2.0, 0.15 * (y1c - y0c)):
+            if gt > 2.5 and abs(gt - gb) <= max(1.5, 0.05 * (y1c - y0c)):
                 cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
                 start = ctop
         sub = _P2WCtx(ctx.doc, cell, regL, regR, start, ctx.ml, ctx.reflow)
@@ -1657,6 +1671,33 @@ def _p2w_tokens(text):
     return [(_ud.normalize("NFC", w).lower(), w) for w in _re.findall(r"\w+", text)]
 
 
+def _p2w_page_text(page):
+    """Chữ của trang tự ghép từ từng ký tự (không phụ thuộc phiên bản pdfminer): dấu phụ tiếng Việt dính vào chữ cái."""
+    chars = [c for c in page.chars if c.get("text") is not None]
+    ph = float(page.height)
+    for c in chars:
+        m = c.get("matrix")
+        c["_b"] = ph - m[5] if m else c["bottom"]
+    chars.sort(key=lambda c: c["_b"])
+    rows = []
+    for c in chars:
+        if rows and abs(c["_b"] - rows[-1][-1]["_b"]) <= 0.42 * max(c["size"], 1):
+            rows[-1].append(c)
+        else:
+            rows.append([c])
+    chars = [c for r in rows for c in sorted(r, key=lambda c: c["x0"])]
+    out, prev = [], None
+    for c in chars:
+        t = c["text"]
+        if prev is not None and (abs(c["_b"] - prev["_b"]) > 0.5 * max(c["size"], 1)):
+            out.append("\n")
+        elif prev is not None and not (t and _ud.combining(t[0])) and c["x0"] - prev["x1"] > 0.15 * c["size"] and not t.isspace():
+            out.append(" ")
+        out.append(" " if t.isspace() else _p2w_fix_char(t, c.get("fontname", "")))
+        prev = c
+    return _ud.normalize("NFC", "".join(out))
+
+
 def p2w_text_diff(pdf_bytes, docx_bytes):
     """So khớp từng từ PDF <-> Word. Trả về dict: cov, n, miss, extra, missing[{word,page,ctx}], extra[{word,ctx}]."""
     import pdfplumber
@@ -1665,7 +1706,7 @@ def p2w_text_diff(pdf_bytes, docx_bytes):
     pt = []                                            # (norm, orig, page)
     with pdfplumber.open(_io.BytesIO(pdf_bytes)) as pdf:
         for pi, p in enumerate(pdf.pages):
-            pt += [(n, o, pi + 1) for n, o in _p2w_tokens(p.extract_text() or "")]
+            pt += [(n, o, pi + 1) for n, o in _p2w_tokens(_p2w_page_text(p))]
     d = Document(_io.BytesIO(docx_bytes))
     parts = []
     for el in d.element.body.iter():
@@ -1676,6 +1717,31 @@ def p2w_text_diff(pdf_bytes, docx_bytes):
     dt = _p2w_tokens("".join(parts))
     a, b = _Counter(n for n, _, _ in pt), _Counter(n for n, _ in dt)
     miss_c, extra_c = a - b, b - a
+    # PDF nối dính / tách rời từ khác Word (vd "phủphiếu" <-> "phủ" "phiếu") không phải lỗi -> bù trừ
+    def _split_into(t, bag, depth=0):
+        if not t:
+            return []
+        if depth > 5:
+            return None
+        for L in range(len(t), 0, -1):
+            pre = t[:L]
+            if bag.get(pre, 0) > 0:
+                bag[pre] -= 1
+                r = _split_into(t[L:], bag, depth + 1)
+                if r is not None:
+                    return [pre] + r
+                bag[pre] += 1
+        return None
+    for side_a, side_b in ((miss_c, extra_c), (extra_c, miss_c)):
+        for t in [k for k, v in list(side_a.items()) if v > 0 and len(k) >= 4]:
+            while side_a.get(t, 0) > 0:
+                bag = _Counter(side_b)
+                r = _split_into(t, bag)
+                if not r or len(r) < 2:
+                    break
+                side_b.clear()
+                side_b.update({k: v for k, v in bag.items() if v > 0})
+                side_a[t] -= 1
     missing, extra = [], []
     for k, (n, o, pg) in enumerate(pt):
         if miss_c.get(n, 0) > 0:
@@ -1693,7 +1759,6 @@ def p2w_text_diff(pdf_bytes, docx_bytes):
 def p2w_text_coverage(pdf_bytes, docx_bytes):
     r = p2w_text_diff(pdf_bytes, docx_bytes)
     return r["cov"], r["n"], r["miss"], r["extra"]
-
 
 
 # =====================================================================================
@@ -1782,7 +1847,7 @@ def app_pdf_to_word_offline():
 app_mode = st.sidebar.radio(
     "Vui lòng chọn ứng dụng:",
     [
-        "📄 1. PDF sang Word (Online)", 
+        "📄 1. PDF sang Word", 
         "🖨️ 2. Chuyển PDF về khổ A4", 
         "📊 3. PDF/Ảnh sang Excel", 
         "🔍 4. So sánh Văn bản / Hợp đồng",
