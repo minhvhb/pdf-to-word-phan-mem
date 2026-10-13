@@ -556,6 +556,7 @@ app_mode = st.sidebar.radio(
         "🗜️ 7. Nén & Đóng Gói ZIP Gửi Mail",
         "🔄 8. Xoay Trang PDF",
         "🛡️ 9. Xóa Siêu Dữ Liệu Bảo Mật"
+        "✒️ 10. Tách Nền Chữ Ký" # DÒNG THÊM MỚI
     ],
     label_visibility="collapsed"
 )
@@ -2019,8 +2020,174 @@ def app_metadata_cleaner():
                     on_click=clear_file
                 )
 # ==========================================
-# APP 10: CHUYỂN PDF SCAN SANG WORD (TỰ ĐỘNG SĂN MODEL API + DỰNG LAYOUT CHUẨN)
 # ==========================================
+# APP 10: TÁCH NỀN CHỮ KÝ (OFFLINE BẰNG OPENCV & NUMPY)
+# ==========================================
+def app_signature_extractor():
+    import numpy as np
+    import cv2
+    from PIL import Image, ImageOps
+    from io import BytesIO
+
+    st.title("✍️ Tách Nền Chữ Ký (Giữ Nguyên Màu Mực)")
+    st.markdown("Chụp ảnh chữ ký trên giấy trắng, hệ thống (chạy offline 100%) sẽ lọc bỏ nền giấy, lọc đốm bụi và xuất ra file PNG trong suốt hoàn hảo với màu mực thật.")
+
+    MAX_SIDE = 3500
+
+    def load_bgr_from_bytes(img_bytes):
+        im = ImageOps.exif_transpose(Image.open(BytesIO(img_bytes))).convert("RGB")
+        arr = np.asarray(im)[:, :, ::-1].copy()
+        h, w = arr.shape[:2]
+        m = max(h, w)
+        if m > MAX_SIDE:
+            s = MAX_SIDE / m
+            arr = cv2.resize(arr, (int(w * s), int(h * s)), interpolation=cv2.INTER_AREA)
+        return arr
+
+    def estimate_background(bgr):
+        h, w = bgr.shape[:2]
+        s = 800.0 / max(h, w) if max(h, w) > 800 else 1.0
+        small = cv2.resize(bgr, None, fx=s, fy=s, interpolation=cv2.INTER_AREA) if s < 1 else bgr
+        ks = max(9, int(max(small.shape[:2]) * 0.06)) | 1
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (ks, ks))
+        bg = cv2.morphologyEx(small, cv2.MORPH_CLOSE, kernel)
+        bg = cv2.GaussianBlur(bg, (0, 0), ks / 4.0)
+        return cv2.resize(bg, (w, h), interpolation=cv2.INTER_LINEAR)
+
+    def auto_threshold(ink):
+        vals = ink[ink > 20]
+        if vals.size < 200:
+            return 40.0
+        v8 = np.clip(vals, 0, 255).astype(np.uint8).reshape(-1, 1)
+        t, _ = cv2.threshold(v8, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+        return float(np.clip(t, 30, 140))
+
+    def process(bgr, sens=1.0, speck=1.0, crop=True, flat_color=False):
+        h, w = bgr.shape[:2]
+        bg = estimate_background(bgr)
+        norm = np.clip(bgr.astype(np.float32) / np.maximum(bg.astype(np.float32), 1.0), 0.0, 1.0)
+        ink = (1.0 - norm.min(axis=2)) * 255.0
+        ink = cv2.GaussianBlur(ink, (0, 0), 0.7)
+
+        t = auto_threshold(ink) / max(sens, 0.1)
+        lo, hi = t * 0.45, t * 1.15
+        a = np.clip((ink - lo) / (hi - lo), 0.0, 1.0)
+        a = a * a * (3.0 - 2.0 * a)
+
+        if speck > 0:
+            mask = (a > 0.25).astype(np.uint8)
+            n, lab, stats, cent = cv2.connectedComponentsWithStats(mask, connectivity=8)
+            if n > 1:
+                areas = stats[1:, cv2.CC_STAT_AREA].astype(np.float64)
+                min_area = max(8.0, 5e-6 * h * w * speck)
+                big = np.zeros(n, dtype=bool)
+                big[1:] = areas >= max(areas.max() * 0.02, 4 * min_area)
+                if not big.any():
+                    big[1 + int(areas.argmax())] = True
+                sc = 0.25
+                sb = cv2.resize(big[lab].astype(np.uint8), None, fx=sc, fy=sc, interpolation=cv2.INTER_NEAREST)
+                r = max(3, int(0.06 * max(h, w) * sc))
+                zone = cv2.dilate(sb, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * r + 1, 2 * r + 1)))
+                zone = cv2.resize(zone, (w, h), interpolation=cv2.INTER_NEAREST).astype(bool)
+                cx = np.clip(cent[:, 0].astype(int), 0, w - 1)
+                cy = np.clip(cent[:, 1].astype(int), 0, h - 1)
+                ar = np.zeros(n)
+                ar[1:] = areas
+                keep = big | (zone[cy, cx] & (ar >= max(4.0, 0.9 * min_area))) | (ar >= 4 * min_area)
+                keep[0] = False
+                kept = cv2.dilate(keep[lab].astype(np.uint8), np.ones((3, 3), np.uint8), iterations=2)
+                a = a * kept
+
+        if a.max() < 0.3:
+            return None
+
+        core = a > 0.9
+        if core.sum() < 30:
+            core = a > 0.5
+        wgt = core.astype(np.float32)
+        sig = max(2.0, min(h, w) / 400.0)
+        num = cv2.GaussianBlur(bgr.astype(np.float32) * wgt[..., None], (0, 0), sig)
+        den = cv2.GaussianBlur(wgt, (0, 0), sig)[..., None]
+        spread = num / np.maximum(den, 1e-4)
+        typical = np.median(bgr[core], axis=0).astype(np.float32)
+        
+        if flat_color:
+            col = np.broadcast_to(typical, bgr.shape).copy()
+        else:
+            col = np.where(core[..., None], bgr.astype(np.float32), np.where(den > 0.02, spread, typical))
+
+        rgba = np.dstack([col[..., ::-1], a * 255.0])
+        rgba = np.clip(rgba + 0.5, 0, 255).astype(np.uint8)
+
+        if crop:
+            ys, xs = np.where(a > 0.05)
+            pad = max(10, int(0.03 * max(h, w)))
+            y0, y1 = max(0, ys.min() - pad), min(h, ys.max() + pad + 1)
+            x0, x1 = max(0, xs.min() - pad), min(w, xs.max() + pad + 1)
+            rgba = rgba[y0:y1, x0:x1]
+        return rgba
+
+    def composite(rgba, mode="caro"):
+        h, w = rgba.shape[:2]
+        if mode == "trang":
+            bg = np.full((h, w, 3), 255.0, np.float32)
+        elif mode == "xanh":
+            bg = np.zeros((h, w, 3), np.float32)
+            bg[...] = (60, 200, 90)
+        else:
+            yy, xx = np.mgrid[0:h, 0:w]
+            tile = ((yy // 12 + xx // 12) % 2)[..., None]
+            bg = np.where(tile == 0, 238.0, 205.0) * np.ones((h, w, 3), np.float32)
+        al = rgba[..., 3:4].astype(np.float32) / 255.0
+        out = rgba[..., :3].astype(np.float32) * al + bg * (1 - al)
+        return Image.fromarray(np.clip(out, 0, 255).astype(np.uint8), "RGB")
+
+    # --- GIAO DIỆN STREAMLIT CHO APP 11 ---
+    col1, col2 = st.columns([1, 2])
+    
+    with col1:
+        uploaded_sig = st.file_uploader("Tải lên ảnh chữ ký (JPG, PNG)", type=["jpg", "jpeg", "png"])
+        
+        st.markdown("**⚙️ Tùy chỉnh (Không bắt buộc)**")
+        sens = st.slider("Độ nhạy nét mực (Tăng nếu bị đứt nét)", min_value=0.4, max_value=2.5, value=1.0, step=0.1)
+        speck = st.slider("Mức lọc đốm bụi rác (0 = Tắt)", min_value=0.0, max_value=8.0, value=1.0, step=0.5)
+        crop_opt = st.checkbox("Tự cắt sát chữ ký", value=True)
+        flat_opt = st.checkbox("Làm đều 1 màu mực (thay vì màu thật)", value=False)
+        bg_opt = st.radio("Nền xem thử:", ["Ô caro", "Trắng", "Xanh lá (soi viền thừa)"], index=0)
+
+    with col2:
+        if uploaded_sig:
+            st.image(uploaded_sig, caption="📸 Ảnh gốc", use_container_width=True)
+            
+            with st.spinner("Đang trích xuất nét mực..."):
+                try:
+                    bgr_img = load_bgr_from_bytes(uploaded_sig.getvalue())
+                    rgba_result = process(bgr_img, sens=sens, speck=speck, crop=crop_opt, flat_color=flat_opt)
+                    
+                    if rgba_result is None:
+                        st.error("❌ Không thấy nét mực! Vui lòng thử tăng 'Độ nhạy nét mực' hoặc chọn ảnh rõ nét hơn.")
+                    else:
+                        # Map chế độ nền sang mode chuẩn của hàm composite
+                        bg_mode_map = {"Ô caro": "caro", "Trắng": "trang", "Xanh lá (soi viền thừa)": "xanh"}
+                        preview_img = composite(rgba_result, mode=bg_mode_map[bg_opt])
+                        
+                        st.image(preview_img, caption="✨ Kết quả (Đã tách nền trong suốt)", use_container_width=True)
+                        
+                        # Chuyển RGBA numpy array sang PNG Bytes để tải xuống
+                        final_img = Image.fromarray(rgba_result, "RGBA")
+                        out_stream = BytesIO()
+                        final_img.save(out_stream, format="PNG", optimize=True)
+                        
+                        st.download_button(
+                            label="📥 Tải xuống Chữ ký (.PNG trong suốt)",
+                            data=out_stream.getvalue(),
+                            file_name=f"Chu_Ky_Trong_Suot_{uploaded_sig.name.split('.')[0]}.png",
+                            mime="image/png",
+                            type="primary",
+                            use_container_width=True
+                        )
+                except Exception as e:
+                    st.error(f"Lỗi khi xử lý ảnh: {e}")
 # ==========================================                        
 # 5. KÍCH HOẠT ỨNG DỤNG THEO LỰA CHỌN MENU
 # ==========================================
@@ -2042,3 +2209,5 @@ elif "8. Xoay Trang PDF" in app_mode:
     app_rotate_pdf()
 elif "9. Xóa Siêu Dữ Liệu" in app_mode:
     app_metadata_cleaner()
+elif "10. Tách Nền Chữ Ký" in app_mode:       # DÒNG THÊM MỚI
+    app_signature_extractor()                  # DÒNG THÊM MỚI
