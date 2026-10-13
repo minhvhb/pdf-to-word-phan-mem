@@ -1562,7 +1562,7 @@ def p2w_page_model(page, full_img, opts, rpt, pno):
                        f"(chữ không sửa được).")
         else:
             rpt.append(f"Trang {pno}: là trang quét (không có lớp chữ) -> giữ dạng ảnh. Muốn chữ sửa được hãy dùng "
-                       f"app 1 (AI/OCR).")
+                       f"công cụ PDF sang Word (AI – file scan) ở nhóm Online.")
         return {"w": pw, "h": ph, "mode": "image", "floats": [(data, 0.0, 0.0, pw, ph)], "nodes": []}
     if not segs and not tables and not boxes:
         return {"w": pw, "h": ph, "mode": "blank", "floats": [], "nodes": []}
@@ -1824,7 +1824,7 @@ def p2w_text_coverage(pdf_bytes, docx_bytes):
 # APP 12: PDF -> WORD (OFFLINE)
 # =====================================================================================
 def app_pdf_to_word_offline():
-    st.header("📝 12. PDF sang Word (Offline)")
+    st.header("📝 PDF sang Word (giữ bố cục)")
     st.caption("Chạy hoàn toàn trên máy chủ, không gửi dữ liệu cho AI. Giữ nguyên vị trí chữ, bảng, hình ảnh, con dấu.")
     up = st.file_uploader("Tải lên file PDF:", type=["pdf"], key=f"app12_{st.session_state.uploader_key}")
     c1, c2 = st.columns(2)
@@ -1840,18 +1840,18 @@ def app_pdf_to_word_offline():
         dpi = st.select_slider("Độ nét hình ảnh (DPI):", options=[150, 200, 300], value=200, key="p2w_dpi",
                                help="150: file nhẹ. 200 (khuyên dùng): cân bằng. 300: hình/con dấu nét hơn để in, file nặng và chạy chậm hơn.")
     if not up:
-        st.info("💡 PDF tạo từ Word/Excel cho kết quả ~100%. PDF scan (ảnh) sẽ được giữ nguyên dạng ảnh; muốn chữ sửa được hãy dùng App 1 (AI online).")
+        st.info("💡 PDF tạo từ Word/Excel cho kết quả ~100%. PDF scan (ảnh) sẽ được giữ nguyên dạng ảnh; muốn chữ sửa được hãy dùng công cụ **PDF sang Word (AI – file scan)** ở nhóm Online.")
         return
     try:
         n_scan, n_pg, n_ocr = p2w_scan_info(up.getvalue())
         if n_scan and n_scan >= n_pg:
             st.warning(f"📠 **File này là bản scan** ({n_scan}/{n_pg} trang là ảnh chụp, không có chữ gõ sẵn). "
-                       f"**Nên dùng App 1 – PDF sang Word (AI)** để lấy chữ sửa được. "
-                       f"Nếu vẫn dùng App 12, các trang sẽ giữ nguyên dạng ảnh, chữ không sửa được."
+                       f"**Nên dùng công cụ PDF sang Word (AI – file scan)** ở nhóm 🌐 Online để lấy chữ sửa được. "
+                       f"Nếu vẫn dùng công cụ này, các trang sẽ giữ nguyên dạng ảnh, chữ không sửa được."
                        + (" (File có lớp chữ OCR sẵn: bạn có thể bật ô 'PDF scan có lớp chữ' để lấy chữ.)" if n_ocr else ""))
         elif n_scan:
             st.warning(f"📠 Có **{n_scan}/{n_pg} trang là bản scan**. Các trang này sẽ giữ nguyên dạng ảnh (chữ không sửa được); "
-                       f"muốn sửa chữ ở các trang đó hãy dùng App 1 – PDF sang Word (AI).")
+                       f"muốn sửa chữ ở các trang đó hãy dùng công cụ PDF sang Word (AI – file scan) ở nhóm 🌐 Online.")
     except Exception:
         pass
     if st.button("🚀 Chuyển sang Word", type="primary"):
@@ -1917,19 +1917,19 @@ def app_pdf_to_word_offline():
 
 ZP_MENU_ONLINE = [
     "📄 1. PDF sang Word (AI – file scan)",
-    "📊 3. PDF/Ảnh sang Excel",
-    "🔍 4. So sánh Văn bản / Hợp đồng",
-    "💻 6. Chuyên gia Công thức & VBA",
+    "📊 2. PDF/Ảnh sang Excel",
+    "🔍 3. So sánh Văn bản / Hợp đồng",
+    "💻 4. Chuyên gia Công thức & VBA",
 ]
 ZP_MENU_OFFLINE = [
-    "🖨️ 2. Chuyển PDF về khổ A4",
-    "✂️ 5. Cắt & Ghép PDF",
-    "🗜️ 7. Nén & Đóng Gói ZIP Gửi Mail",
-    "🔄 8. Xoay Trang PDF",
-    "🛡️ 9. Xóa Siêu Dữ Liệu Bảo Mật",
-    "✒️ 10. Tách Nền Chữ Ký",
-    "🔳 11. Tạo Mã QR",
-    "📝 12. PDF sang Word (giữ bố cục)",
+    "🖨️ 1. Chuyển PDF về khổ A4",
+    "✂️ 2. Cắt & Ghép PDF",
+    "🗜️ 3. Nén & Đóng Gói ZIP Gửi Mail",
+    "🔄 4. Xoay Trang PDF",
+    "🛡️ 5. Xóa Siêu Dữ Liệu Bảo Mật",
+    "✒️ 6. Tách Nền Chữ Ký",
+    "🔳 7. Tạo Mã QR",
+    "📝 8. PDF sang Word (giữ bố cục)",
 ]
 menu_group = st.sidebar.radio(
     "Nhóm công cụ:",
@@ -4206,27 +4206,10 @@ def app_qr_generator():
 # ==========================================                        
 # 5. KÍCH HOẠT ỨNG DỤNG THEO LỰA CHỌN MENU
 # ==========================================
-if "1. PDF sang Word" in app_mode:
-    app_pdf_to_word()
-elif "2. Chuyển PDF" in app_mode:
-    app_number_2()
-elif "3. PDF/Ảnh sang Excel" in app_mode:
-    app_number_3()
-elif "4. So sánh Văn bản" in app_mode:
-    app_document_compare()
-elif "5. Cắt & Ghép PDF" in app_mode:
-    app_pdf_split_merge()
-elif "6. Chuyên gia Công thức" in app_mode:
-    app_excel_expert()
-elif "7. Nén & Đóng Gói" in app_mode:
-    app_compress_and_zip()
-elif "8. Xoay Trang PDF" in app_mode:
-    app_rotate_pdf()
-elif "9. Xóa Siêu Dữ Liệu" in app_mode:
-    app_metadata_cleaner()
-elif "10. Tách Nền Chữ Ký" in app_mode:
-    app_signature_extractor()
-elif "11. Tạo Mã QR" in app_mode:
-    app_qr_generator()
-elif "12. PDF sang Word" in app_mode:
-    app_pdf_to_word_offline()
+if menu_group.startswith("🌐"):
+    _routes = [app_pdf_to_word, app_number_3, app_document_compare, app_excel_expert]
+    _routes[ZP_MENU_ONLINE.index(app_mode)]()
+else:
+    _routes = [app_number_2, app_pdf_split_merge, app_compress_and_zip, app_rotate_pdf,
+               app_metadata_cleaner, app_signature_extractor, app_qr_generator, app_pdf_to_word_offline]
+    _routes[ZP_MENU_OFFLINE.index(app_mode)]()
