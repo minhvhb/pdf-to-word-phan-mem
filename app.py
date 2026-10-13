@@ -555,8 +555,8 @@ app_mode = st.sidebar.radio(
         "💻 6. Chuyên gia Công thức & VBA",
         "🗜️ 7. Nén & Đóng Gói ZIP Gửi Mail",
         "🔄 8. Xoay Trang PDF",
-        "🛡️ 9. Xóa Siêu Dữ Liệu Bảo Mật"
-        "✒️ 10. Tách Nền Chữ Ký" # DÒNG THÊM MỚI
+        "🛡️ 9. Xóa Siêu Dữ Liệu Bảo Mật",
+        "✒️ 10. Tách Nền Chữ Ký" 
     ],
     label_visibility="collapsed"
 )
