@@ -1395,6 +1395,29 @@ def _p2w_emit_nodes(ctx, nodes):
             _p2w_emit_table(ctx, n[1])
 
 
+def _p2w_emit_frame(doc, seg):
+    """Dòng đầu/cuối trang (tiêu đề chạy, số trang...) đặt bằng khung tuyệt đối: không trôi theo nội dung, không gây trang trắng."""
+    from docx.shared import Pt
+    from docx.enum.text import WD_LINE_SPACING
+    OxmlElement, _, qn, _ = _p2w_xml()
+    fs = seg["size"]
+    pitch = 1.15 * fs
+    p = doc.add_paragraph()
+    pf = p.paragraph_format
+    pf.space_before = pf.space_after = Pt(0)
+    pf.line_spacing_rule = WD_LINE_SPACING.EXACTLY
+    pf.line_spacing = Pt(pitch)
+    _p2w_add_text(p, [dict(r) for r in seg["runs"]])
+    top = seg["base"] - pitch + P2W_DESC * fs
+    fp = OxmlElement("w:framePr")
+    for k, v in (("w", int((seg["x1"] - seg["x0"] + 10.0) * 20)), ("hSpace", 0), ("vSpace", 0), ("wrap", "around"),
+                 ("vAnchor", "page"), ("hAnchor", "page"), ("x", int(seg["x0"] * 20)), ("y", int(max(top, 0.0) * 20))):
+        fp.set(qn("w:" + k), str(v))
+    pPr = p._p.get_or_add_pPr()
+    pPr.insert(0, fp)
+    return p
+
+
 def _p2w_spacer(ctx, gap):
     from docx.shared import Pt
     sp = ctx.new_par()
@@ -1570,9 +1593,15 @@ def p2w_page_model(page, full_img, opts, rpt, pno):
             x0, y0, x1, y1 = x0 - 1, y0 - 1, x1 + 1, y1 + 1
         if data:
             floats.append((data, x0, y0, x1 - x0, y1 - y0))
+    frames = []
+    if segs or tables:
+        edge = [s for s in segs if s.get("kind") == "seg" and (s["base"] >= ph - 62.0 or s["base"] <= 52.0)]
+        keep = [s for s in segs if s not in edge]
+        if edge and (keep or tables):
+            frames, segs = edge, keep
     items = segs + tables
     nodes = _p2w_xycut(items) if items else []
-    return {"w": pw, "h": ph, "mode": "flow", "floats": floats, "nodes": nodes, "items": items}
+    return {"w": pw, "h": ph, "mode": "flow", "floats": floats, "nodes": nodes, "items": items, "frames": frames}
 
 
 def p2w_build_docx(models, opts):
@@ -1603,7 +1632,7 @@ def p2w_build_docx(models, opts):
             tops = [(_p2w_nodes_top([n], i0, i1)) for n in m["nodes"]
                     for i0, i1 in [(ml, w - mr)]] or [36.0]
             mt = max(0.0, min(tops) - 1.0)
-            mb = max(0.0, min(70.0, h - max(i["y1"] for i in its) - 14.0))
+            mb = max(14.0, min(70.0, h - max(i["y1"] for i in its) - 40.0))
             _p2w_page_setup(sec, w, h, ml, mr, mt, mb)
         else:
             ml = mr = mt = mb = 0.0
@@ -1612,13 +1641,26 @@ def p2w_build_docx(models, opts):
         _p2w_tiny(host, 1.0)
         for data, x, y, fw, fh in m["floats"]:
             _p2w_float(host.add_run(), data, x, y, fw, fh, behind=True)
+        for fseg in m.get("frames", []):
+            _p2w_emit_frame(doc, fseg)
         if m["mode"] == "flow":
             ctx = _P2WCtx(doc, None, ml, w - mr, mt + 1.0, ml, opts.get("reflow", False))
             _p2w_emit_nodes(ctx, m["nodes"])
+        last_el = doc.element.body.getchildren()[-2] if len(doc.element.body.getchildren()) >= 2 else None
+        # đặt dấu ngắt trang vào ngay đoạn cuối (không thêm đoạn rỗng có thể tràn sang trang mới -> trang trắng)
+        can_merge = (last_el is not None and last_el.tag == qn("w:p") and not last_el.findall(".//" + qn("w:framePr")))
         if pi < n_pages - 1:
             doc.add_section(WD_SECTION.NEW_PAGE)
-            _p2w_tiny(doc.paragraphs[-1], 1.0)
-        else:
+            newp = doc.paragraphs[-1]._p
+            prev = newp.getprevious()
+            if prev is not None and prev.tag == qn("w:p") and not prev.findall(".//" + qn("w:framePr")):
+                sect = newp.pPr.find(qn("w:sectPr"))
+                newp.pPr.remove(sect)
+                prev.get_or_add_pPr().append(sect)
+                newp.getparent().remove(newp)
+            else:
+                _p2w_tiny(doc.paragraphs[-1], 1.0)
+        elif not can_merge:
             _p2w_tiny(doc.add_paragraph(), 1.0)
     out = _io.BytesIO()
     doc.save(out)
