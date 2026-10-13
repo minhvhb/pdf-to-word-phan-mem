@@ -1683,6 +1683,23 @@ def p2w_engine_b(pdf_bytes, opts, progress=None):
     return p2w_build_docx(models, opts), rpt
 
 
+def p2w_scan_info(pdf_bytes):
+    """Nhận diện PDF scan: -> (số trang scan, tổng số trang, số trang scan có lớp chữ OCR)."""
+    import pdfplumber
+    n_scan = n_ocr = 0
+    with pdfplumber.open(_io.BytesIO(pdf_bytes)) as pdf:
+        n = len(pdf.pages)
+        for p in pdf.pages:
+            pa = float(p.width) * float(p.height)
+            big = any(((im["x1"] - im["x0"]) * (im["bottom"] - im["top"])) >= 0.8 * pa for im in p.images)
+            nchar = len([c for c in p.chars if c.get("text", "").strip()])
+            if big or (p.images and nchar < 20):
+                n_scan += 1
+                if nchar >= 20:
+                    n_ocr += 1
+    return n_scan, n, n_ocr
+
+
 # ------------------------------------------------------------------ Engine A + kiểm tra độ phủ chữ
 def p2w_engine_a(pdf_bytes):
     import tempfile
@@ -1825,6 +1842,18 @@ def app_pdf_to_word_offline():
     if not up:
         st.info("💡 PDF tạo từ Word/Excel cho kết quả ~100%. PDF scan (ảnh) sẽ được giữ nguyên dạng ảnh; muốn chữ sửa được hãy dùng App 1 (AI online).")
         return
+    try:
+        n_scan, n_pg, n_ocr = p2w_scan_info(up.getvalue())
+        if n_scan and n_scan >= n_pg:
+            st.warning(f"📠 **File này là bản scan** ({n_scan}/{n_pg} trang là ảnh chụp, không có chữ gõ sẵn). "
+                       f"**Nên dùng App 1 – PDF sang Word (AI)** để lấy chữ sửa được. "
+                       f"Nếu vẫn dùng App 12, các trang sẽ giữ nguyên dạng ảnh, chữ không sửa được."
+                       + (" (File có lớp chữ OCR sẵn: bạn có thể bật ô 'PDF scan có lớp chữ' để lấy chữ.)" if n_ocr else ""))
+        elif n_scan:
+            st.warning(f"📠 Có **{n_scan}/{n_pg} trang là bản scan**. Các trang này sẽ giữ nguyên dạng ảnh (chữ không sửa được); "
+                       f"muốn sửa chữ ở các trang đó hãy dùng App 1 – PDF sang Word (AI).")
+    except Exception:
+        pass
     if st.button("🚀 Chuyển sang Word", type="primary"):
         data = up.getvalue()
         base = os.path.splitext(up.name)[0]
@@ -1886,24 +1915,33 @@ def app_pdf_to_word_offline():
     st.caption("⚠️ Font lạ chưa cài trên máy sẽ được Word thay bằng font gần nhất; PDF dùng font VNI/.Vn cũ có thể sai chữ khi trích xuất.")
 
 
-app_mode = st.sidebar.radio(
-    "Vui lòng chọn ứng dụng:",
-    [
-        "📄 1. PDF sang Word", 
-        "🖨️ 2. Chuyển PDF về khổ A4", 
-        "📊 3. PDF/Ảnh sang Excel", 
-        "🔍 4. So sánh Văn bản / Hợp đồng",
-        "✂️ 5. Cắt & Ghép PDF",
-        "💻 6. Chuyên gia Công thức & VBA",
-        "🗜️ 7. Nén & Đóng Gói ZIP Gửi Mail",
-        "🔄 8. Xoay Trang PDF",
-        "🛡️ 9. Xóa Siêu Dữ Liệu Bảo Mật",
-        "✒️ 10. Tách Nền Chữ Ký",
-        "🔳 11. Tạo Mã QR",
-        "📝 12. PDF sang Word (Offline)"
-    ],
-    label_visibility="collapsed"
+ZP_MENU_ONLINE = [
+    "📄 1. PDF sang Word (AI – file scan)",
+    "📊 3. PDF/Ảnh sang Excel",
+    "🔍 4. So sánh Văn bản / Hợp đồng",
+    "💻 6. Chuyên gia Công thức & VBA",
+]
+ZP_MENU_OFFLINE = [
+    "📝 12. PDF sang Word (giữ bố cục)",
+    "🖨️ 2. Chuyển PDF về khổ A4",
+    "✂️ 5. Cắt & Ghép PDF",
+    "🗜️ 7. Nén & Đóng Gói ZIP Gửi Mail",
+    "🔄 8. Xoay Trang PDF",
+    "🛡️ 9. Xóa Siêu Dữ Liệu Bảo Mật",
+    "✒️ 10. Tách Nền Chữ Ký",
+    "🔳 11. Tạo Mã QR",
+]
+menu_group = st.sidebar.radio(
+    "Nhóm công cụ:",
+    ["🌐 Trợ lý AI (Online)", "🖥️ Tiện ích Văn phòng (Offline)"],
+    key="menu_group",
 )
+if menu_group.startswith("🌐"):
+    st.sidebar.caption("Dùng trí tuệ nhân tạo Gemini: cần mạng, có giới hạn lượt dùng mỗi ngày.")
+    app_mode = st.sidebar.radio("Chọn ứng dụng:", ZP_MENU_ONLINE, key="menu_online", label_visibility="collapsed")
+else:
+    st.sidebar.caption("Xử lý trực tiếp trên máy chủ, không dùng AI, không giới hạn lượt dùng.")
+    app_mode = st.sidebar.radio("Chọn ứng dụng:", ZP_MENU_OFFLINE, key="menu_offline", label_visibility="collapsed")
 st.sidebar.markdown("---") 
 
 st.sidebar.markdown("""
@@ -2948,179 +2986,377 @@ def app_excel_expert():
                     st.error(f"Đã xảy ra lỗi AI: {e}")
 
 # ==========================================
-# APP 7: NÉN DUNG LƯỢNG & ĐÓNG GÓI ZIP GỬI MAIL (CỐT LÕI PYMUPDF - TỐI ƯU MÀU SẮC)
+# APP 7: NÉN THÔNG MINH & ĐÓNG GÓI ZIP GỬI MAIL (OFFLINE)
+# Nguyên tắc: nén VỪA ĐỦ để đạt ngưỡng email, ưu tiên giữ chất lượng; không bao giờ làm file nặng hơn;
+# PDF chữ giữ nguyên chữ/vector (không "chụp ảnh" lại); Word/Excel/PowerPoint chỉ nén ảnh nhúng, giữ nguyên nội dung.
 # ==========================================
-def compress_single_image(img_bytes, quality=50, is_color=True):
-    try:
-        img = Image.open(BytesIO(img_bytes))
-        
-        # Xử lý hệ màu theo lựa chọn của người dùng
-        if not is_color:
-            img = img.convert("L")
-        elif img.mode != "RGB":
-            img = img.convert("RGB")
-            
-        # Thu nhỏ khung hình nếu ảnh quá lớn
-        max_dim = int(800 + (quality - 30) * (1600 - 800) / (90 - 30))
-        if max(img.width, img.height) > max_dim:
-            ratio = max_dim / float(max(img.width, img.height))
-            new_size = (int(img.width * ratio), int(img.height * ratio))
-            img = img.resize(new_size, Image.Resampling.LANCZOS if hasattr(Image, 'Resampling') else Image.LANCZOS)
-                
-        out = BytesIO()
-        img.save(out, format="JPEG", quality=quality, optimize=True)
-        return out.getvalue()
-    except Exception:
-        return img_bytes
+ZP_LEVELS = {  # mức: (dpi mục tiêu cho ảnh trong PDF, chất lượng JPEG, cạnh dài tối đa của ảnh rời/ảnh nhúng Office)
+    0: (None, None, None),
+    1: (220, 88, 3000),
+    2: (170, 80, 2400),
+    3: (130, 70, 1800),
+    4: (100, 60, 1400),
+    5: (80, 50, 1100),
+}
+ZP_LABELS = {
+    0: "Giữ nguyên chất lượng (chỉ tối ưu cấu trúc file)",
+    1: "Nén nhẹ (gần như không thấy khác)",
+    2: "Nén vừa (ảnh hơi mềm hơn)",
+    3: "Nén mạnh (vẫn đọc rõ)",
+    4: "Nén rất mạnh",
+    5: "Nén tối đa (chỉ nên gửi tham khảo)",
+}
+ZP_IMG_EXT = {"jpg", "jpeg", "png", "bmp", "tif", "tiff", "webp"}
+ZP_OFFICE_EXT = {"docx", "xlsx", "pptx", "docm", "xlsm", "pptm"}
 
-def compress_pdf_extreme(pdf_bytes, quality=50, is_color=True):
-    """Sử dụng PyMuPDF cào bằng trang PDF, tối ưu hóa DPI và giữ nguyên hệ màu RGB"""
+
+def _zp_pil_resample():
+    return Image.Resampling.LANCZOS if hasattr(Image, "Resampling") else Image.LANCZOS
+
+
+def _zp_shrink_image(pil, side):
+    if side and max(pil.size) > side:
+        r = side / float(max(pil.size))
+        pil = pil.resize((max(1, int(pil.width * r)), max(1, int(pil.height * r))), _zp_pil_resample())
+    return pil
+
+
+def _zp_has_alpha(pil):
+    return pil.mode in ("RGBA", "LA") or (pil.mode == "P" and "transparency" in pil.info)
+
+
+def zp_image(raw, name, level, bw=False):
+    """Ảnh rời -> (bytes, tên mới, ghi chú). Tự xoay đúng chiều theo EXIF; ảnh nền trong suốt giữ PNG."""
+    from PIL import ImageOps
+    ext = name.rsplit(".", 1)[-1].lower() if "." in name else ""
+    stem = name.rsplit(".", 1)[0] if "." in name else name
     try:
-        doc = fitz.open("pdf", pdf_bytes)
-        new_pdf = fitz.open()
-        
-        # Ép DPI từ 100 (siêu nhẹ) đến 200 (sắc nét) dựa trên thanh trượt
-        dpi = int(100 + (quality - 30) * (200 - 100) / (90 - 30))
-        
-        for page in doc:
-            zoom = dpi / 72.0
-            mat = fitz.Matrix(zoom, zoom)
-            
-            # Khởi tạo bản vẽ với RGB (Màu) hoặc GRAY (Đen trắng)
-            c_space = fitz.csRGB if is_color else fitz.csGRAY
-            pix = page.get_pixmap(matrix=mat, colorspace=c_space)
-            
-            # Ép nén bằng thuật toán phân tích hạt JPEG
-            img_bytes = pix.tobytes("jpeg", jpg_quality=quality)
-            
-            # Gói lại vào trang PDF mới tinh (loại bỏ hoàn toàn rác mã hóa của máy scan)
-            imgdoc = fitz.open("jpeg", img_bytes)
-            pdfbytes = imgdoc.convert_to_pdf()
-            imgpdf = fitz.open("pdf", pdfbytes)
-            new_pdf.insert_pdf(imgpdf)
-            
-        out_stream = BytesIO()
-        new_pdf.save(out_stream, garbage=4, deflate=True)
-        return out_stream.getvalue()
+        img = Image.open(BytesIO(raw))
+        img.load()
+        fmt = (img.format or "").upper()
+        if fmt == "GIF":
+            return raw, name, "Giữ nguyên (ảnh động GIF)"
+        _, q, side = ZP_LEVELS[level]
+        img = ImageOps.exif_transpose(img)
+        if level == 0:
+            if fmt == "PNG":
+                out = BytesIO()
+                img.save(out, format="PNG", optimize=True)
+                if len(out.getvalue()) < 0.97 * len(raw):
+                    return out.getvalue(), name, "Tối ưu PNG, không mất chất lượng"
+            return raw, name, "Giữ nguyên"
+        img = _zp_shrink_image(img, side)
+        out = BytesIO()
+        if _zp_has_alpha(img):                                   # logo/chữ ký nền trong suốt: giữ PNG
+            if bw:
+                img = img.convert("LA")
+            img.save(out, format="PNG", optimize=True)
+            new, nname = out.getvalue(), (stem + ".png")
+        else:
+            img = img.convert("L" if bw else "RGB")
+            img.save(out, format="JPEG", quality=q, optimize=True, progressive=True)
+            new, nname = out.getvalue(), (stem + ".jpg")
+        if len(new) >= 0.97 * len(raw):
+            return raw, name, "Giữ nguyên (nén không giảm thêm)"
+        note = "Giảm độ phân giải/chất lượng ảnh"
+        if nname.lower() != name.lower():
+            note += f" (đổi đuôi thành .{nname.rsplit('.', 1)[-1]})"
+        return new, nname, note
     except Exception as e:
-        return pdf_bytes
+        return raw, name, f"Giữ nguyên (không đọc được ảnh: {e})"
+
+
+def zp_pdf(raw, level, bw=False):
+    """PDF -> (bytes, ghi chú). Không rasterize: chữ và hình vector giữ nguyên; chỉ nén ảnh quá nặng theo mức."""
+    from pypdf import PdfReader, PdfWriter
+    if b"/ByteRange" in raw:
+        return raw, "Giữ nguyên (PDF có chữ ký số, nén sẽ làm mất hiệu lực chữ ký)"
+    try:
+        reader = PdfReader(BytesIO(raw))
+        if reader.is_encrypted:
+            return raw, "Giữ nguyên (PDF có mật khẩu)"
+        writer = PdfWriter(clone_from=reader)
+        dpi_t, q, _ = ZP_LEVELS[level]
+        n_img = 0
+        if dpi_t:
+            for page in writer.pages:
+                try:
+                    pw_in = max(float(page.mediabox.width), float(page.mediabox.height)) / 72.0
+                    images = list(page.images)
+                except Exception:
+                    continue
+                for im in images:
+                    try:
+                        pil = im.image
+                        if pil is None or pil.mode not in ("RGB", "L", "CMYK", "P", "RGBA"):
+                            continue
+                        w0, h0 = pil.size
+                        if min(w0, h0) < 300:                    # logo/icon nhỏ: không đụng tới
+                            continue
+                        obj = im.indirect_reference.get_object() if getattr(im, "indirect_reference", None) else None
+                        if obj is not None and ("/SMask" in obj or "/Mask" in obj or obj.get("/ImageMask")):
+                            continue                                # ảnh có nền trong suốt/mặt nạ: giữ nguyên
+                        est_dpi = max(w0, h0) / pw_in            # ước lượng độ nét (ảnh phủ cả trang là trường hợp thường gặp)
+                        new = pil
+                        if est_dpi > dpi_t * 1.15:
+                            r = dpi_t / est_dpi
+                            new = pil.resize((max(1, int(w0 * r)), max(1, int(h0 * r))), _zp_pil_resample())
+                        new = new.convert("L" if bw else "RGB")
+                        im.replace(new, quality=q)
+                        n_img += 1
+                    except Exception:
+                        continue
+        for page in writer.pages:
+            try:
+                page.compress_content_streams()
+            except Exception:
+                pass
+        try:
+            writer.compress_identical_objects(remove_identicals=True, remove_orphans=True)
+        except Exception:
+            pass
+        out = BytesIO()
+        writer.write(out)
+        data = out.getvalue()
+        if len(data) >= 0.98 * len(raw):
+            return raw, "Giữ nguyên (đã gọn, nén không giảm thêm)"
+        if level == 0:
+            return data, "Tối ưu cấu trúc, không đổi nội dung"
+        return data, f"Nén {n_img} ảnh trong PDF; chữ và hình vẽ giữ nguyên" if n_img else "Tối ưu cấu trúc, không đổi nội dung"
+    except Exception as e:
+        return raw, f"Giữ nguyên (không xử lý được: {e})"
+
+
+def zp_office(raw, level, bw=False):
+    """Word/Excel/PowerPoint: chỉ nén ảnh nhúng trong thư mục media, giữ nguyên tên/định dạng -> nội dung và bố cục không đổi."""
+    from PIL import ImageOps
+    try:
+        zin = zipfile.ZipFile(BytesIO(raw))
+        names = zin.namelist()
+    except Exception:
+        return raw, "Giữ nguyên (không mở được file)"
+    _, q, side = ZP_LEVELS[level]
+    out = BytesIO()
+    n_img = 0
+    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as zout:
+        for info in zin.infolist():
+            data = zin.read(info.filename)
+            low = info.filename.lower()
+            if level > 0 and "/media/" in low and low.rsplit(".", 1)[-1] in ("jpg", "jpeg", "png") and len(data) > 60000:
+                try:
+                    img = Image.open(BytesIO(data))
+                    img.load()
+                    img = ImageOps.exif_transpose(img)
+                    img2 = _zp_shrink_image(img, side)
+                    buf = BytesIO()
+                    if low.endswith("png"):
+                        if bw:
+                            img2 = img2.convert("LA" if _zp_has_alpha(img2) else "L")
+                        img2.save(buf, format="PNG", optimize=True)
+                    else:
+                        img2.convert("L" if bw else "RGB").save(buf, format="JPEG", quality=q, optimize=True)
+                    if len(buf.getvalue()) < 0.9 * len(data):
+                        data = buf.getvalue()
+                        n_img += 1
+                except Exception:
+                    pass
+            zi = zipfile.ZipInfo(info.filename, date_time=info.date_time)
+            zi.compress_type = zipfile.ZIP_DEFLATED
+            zi.external_attr = info.external_attr
+            zout.writestr(zi, data)
+    new = out.getvalue()
+    try:
+        if zipfile.ZipFile(BytesIO(new)).testzip() is not None:
+            return raw, "Giữ nguyên (kiểm tra lại file nén không đạt)"
+    except Exception:
+        return raw, "Giữ nguyên (kiểm tra lại file nén không đạt)"
+    if len(new) >= 0.97 * len(raw):
+        return raw, "Giữ nguyên (đã gọn)"
+    return new, (f"Nén {n_img} ảnh nhúng; chữ, bảng, công thức giữ nguyên" if n_img else "Tối ưu cấu trúc, nội dung giữ nguyên")
+
+
+def zp_process(name, raw, level, bw=False):
+    """-> (bytes, tên file, ghi chú) theo loại file."""
+    ext = name.rsplit(".", 1)[-1].lower() if "." in name else ""
+    if ext == "pdf":
+        d, n = zp_pdf(raw, level, bw)
+        return d, name, n
+    if ext in ZP_IMG_EXT:
+        return zp_image(raw, name, level, bw)
+    if ext in ZP_OFFICE_EXT:
+        d, n = zp_office(raw, level, bw)
+        return d, name, n
+    return raw, name, "Giữ nguyên (loại file không nén thêm)"
+
+
+def zp_plan(files, target_bytes, bw=False, progress=None):
+    """Tự chọn mức nén: bắt đầu từ giữ nguyên chất lượng, chỉ tăng mức cho file nặng nhất cho tới khi tổng <= ngưỡng."""
+    cache, level = {}, {n: 0 for n in files}
+
+    def get(n, lv):
+        if (n, lv) not in cache:
+            cache[(n, lv)] = zp_process(n, files[n], lv, bw)
+        return cache[(n, lv)]
+
+    def total():
+        return sum(len(get(n, level[n])[0]) for n in files)
+
+    it = 0
+    while total() > target_bytes and it < 80:
+        cand = [n for n in files if level[n] < 5 and len(get(n, level[n])[0]) > 150000
+                and n.rsplit(".", 1)[-1].lower() in (ZP_IMG_EXT | ZP_OFFICE_EXT | {"pdf"})]
+        if not cand:
+            break
+        # tăng mức cho file đang nặng nhất mà còn có thể nén thêm
+        cand.sort(key=lambda n: -len(get(n, level[n])[0]))
+        moved = False
+        for n in cand:
+            before = len(get(n, level[n])[0])
+            nxt = level[n] + 1
+            while nxt <= 5 and len(get(n, nxt)[0]) >= 0.97 * before:
+                nxt += 1
+            if nxt <= 5:
+                level[n] = nxt
+                moved = True
+                break
+            level[n] = 5
+        if not moved:
+            break
+        it += 1
+        if progress:
+            progress(min(0.95, 0.1 + 0.85 * it / 20.0), f"Đang cân chỉnh mức nén (vòng {it})...")
+    return {n: (level[n],) + get(n, level[n]) for n in files}
+
+
+def zp_pack(items, limit_bytes):
+    """Gom file vào các ZIP, mỗi ZIP <= limit (xếp từ file lớn đến nhỏ). items: [(tên, bytes)] -> [[(tên, bytes)]]."""
+    parts = []
+    for name, data in sorted(items, key=lambda x: -len(x[1])):
+        for p in parts:
+            if sum(len(d) for _, d in p) + len(data) <= limit_bytes:
+                p.append((name, data))
+                break
+        else:
+            parts.append([(name, data)])
+    return parts
+
+
+def zp_zip_bytes(entries):
+    buf = BytesIO()
+    used = set()
+    with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=6) as zf:
+        for name, data in entries:
+            base, dot, ext = name.rpartition(".")
+            n, k = name, 1
+            while n.lower() in used:
+                k += 1
+                n = f"{base} ({k}).{ext}" if dot else f"{name} ({k})"
+            used.add(n.lower())
+            zf.writestr(n, data)
+    return buf.getvalue()
+
 
 def app_compress_and_zip():
-    st.title("🗜️ Nén Dung Lượng & Đóng Gói ZIP Gửi Mail")
-    st.markdown("Tối ưu hóa các file PDF/Ảnh scan nặng, tự động đóng gói toàn bộ vào 1 file **.ZIP** để gửi email công ty không bị vượt trần 25MB.")
+    st.title("🗜️ Nén Thông Minh & Đóng Gói ZIP Gửi Mail")
+    st.markdown("Nén **vừa đủ** để file gửi được qua email công ty, **ưu tiên giữ chất lượng**. "
+                "File PDF chữ giữ nguyên chữ; Word/Excel/PowerPoint giữ nguyên nội dung, chỉ thu nhỏ các ảnh nhúng quá nặng. "
+                "Chạy hoàn toàn trên máy chủ nội bộ, không dùng AI.")
 
     uploaded_files = st.file_uploader(
-        "Tải lên một hoặc nhiều file cần nén và đóng gói (PDF, JPG, PNG, DOCX, XLSX...):",
-        accept_multiple_files=True,
-        key=f"app7_{st.session_state.uploader_key}"
-    )
+        "Tải lên một hoặc nhiều file (PDF, Word, Excel, PowerPoint, ảnh JPG/PNG...):",
+        accept_multiple_files=True, key=f"app7_{st.session_state.uploader_key}")
 
-    if uploaded_files:
-        total_orig_bytes = sum(len(f.getvalue()) for f in uploaded_files)
-        total_orig_mb = total_orig_bytes / (1024 * 1024)
-        st.info(f"📁 Đã chọn **{len(uploaded_files)} file** | Tổng dung lượng gốc: **{total_orig_mb:.2f} MB**")
+    if not uploaded_files:
+        st.session_state.pop("zp_result", None)
+        st.info("💡 Mẹo: email công ty ghi giới hạn 25 MB nhưng khi gửi, file đính kèm bị mã hóa nên nặng thêm khoảng 35%. "
+                "Vì vậy nên để ZIP ≤ 18 MB cho chắc chắn gửi được.")
+        return
 
-        # Giao diện điều khiển mới chia làm 2 cột
-        col1, col2 = st.columns(2)
-        with col1:
-            che_do_mau = st.radio(
-                "Chế độ màu sắc:",
-                ["🌈 Giữ nguyên màu gốc", "🔲 Chuyển Đen Trắng"],
-                help="Chế độ Giữ Màu vẫn ép nén rất tốt. Chỉ dùng Đen Trắng khi bạn cần file đạt mức siêu nhẹ gọn."
-            )
-        with col2:
-            quality = st.slider(
-                "Mức chất lượng nén (Mặc định 50):",
-                min_value=30,
-                max_value=90,
-                value=50,
-                step=5,
-                help="Điều chỉnh thanh trượt càng thấp, cả độ phân giải và chất lượng ảnh sẽ càng được tối ưu nhỏ lại."
-            )
-        
-        # Bổ sung khung hướng dẫn sử dụng chi tiết
-        st.markdown("""
-        > 💡 **Bạn hoàn toàn làm chủ độ nét thông qua Thanh trượt chất lượng:**
-        > - **Kéo lên mức 70 - 90:** Dành cho các hợp đồng quan trọng, ảnh chụp linh kiện máy móc cần độ nét cao để nghiệm thu (chấp nhận file ZIP đầu ra sẽ nặng hơn một chút).
-        > - **Để mức 40 - 50:** Tối ưu hóa tối đa để đính kèm qua email nội bộ bị giới hạn 25MB.
-        """)
+    total_orig = sum(f.size for f in uploaded_files)
+    st.info(f"📁 Đã chọn **{len(uploaded_files)} file** | Tổng dung lượng gốc: **{total_orig / 1048576:.2f} MB**")
 
-        # Biến boolean kiểm tra chế độ màu
-        is_color = "🌈" in che_do_mau
+    c1, c2 = st.columns(2)
+    with c1:
+        limit_mb = st.number_input("Ngưỡng dung lượng mỗi file ZIP (MB):", min_value=1.0, max_value=200.0, value=18.0, step=1.0,
+                                   help="Email công ty giới hạn 25 MB, nhưng đính kèm bị mã hóa nặng thêm ~35% nên 18 MB là mức an toàn. "
+                                        "Nếu hệ thống mail của bạn tính đúng 25 MB thì có thể nhập 24.")
+        mode = st.radio("Cách nén:", ["🎯 Tự động – nén vừa đủ (khuyên dùng)", "🖐️ Tự chọn mức nén"], key="zp_mode")
+    with c2:
+        manual_level = 2
+        if mode.startswith("🖐️"):
+            manual_level = st.select_slider("Mức nén:", options=[0, 1, 2, 3, 4, 5], value=2, format_func=lambda v: f"{v}",
+                                            help="0 = giữ nguyên chất lượng, 5 = nén tối đa.")
+            st.caption(f"Mức {manual_level}: {ZP_LABELS[manual_level]}")
+        bw = st.checkbox("Chuyển ảnh sang đen trắng (nhẹ hơn nữa)", value=False, key="zp_bw",
+                         help="Chỉ áp dụng cho ảnh trong file; chữ và bảng không bị ảnh hưởng.")
+        split = st.checkbox("Tự chia thành nhiều file ZIP nếu vượt ngưỡng", value=True, key="zp_split")
 
-        zip_filename = st.text_input("Tên file ZIP xuất ra:", value="Tai_Lieu_Gui_Mail.zip")
-        if not zip_filename.lower().endswith(".zip"):
-            zip_filename += ".zip"
+    zip_name = st.text_input("Tên file ZIP xuất ra:", value="Tai_Lieu_Gui_Mail.zip")
+    if not zip_name.lower().endswith(".zip"):
+        zip_name += ".zip"
 
-        if st.button("🚀 Bắt đầu Nén & Đóng Gói ZIP", type="primary"):
-            progress_bar = st.progress(0)
-            status_text = st.empty()
+    if st.button("🚀 Nén & Đóng gói", type="primary"):
+        prog = st.progress(0.05, "Đang đọc file...")
+        files = {}
+        for f in uploaded_files:
+            n, k = f.name, 1
+            while n in files:
+                k += 1
+                n = f"{f.name.rsplit('.', 1)[0]} ({k}).{f.name.rsplit('.', 1)[-1]}" if "." in f.name else f"{f.name} ({k})"
+            files[n] = f.getvalue()
+        target = int(limit_mb * 1048576)
+        if mode.startswith("🎯"):
+            plan = zp_plan(files, target, bw, lambda x, t: prog.progress(x, t))
+        else:
+            plan = {}
+            for i, (n, raw) in enumerate(files.items()):
+                plan[n] = (manual_level,) + zp_process(n, raw, manual_level, bw)
+                prog.progress(0.1 + 0.85 * (i + 1) / len(files), f"Đang nén {n}...")
+        prog.progress(1.0, "Hoàn tất!")
+        rows, items = [], []
+        for n, (lv, data, newname, note) in plan.items():
+            orig = len(files[n])
+            rows.append({"Tên file": newname, "Gốc (MB)": f"{orig / 1048576:.2f}", "Sau nén (MB)": f"{len(data) / 1048576:.2f}",
+                         "Tiết kiệm": f"{(orig - len(data)) / orig * 100:.0f}%" if orig else "0%",
+                         "Mức nén": f"{lv}" if len(data) < orig else "—", "Ghi chú": note})
+            items.append((newname, data))
+        if split:
+            parts = zp_pack(items, target)
+        else:
+            parts = [items]
+        base = zip_name[:-4]
+        zips = []
+        for i, p in enumerate(parts):
+            zname = zip_name if len(parts) == 1 else f"{base}_phan{i + 1}.zip"
+            zips.append((zname, zp_zip_bytes(p), [nm for nm, _ in p]))
+        st.session_state["zp_result"] = {"rows": rows, "zips": zips, "orig": total_orig, "limit": limit_mb}
 
-            zip_buffer = BytesIO()
-            report_rows = []
+    res = st.session_state.get("zp_result")
+    if not res:
+        return
+    zips = res["zips"]
+    final_total = sum(len(z[1]) for z in zips)
+    m1, m2, m3 = st.columns(3)
+    m1.metric("Dung lượng gốc", f"{res['orig'] / 1048576:.2f} MB")
+    m2.metric("Sau nén + đóng gói", f"{final_total / 1048576:.2f} MB")
+    m3.metric("Tiết kiệm", f"{(res['orig'] - final_total) / max(res['orig'], 1) * 100:.0f}%")
+    over = [z for z in zips if len(z[1]) > res["limit"] * 1048576 * 1.001]
+    if over:
+        st.warning("⚠️ Có file vẫn vượt ngưỡng ngay cả khi đã nén mạnh nhất: "
+                   + ", ".join(f"{', '.join(z[2])} ({len(z[1]) / 1048576:.1f} MB)" for z in over)
+                   + ". Nên gửi các file này qua link OneDrive/Google Drive hoặc chia nhỏ nội dung.")
+    elif len(zips) > 1:
+        st.success(f"✅ Đã chia thành {len(zips)} file ZIP, mỗi file ≤ {res['limit']:.0f} MB. Gửi mỗi ZIP bằng một email, hoặc đính kèm lần lượt.")
+    else:
+        st.success(f"🎉 File ZIP nặng {final_total / 1048576:.2f} MB, đủ điều kiện gửi email.")
+    st.dataframe(pd.DataFrame(res["rows"]), use_container_width=True, hide_index=True)
+    for i, (zname, zbytes, names) in enumerate(zips):
+        st.download_button(f"📥 Tải {zname} ({len(zbytes) / 1048576:.2f} MB, {len(names)} file)", zbytes, file_name=zname,
+                           mime="application/zip", key=f"zp_dl_{i}")
+    st.button("🗑️ Xóa & làm đợt mới", on_click=clear_file, key="zp_clear")
+    st.caption("Cột 'Mức nén': 0 = chỉ tối ưu cấu trúc (không đổi chất lượng), 5 = nén tối đa. File có chữ ký số hoặc mật khẩu được giữ nguyên.")
 
-            # Sử dụng thuật toán ZipDeflated cấp độ nén cao nhất
-            with zipfile.ZipFile(zip_buffer, mode="w", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as zf:
-                for idx, file in enumerate(uploaded_files):
-                    fname = file.name
-                    fext = fname.split('.')[-1].lower()
-                    raw_bytes = file.getvalue()
-                    orig_len = len(raw_bytes)
 
-                    status_text.text(f"Đang xử lý ({idx+1}/{len(uploaded_files)}): {fname}...")
-
-                    # Phân luồng nén
-                    if fext == "pdf":
-                        processed_bytes = compress_pdf_extreme(raw_bytes, quality=quality, is_color=is_color)
-                    elif fext in ["jpg", "jpeg", "png"]:
-                        processed_bytes = compress_single_image(raw_bytes, quality=quality, is_color=is_color)
-                        # Đồng nhất định dạng ảnh đầu ra thành JPG để nhẹ gọn nhất
-                        if not fname.lower().endswith(".jpg") and not fname.lower().endswith(".jpeg"):
-                            fname = f"{fname.rsplit('.', 1)[0]}.jpg"
-                    else:
-                        # Giữ nguyên bản gốc đối với các file Word, Excel
-                        processed_bytes = raw_bytes
-
-                    new_len = len(processed_bytes)
-                    zf.writestr(fname, processed_bytes)
-
-                    saved_pct = ((orig_len - new_len) / orig_len * 100) if orig_len > 0 else 0
-                    report_rows.append({
-                        "Tên file": fname,
-                        "Gốc (MB)": f"{orig_len / (1024*1024):.2f}",
-                        "Sau nén (MB)": f"{new_len / (1024*1024):.2f}",
-                        "Tiết kiệm": f"{saved_pct:.1f}%"
-                    })
-
-                    progress_bar.progress((idx + 1) / len(uploaded_files))
-
-            final_zip_bytes = zip_buffer.getvalue()
-            final_zip_mb = len(final_zip_bytes) / (1024 * 1024)
-            total_saved_pct = ((total_orig_bytes - len(final_zip_bytes)) / total_orig_bytes * 100) if total_orig_bytes > 0 else 0
-
-            status_text.empty()
-            progress_bar.empty()
-
-            # Hiển thị số liệu trực quan
-            col1, col2, col3 = st.columns(3)
-            col1.metric("Tổng dung lượng gốc", f"{total_orig_mb:.2f} MB")
-            col2.metric("File ZIP hoàn thành", f"{final_zip_mb:.2f} MB")
-            col3.metric("Tiết kiệm được", f"{total_saved_pct:.1f}%")
-
-            if final_zip_mb <= 25.0:
-                st.success(f"🎉 Siêu nén thành công! File ZIP nặng **{final_zip_mb:.2f} MB**, hoàn toàn đủ điều kiện gửi email công ty.")
-            else:
-                st.warning(f"⚠️ File ZIP hiện tại nặng **{final_zip_mb:.2f} MB** (vẫn vượt 25MB). Hãy thử giảm mức chất lượng xuống 30-40% hoặc chọn Đen trắng.")
-
-            st.dataframe(pd.DataFrame(report_rows), use_container_width=True)
-
-            st.download_button(
-                label=f"📥 Tải xuống {zip_filename}",
-                data=final_zip_bytes,
-                file_name=zip_filename,
-                mime="application/zip",
-                on_click=clear_file
-            )
 # ==========================================
 # ==========================================
 # APP 8: XOAY TÙY Ý TỪNG TRANG & TỰ ĐỘNG GHÉP FILE
