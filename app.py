@@ -1529,11 +1529,14 @@ def p2w_page_model(page, full_img, opts, rpt, pno):
     segs = _p2w_assign_to_tables(segs, tables)
     _p2w_cell_fills(page, tables)
     floats = []
-    word_boxes = [[s["x0"], s["base"] - 0.85 * s["size"], s["x1"], s["base"] + 0.25 * s["size"]] for s in segs]
+    def _wb(s):
+        return [[r.get("x0", s["x0"]), s["base"] - 0.85 * s["size"], r.get("x1", s["x1"]), s["base"] + 0.25 * s["size"]]
+                for r in s["runs"] if r["t"].strip()]
+    word_boxes = [w for s in segs for w in _wb(s)]
     for t in tables:
         for c in t["cells"]:
             for s in c.get("items", []):
-                word_boxes.append([s["x0"], s["base"] - 0.85 * s["size"], s["x1"], s["base"] + 0.25 * s["size"]])
+                word_boxes += _wb(s)
     for b in boxes:
         x0, y0, x1, y1 = b["box"]
         if b["img"]:
