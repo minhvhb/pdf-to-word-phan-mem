@@ -1922,7 +1922,6 @@ ZP_MENU_ONLINE = [
     "💻 6. Chuyên gia Công thức & VBA",
 ]
 ZP_MENU_OFFLINE = [
-    "📝 12. PDF sang Word (giữ bố cục)",
     "🖨️ 2. Chuyển PDF về khổ A4",
     "✂️ 5. Cắt & Ghép PDF",
     "🗜️ 7. Nén & Đóng Gói ZIP Gửi Mail",
@@ -1930,10 +1929,11 @@ ZP_MENU_OFFLINE = [
     "🛡️ 9. Xóa Siêu Dữ Liệu Bảo Mật",
     "✒️ 10. Tách Nền Chữ Ký",
     "🔳 11. Tạo Mã QR",
+    "📝 12. PDF sang Word (giữ bố cục)",
 ]
 menu_group = st.sidebar.radio(
     "Nhóm công cụ:",
-    ["🌐 Trợ lý AI (Online)", "🖥️ Tiện ích Văn phòng (Offline)"],
+    ["🌐 Công cụ Thông minh (Online)", "🖥️ Công cụ Văn phòng (Offline)"],
     key="menu_group",
 )
 if menu_group.startswith("🌐"):
