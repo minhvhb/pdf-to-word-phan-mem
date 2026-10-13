@@ -1782,7 +1782,7 @@ def app_pdf_to_word_offline():
 app_mode = st.sidebar.radio(
     "Vui lòng chọn ứng dụng:",
     [
-        "📄 1. PDF sang Word", 
+        "📄 1. PDF sang Word (Online)", 
         "🖨️ 2. Chuyển PDF về khổ A4", 
         "📊 3. PDF/Ảnh sang Excel", 
         "🔍 4. So sánh Văn bản / Hợp đồng",
