@@ -623,7 +623,13 @@ def _p2w_is_white(c):
     return min(int(hx[i:i + 2], 16) for i in (0, 2, 4)) >= 245
 
 
-def _p2w_fix_char(t):
+def _p2w_fix_char(t, font=""):
+    mm = _re.match(r"^\(cid:(\d+)\)$", t)
+    if mm:
+        n = int(mm.group(1))
+        if "wingdings" in font.lower() or "symbol" in font.lower():
+            return chr(0xF000 + n) if n < 256 else "•"
+        return "•" if n in (149, 151, 183) else ("\u00a0" if n < 33 else "•")
     if len(t) > 1 or 0xFB00 <= ord(t[0]) <= 0xFB06:
         return _ud.normalize("NFKC", t)
     return t
@@ -647,7 +653,7 @@ def _p2w_idx(vals, v):
 
 
 # ------------------------------------------------------------------ 1) chữ -> các đoạn dòng
-def _p2w_segments(page):
+def _p2w_segments(page, tables=()):
     ph = float(page.height)
     chars = []
     for c in page.chars:
@@ -658,7 +664,7 @@ def _p2w_segments(page):
         base = ph - m[5] if m else c["bottom"] - 0.217 * c["size"]
         if not (c["top"] - 1 <= base <= c["bottom"] + 1):
             base = c["bottom"] - 0.217 * c["size"]
-        chars.append({"t": _p2w_fix_char(t), "x0": c["x0"], "x1": c["x1"], "base": base, "size": float(c["size"]),
+        chars.append({"t": _p2w_fix_char(t, c.get("fontname", "")), "x0": c["x0"], "x1": c["x1"], "base": base, "size": float(c["size"]),
                       "font": c.get("fontname", ""), "col": c.get("non_stroking_color")})
     if not chars:
         return []
@@ -684,7 +690,9 @@ def _p2w_segments(page):
         sz_dom = _Counter(round(c["size"] * 2) / 2 for c in cs).most_common(1)[0][0]
         groups, cur = [], [cs[0]]
         for c in cs[1:]:
-            if c["x0"] - cur[-1]["x1"] > 2.0 * sz_dom:
+            xcut = c["x0"] - cur[-1]["x1"] > 0.3 * c["size"] and any(t["y0"] - 2 <= c["base"] <= t["y1"] + 2 and any(cur[-1]["x1"] <= xb + 1.5 and c["x0"] >= xb - 1.5 for xb in t["xs"][1:-1])
+                       for t in tables)
+            if c["x0"] - cur[-1]["x1"] > 2.0 * sz_dom or xcut:
                 groups.append(cur)
                 cur = [c]
             else:
@@ -707,6 +715,10 @@ def _p2w_make_seg(g):
         else:
             sp = ""
         font, b, i = _p2w_font(c["font"])
+        if "wingdings" in c["font"].lower():
+            font = "Wingdings"
+        elif c["font"].lower().endswith("symbol") or "+symbol" in c["font"].lower():
+            font = "Symbol"
         sup = 0
         if c["size"] <= 0.8 * sz_dom and (base_dom - c["base"]) >= 0.2 * c["size"]:
             sup = 1
@@ -1329,12 +1341,15 @@ def _p2w_emit_para(ctx, p):
     elif al == "right":
         li, ri, fi = max(0.0, p["x0"] - ext - regL), max(0.0, regR - max(p["rights"])), 0.0
     elif al == "justify":
-        rr = _stat.median(p["rights"][:-1]) if p["n"] > 1 else p["x1"]
+        rr = max(p["rights"][:-1]) if p["n"] > 1 else p["x1"]
         li, ri, fi = max(0.0, p["ref"] - regL), max(0.0, regR - rr), p["fi"]
     else:
         li, ri, fi = max(0.0, p["ref"] - regL), max(-ext, regR - (p["x1"] + ext)), p["fi"]
     pf.left_indent = Pt(li)
     pf.right_indent = Pt(ri)
+    for sg in segs:
+        for tx in sg.get("tabs", []):
+            pf.tab_stops.add_tab_stop(Pt(max(0.0, tx - regL)))
     if abs(fi) > 1.5:
         pf.first_line_indent = Pt(max(-li, fi))
     # chữ: mỗi dòng PDF = 1 dòng Word (ngắt mềm) -> giữ đúng điểm xuống dòng; reflow=True thì nối các dòng "đầy"
@@ -1449,11 +1464,52 @@ def _p2w_emit_table(ctx, t):
 
 
 # ------------------------------------------------------------------ 8) mô hình trang + dựng file
+def _p2w_merge_icon_rows(segs, boxes):
+    """Hình nhỏ nằm giữa dòng chữ (icon phím, vòng tròn...) -> các đoạn chữ hai bên được nối thành 1 dòng bằng tab."""
+    icons = [b["box"] for b in boxes if b["img"] and b["cov"] < 0.05 and (b["box"][2] - b["box"][0]) <= 90
+             and (b["box"][3] - b["box"][1]) <= 70]
+    if not icons or not segs:
+        return segs
+    segs = list(segs)
+    for ib in sorted(icons, key=lambda b: -b[0]):
+        icx, icy = (ib[0] + ib[2]) / 2, (ib[1] + ib[3]) / 2
+        cand = [s for s in segs if s.get("kind") == "seg" and ib[1] - 3 <= s["base"] <= ib[3] + 3 + 0.3 * s["size"]]
+        if not cand:
+            continue
+        # chọn dòng gần tâm icon nhất, có chữ sát bên trái hoặc bên phải icon
+        rows = {}
+        for s in cand:
+            rows.setdefault(round(s["base"] / 3.0), []).append(s)
+        best = None
+        for k, row in rows.items():
+            lft = [s for s in row if s["x1"] <= ib[0] + 6 and ib[0] - s["x1"] <= 5 * s["size"]]
+            rgt = [s for s in row if s["x0"] >= ib[2] - 6 and s["x0"] - ib[2] <= 5 * s["size"]]
+            if not (lft or rgt):
+                continue
+            by = sum(s["base"] for s in row) / len(row)
+            d = abs(by - icy)
+            if best is None or d < best[0]:
+                best = (d, lft, rgt)
+        if not best:
+            continue
+        _, lft, rgt = best
+        A = max(lft, key=lambda s: s["x1"]) if lft else None
+        B = min(rgt, key=lambda s: s["x0"]) if rgt else None
+        if A is not None and B is not None and A is not B:
+            tab = dict(A["runs"][-1])
+            tab.update({"t": "\t", "u": False, "x0": A["x1"], "x1": B["x0"]})
+            A["runs"] = A["runs"] + [tab] + B["runs"]
+            A["tabs"] = A.get("tabs", []) + [B["x0"]] + B.get("tabs", [])
+            A["x1"] = B["x1"]
+            A["size"] = max(A["size"], B["size"])
+            segs.remove(B)
+    return segs
+
+
 def p2w_page_model(page, full_img, opts, rpt, pno):
     pw, ph = float(page.width), float(page.height)
-    segs = _p2w_segments(page)
-    boxes, page_image = _p2w_graphics(page, segs, [], opts.get("prefer_text", False), rpt) if False else (None, None)
-    tables = _p2w_find_tables(page, segs)
+    tables = _p2w_find_tables(page, None)
+    segs = _p2w_segments(page, tables)
     boxes, page_image = _p2w_graphics(page, segs, tables, opts.get("prefer_text", False), rpt)
     # trang quét (ảnh phủ kín trang) hoặc trang chỉ có hình
     if page_image and not opts.get("prefer_text", False):
@@ -1469,6 +1525,7 @@ def p2w_page_model(page, full_img, opts, rpt, pno):
         return {"w": pw, "h": ph, "mode": "blank", "floats": [], "nodes": []}
     if page_image:
         boxes = [b for b in boxes if b["cov"] < 0.85]
+    segs = _p2w_merge_icon_rows(segs, boxes)
     segs = _p2w_assign_to_tables(segs, tables)
     _p2w_cell_fills(page, tables)
     floats = []
@@ -1480,7 +1537,9 @@ def p2w_page_model(page, full_img, opts, rpt, pno):
     for b in boxes:
         x0, y0, x1, y1 = b["box"]
         if b["img"]:
-            data = _p2w_crop(full_img, b["box"], pw, ph)
+            inside = [w for w in word_boxes if w[0] < x1 and w[2] > x0 and w[1] < y1 and w[3] > y0
+                      and (min(w[2], x1) - max(w[0], x0)) > 0.5 and (min(w[3], y1) - max(w[1], y0)) > 0.3]
+            data = _p2w_crop(full_img, b["box"], pw, ph, blank_boxes=inside or None)
         else:
             inside = [w for w in word_boxes if w[0] < x1 and w[2] > x0 and w[1] < y1 and w[3] > y0]
             data = _p2w_crop(full_img, [x0 - 1, y0 - 1, x1 + 1, y1 + 1], pw, ph, blank_boxes=inside,
@@ -1578,6 +1637,8 @@ def p2w_engine_a(pdf_bytes):
 
 
 def _p2w_words(text):
+    text = _re.sub(r"\(cid:\d+\)", " ", text)
+    text = "".join(ch for ch in text if not (0xE000 <= ord(ch) <= 0xF8FF))
     return _re.findall(r"\w+", _ud.normalize("NFC", text).lower())
 
 
