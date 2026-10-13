@@ -556,7 +556,8 @@ app_mode = st.sidebar.radio(
         "🗜️ 7. Nén & Đóng Gói ZIP Gửi Mail",
         "🔄 8. Xoay Trang PDF",
         "🛡️ 9. Xóa Siêu Dữ Liệu Bảo Mật",
-        "✒️ 10. Tách Nền Chữ Ký" 
+        "✒️ 10. Tách Nền Chữ Ký",
+        "🔳 11. Tạo Mã QR"
     ],
     label_visibility="collapsed"
 )
@@ -2188,6 +2189,441 @@ def app_signature_extractor():
                         )
                 except Exception as e:
                     st.error(f"Lỗi khi xử lý ảnh: {e}")
+# ==========================================
+# APP 11: TẠO MÃ QR ĐA NGUỒN (OFFLINE)
+# ==========================================
+QR_BANKS = {
+    "Vietcombank": "970436", "VietinBank": "970415", "BIDV": "970418", "Agribank": "970405",
+    "Techcombank": "970407", "MB Bank": "970422", "ACB": "970416", "VPBank": "970432",
+    "Sacombank": "970403", "TPBank": "970423", "VIB": "970441", "HDBank": "970437",
+    "SHB": "970443", "OCB": "970448", "MSB": "970426", "SeABank": "970440",
+}
+
+
+def qr_crc16(s):
+    """CRC16-CCITT (poly 0x1021, init 0xFFFF) dùng cho chuẩn EMVCo/VietQR."""
+    crc = 0xFFFF
+    for b in s.encode("utf-8"):
+        crc ^= b << 8
+        for _ in range(8):
+            crc = ((crc << 1) ^ 0x1021) if crc & 0x8000 else (crc << 1)
+            crc &= 0xFFFF
+    return f"{crc:04X}"
+
+
+def _tlv(tag, val):
+    return f"{tag}{len(val):02d}{val}"
+
+
+def qr_vietqr_payload(bin_code, account, amount=0, note=""):
+    acc = _tlv("00", bin_code) + _tlv("01", account)
+    merchant = _tlv("00", "A000000727") + _tlv("01", acc) + _tlv("02", "QRIBFTTA")
+    s = _tlv("00", "01") + _tlv("01", "12" if amount else "11") + _tlv("38", merchant) + _tlv("53", "704")
+    if amount:
+        s += _tlv("54", str(int(amount)))
+    s += _tlv("58", "VN")
+    if note.strip():
+        s += _tlv("62", _tlv("08", note.strip()[:25]))
+    s += "6304"
+    return s + qr_crc16(s)
+
+
+def _esc_wifi(s):
+    for ch in ('\\', ';', ',', ':', '"'):
+        s = s.replace(ch, '\\' + ch)
+    return s
+
+
+def _esc_vc(s):
+    return str(s).replace('\\', '\\\\').replace(';', '\\;').replace(',', '\\,').replace('\n', '\\n')
+
+
+def qr_matrix(data, ecc="M"):
+    """Trả về ma trận bool (không có viền). Ưu tiên thư viện qrcode, dự phòng OpenCV."""
+    try:
+        import qrcode
+        lv = {"L": qrcode.constants.ERROR_CORRECT_L, "M": qrcode.constants.ERROR_CORRECT_M,
+              "Q": qrcode.constants.ERROR_CORRECT_Q, "H": qrcode.constants.ERROR_CORRECT_H}[ecc]
+        q = qrcode.QRCode(version=None, error_correction=lv, border=0)
+        q.add_data(data)
+        q.make(fit=True)
+        return [[bool(c) for c in row] for row in q.get_matrix()]
+    except ImportError:
+        import cv2
+        import numpy as np
+        p = cv2.QRCodeEncoder_Params()
+        p.correction_level = {"L": cv2.QRCodeEncoder_CORRECT_LEVEL_L, "M": cv2.QRCodeEncoder_CORRECT_LEVEL_M,
+                              "Q": cv2.QRCodeEncoder_CORRECT_LEVEL_Q, "H": cv2.QRCodeEncoder_CORRECT_LEVEL_H}[ecc]
+        img = cv2.QRCodeEncoder_create(p).encode(data)
+        if img is None:
+            raise ValueError("Nội dung quá dài để tạo mã QR.")
+        m = img < 128
+        ys, xs = np.where(m)
+        m = m[ys.min():ys.max() + 1, xs.min():xs.max() + 1]      # cắt sát vùng mã (OpenCV chừa viền 2 module)
+        # OpenCV có thể phóng mỗi module thành nhiều điểm ảnh -> tìm bước và thu về 1 điểm/module
+        step = 0
+        for arr in (m, m.T):
+            runs = []
+            for row in arr:
+                cnt = 1
+                for i in range(1, len(row)):
+                    if row[i] == row[i - 1]:
+                        cnt += 1
+                    else:
+                        runs.append(cnt)
+                        cnt = 1
+                runs.append(cnt)
+            step = int(np.gcd.reduce(runs)) if step == 0 else int(np.gcd(step, np.gcd.reduce(runs)))
+        step = max(step, 1)
+        n = m.shape[1] // step
+        return [[bool(m[r * step + step // 2, c * step + step // 2]) for c in range(n)] for r in range(n)]
+
+
+def _hex_rgb(h):
+    h = h.lstrip("#")
+    return tuple(int(h[i:i + 2], 16) for i in (0, 2, 4))
+
+
+def _in_finder(r, c, n):
+    return (r < 7 and c < 7) or (r < 7 and c >= n - 7) or (r >= n - 7 and c < 7)
+
+
+def qr_render(data, ecc="M", box=20, border=4, fg="#000000", fg2=None, bg="#FFFFFF", transparent=False,
+              shape="square", logo_bytes=None, caption=""):
+    from PIL import Image, ImageDraw, ImageFont
+    from io import BytesIO
+    if logo_bytes and ecc != "H":
+        ecc = "H"
+    mat = qr_matrix(data, ecc)
+    n = len(mat)
+    S = (n + 2 * border) * box
+    mask = Image.new("L", (S, S), 0)
+    d = ImageDraw.Draw(mask)
+    off = border * box
+    rad = int(box * 0.5)
+    for r in range(n):
+        for c in range(n):
+            if not mat[r][c]:
+                continue
+            x, y = off + c * box, off + r * box
+            if _in_finder(r, c, n):
+                if shape == "square":
+                    d.rectangle([x, y, x + box - 1, y + box - 1], fill=255)
+                else:   # mắt định vị: bo nhẹ nhưng vẫn liền khối để dễ quét
+                    d.rounded_rectangle([x, y, x + box - 1, y + box - 1], radius=int(box * 0.3), fill=255)
+                    for dr, dc in ((0, 1), (1, 0), (0, -1), (-1, 0)):
+                        rr, cc = r + dr, c + dc
+                        if 0 <= rr < n and 0 <= cc < n and mat[rr][cc] and _in_finder(rr, cc, n):
+                            d.rectangle([x + (box // 2 if dc == 1 else 0), y + (box // 2 if dr == 1 else 0),
+                                         x + box - 1 - (box // 2 if dc == -1 else 0),
+                                         y + box - 1 - (box // 2 if dr == -1 else 0)], fill=255)
+            elif shape == "dots":
+                pad = int(box * 0.08)
+                d.ellipse([x + pad, y + pad, x + box - 1 - pad, y + box - 1 - pad], fill=255)
+            elif shape == "rounded":
+                d.rounded_rectangle([x, y, x + box - 1, y + box - 1], radius=rad, fill=255)
+            else:
+                d.rectangle([x, y, x + box - 1, y + box - 1], fill=255)
+
+    c1 = _hex_rgb(fg)
+    if fg2 and fg2.lower() != fg.lower():
+        c2 = _hex_rgb(fg2)
+        import numpy as np
+        t = (np.add.outer(np.arange(S), np.arange(S)) / (2.0 * (S - 1)))[..., None]
+        arr = (np.array(c1) * (1 - t) + np.array(c2) * t).astype("uint8")
+        ink = Image.fromarray(arr, "RGB")
+    else:
+        ink = Image.new("RGB", (S, S), c1)
+
+    out = Image.new("RGBA", (S, S), (0, 0, 0, 0) if transparent else _hex_rgb(bg) + (255,))
+    out.paste(ink, (0, 0), mask)
+
+    if logo_bytes:
+        lg = Image.open(BytesIO(logo_bytes)).convert("RGBA")
+        pad = max(3, box // 4)
+        side = max(8, int(n * box * 0.19) - 2 * pad)      # cả khung nền logo <= ~19% cạnh mã (~3,6% diện tích)
+        lg.thumbnail((side, side), Image.LANCZOS)
+        plate = Image.new("RGBA", (lg.width + 2 * pad, lg.height + 2 * pad), (0, 0, 0, 0))
+        ImageDraw.Draw(plate).rounded_rectangle([0, 0, plate.width - 1, plate.height - 1], radius=pad,
+                                                fill=_hex_rgb(bg) + (255,))
+        px, py = (S - plate.width) // 2, (S - plate.height) // 2
+        out.alpha_composite(plate, (px, py))
+        out.alpha_composite(lg, (px + pad, py + pad))
+
+    if caption.strip():
+        fsize = max(14, box * 2)
+        font = None
+        for p in ("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", "DejaVuSans-Bold.ttf",
+                  "C:/Windows/Fonts/arialbd.ttf", "arialbd.ttf"):
+            try:
+                font = ImageFont.truetype(p, fsize)
+                break
+            except Exception:
+                pass
+        if font is None:
+            try:
+                font = ImageFont.load_default(size=fsize)
+            except Exception:
+                font = ImageFont.load_default()
+        lines = []
+        for para in caption.strip().split("\n"):
+            cur = ""
+            for wd in para.split(" "):
+                t = (cur + " " + wd).strip()
+                if ImageDraw.Draw(out).textlength(t, font=font) <= S * 0.94 or not cur:
+                    cur = t
+                else:
+                    lines.append(cur)
+                    cur = wd
+            lines.append(cur)
+        lh = int(fsize * 1.3)
+        full = Image.new("RGBA", (S, S + lh * len(lines) + box), (0, 0, 0, 0) if transparent else _hex_rgb(bg) + (255,))
+        full.alpha_composite(out, (0, 0))
+        dd = ImageDraw.Draw(full)
+        for i, ln in enumerate(lines):
+            w = dd.textlength(ln, font=font)
+            dd.text(((S - w) / 2, S - box * 1.2 + i * lh), ln, font=font, fill=c1 + (255,))
+        out = full
+    return out
+
+
+def qr_svg(data, ecc="M", border=4, fg="#000000", bg="#FFFFFF", transparent=False, shape="square"):
+    mat = qr_matrix(data, ecc)
+    n = len(mat)
+    T = n + 2 * border
+    parts = [f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {T} {T}" shape-rendering="crispEdges">']
+    if not transparent:
+        parts.append(f'<rect width="{T}" height="{T}" fill="{bg}"/>')
+    parts.append(f'<g fill="{fg}">')
+    for r in range(n):
+        for c in range(n):
+            if mat[r][c]:
+                x, y = c + border, r + border
+                if shape == "dots" and not _in_finder(r, c, n):
+                    parts.append(f'<circle cx="{x + .5}" cy="{y + .5}" r=".46"/>')
+                elif shape != "square":
+                    parts.append(f'<rect x="{x}" y="{y}" width="1" height="1" rx=".3"/>')
+                else:
+                    parts.append(f'<rect x="{x}" y="{y}" width="1" height="1"/>')
+    parts.append('</g></svg>')
+    return "\n".join(parts).encode("utf-8")
+
+
+def qr_to_png_bytes(img):
+    from io import BytesIO
+    b = BytesIO()
+    img.save(b, format="PNG", optimize=True)
+    return b.getvalue()
+
+
+def app_qr_generator():
+    import zipfile
+    from io import BytesIO
+    from datetime import datetime as _dt
+
+    st.title("🔳 Tạo Mã QR Đa Năng")
+    st.markdown("Tạo mã QR từ **đường link, Wi-Fi, danh thiếp, chuyển khoản ngân hàng (VietQR), email, SMS, bản đồ, lịch họp...** "
+                "hoặc **tạo hàng loạt từ file Excel**. Chạy ngay trên máy chủ, không gửi nội dung cho AI.")
+
+    tab_one, tab_batch = st.tabs(["🔳 Tạo từng mã", "📚 Tạo hàng loạt từ Excel/CSV"])
+
+    # ---------------- cấu hình giao diện chung ----------------
+    def style_panel(prefix):
+        with st.expander("🎨 Tùy chỉnh giao diện mã QR", expanded=False):
+            c1, c2 = st.columns(2)
+            with c1:
+                fg = st.color_picker("Màu mã", "#000000", key=f"{prefix}_fg")
+                grad = st.checkbox("Chuyển màu (gradient)", key=f"{prefix}_grad")
+                fg2 = st.color_picker("Màu thứ hai", "#003366", key=f"{prefix}_fg2") if grad else None
+                shape_lbl = st.radio("Kiểu điểm ảnh", ["Vuông", "Bo tròn", "Chấm tròn"], horizontal=True, key=f"{prefix}_shape")
+            with c2:
+                bg = st.color_picker("Màu nền", "#FFFFFF", key=f"{prefix}_bg")
+                transparent = st.checkbox("Nền trong suốt (PNG)", key=f"{prefix}_tr")
+                ecc = st.selectbox("Mức sửa lỗi", ["L (7%)", "M (15%)", "Q (25%)", "H (30%)"], index=1, key=f"{prefix}_ecc")
+                box = st.slider("Kích thước (độ lớn mỗi ô)", 8, 40, 20, key=f"{prefix}_box")
+            logo = st.file_uploader("Logo ở giữa (không bắt buộc, tự nâng mức sửa lỗi lên H)", type=["png", "jpg", "jpeg"], key=f"{prefix}_logo")
+            caption = st.text_input("Chữ dưới mã QR (không bắt buộc)", key=f"{prefix}_cap")
+        shape = {"Vuông": "square", "Bo tròn": "rounded", "Chấm tròn": "dots"}[shape_lbl]
+        low = fg2 if grad else None
+        # độ tương phản: mã sáng hơn nền thì máy quét thường không đọc được
+        def lum(h):
+            r, g, b = _hex_rgb(h)
+            return 0.299 * r + 0.587 * g + 0.114 * b
+        if not transparent and lum(fg) >= lum(bg):
+            st.warning("⚠️ Màu mã đang sáng hơn hoặc bằng màu nền, nhiều máy quét sẽ không đọc được. Nên dùng mã TỐI trên nền SÁNG.")
+        if not transparent and abs(lum(fg) - lum(bg)) < 90:
+            st.warning("⚠️ Độ tương phản giữa mã và nền thấp, hãy chọn màu đậm hơn.")
+        return dict(fg=fg, fg2=low, bg=bg, transparent=transparent, shape=shape, ecc=ecc[0], box=box,
+                    logo=logo.getvalue() if logo else None, caption=caption)
+
+    # ---------------- TAB 1 ----------------
+    with tab_one:
+        kinds = ["🔗 Đường link / Văn bản", "📶 Wi-Fi", "👤 Danh thiếp (vCard)", "🏦 Chuyển khoản VietQR",
+                 "✉️ Email", "💬 Tin nhắn SMS", "📞 Số điện thoại", "📍 Vị trí bản đồ", "📅 Sự kiện / Lịch họp"]
+        kind = st.selectbox("Bạn muốn mã QR chứa nội dung gì?", kinds)
+        data = ""
+        err = None
+        if kind == kinds[0]:
+            data = st.text_area("Nhập đường link hoặc nội dung văn bản:", height=100, placeholder="https://...")
+            if data.strip().lower().startswith("www."):
+                data = "https://" + data.strip()
+        elif kind == kinds[1]:
+            c1, c2 = st.columns(2)
+            ssid = c1.text_input("Tên Wi-Fi (SSID)")
+            pw = c2.text_input("Mật khẩu", type="password")
+            sec = c1.selectbox("Bảo mật", ["WPA/WPA2/WPA3", "WEP", "Không mật khẩu"])
+            hid = c2.checkbox("Wi-Fi ẩn")
+            if ssid:
+                t = {"WPA/WPA2/WPA3": "WPA", "WEP": "WEP", "Không mật khẩu": "nopass"}[sec]
+                data = f"WIFI:T:{t};S:{_esc_wifi(ssid)};" + (f"P:{_esc_wifi(pw)};" if t != "nopass" else "") + ("H:true;" if hid else "") + ";"
+        elif kind == kinds[2]:
+            c1, c2 = st.columns(2)
+            name = c1.text_input("Họ và tên")
+            org = c2.text_input("Đơn vị / Công ty")
+            title = c1.text_input("Chức vụ")
+            phone = c2.text_input("Điện thoại")
+            email = c1.text_input("Email")
+            web = c2.text_input("Website")
+            addr = st.text_input("Địa chỉ")
+            if name:
+                last, _, first = name.strip().rpartition(" ")
+                lines = ["BEGIN:VCARD", "VERSION:3.0", f"N:{_esc_vc(last)};{_esc_vc(first or name)};;;", f"FN:{_esc_vc(name)}"]
+                for k, v in (("ORG", org), ("TITLE", title), ("TEL;TYPE=CELL", phone), ("EMAIL", email), ("URL", web)):
+                    if v:
+                        lines.append(f"{k}:{_esc_vc(v)}")
+                if addr:
+                    lines.append(f"ADR:;;{_esc_vc(addr)};;;;")
+                lines.append("END:VCARD")
+                data = "\n".join(lines)
+        elif kind == kinds[3]:
+            c1, c2 = st.columns(2)
+            bank = c1.selectbox("Ngân hàng", list(QR_BANKS.keys()) + ["Khác (nhập mã BIN)"])
+            bin_code = QR_BANKS.get(bank) or c2.text_input("Mã BIN ngân hàng (6 số)")
+            acc = c1.text_input("Số tài khoản")
+            holder = c2.text_input("Tên chủ tài khoản (hiển thị dưới mã)")
+            amount = c1.number_input("Số tiền (0 = để người chuyển tự nhập)", min_value=0, step=10000, value=0)
+            note = c2.text_input("Nội dung chuyển khoản (tối đa 25 ký tự)", max_chars=25)
+            if acc and bin_code and bin_code.isdigit():
+                data = qr_vietqr_payload(bin_code, acc.strip(), amount, note)
+            st.caption("Mã theo chuẩn VietQR, quét được bằng app ngân hàng. Hãy chuyển thử 1 khoản nhỏ để kiểm tra trước khi gửi cho nhiều người.")
+        elif kind == kinds[4]:
+            to = st.text_input("Gửi đến (email)")
+            sub = st.text_input("Tiêu đề")
+            body = st.text_area("Nội dung", height=80)
+            from urllib.parse import quote
+            if to:
+                data = f"mailto:{to}?subject={quote(sub)}&body={quote(body)}"
+        elif kind == kinds[5]:
+            ph = st.text_input("Số điện thoại nhận")
+            msg = st.text_area("Nội dung tin nhắn", height=80)
+            if ph:
+                data = f"SMSTO:{ph}:{msg}"
+        elif kind == kinds[6]:
+            ph = st.text_input("Số điện thoại")
+            if ph:
+                data = f"tel:{ph}"
+        elif kind == kinds[7]:
+            mode = st.radio("Nhập theo:", ["Tọa độ", "Link Google Maps"], horizontal=True)
+            if mode == "Tọa độ":
+                c1, c2 = st.columns(2)
+                lat = c1.text_input("Vĩ độ (VD: 10.7769)")
+                lon = c2.text_input("Kinh độ (VD: 106.7009)")
+                if lat and lon:
+                    data = f"geo:{lat.strip()},{lon.strip()}"
+            else:
+                data = st.text_input("Dán link Google Maps")
+        elif kind == kinds[8]:
+            c1, c2 = st.columns(2)
+            title = c1.text_input("Tên sự kiện")
+            loc = c2.text_input("Địa điểm")
+            d1 = c1.date_input("Ngày bắt đầu")
+            t1 = c1.time_input("Giờ bắt đầu", value=_dt(2000, 1, 1, 8, 0).time())
+            d2 = c2.date_input("Ngày kết thúc", value=d1)
+            t2 = c2.time_input("Giờ kết thúc", value=_dt(2000, 1, 1, 9, 0).time())
+            desc = st.text_area("Mô tả", height=70)
+            if title:
+                f = lambda d, t: _dt.combine(d, t).strftime("%Y%m%dT%H%M%S")
+                data = ("BEGIN:VCALENDAR\nVERSION:2.0\nBEGIN:VEVENT\n" f"SUMMARY:{_esc_vc(title)}\n"
+                        f"DTSTART:{f(d1, t1)}\nDTEND:{f(d2, t2)}\n" + (f"LOCATION:{_esc_vc(loc)}\n" if loc else "")
+                        + (f"DESCRIPTION:{_esc_vc(desc)}\n" if desc else "") + "END:VEVENT\nEND:VCALENDAR")
+
+        opts = style_panel("one")
+        if kind == kinds[3] and not opts["caption"] and locals().get("holder"):
+            opts["caption"] = holder.upper()
+
+        st.markdown("---")
+        if not data.strip():
+            st.info("👆 Hãy nhập thông tin ở trên, mã QR sẽ hiện ra tại đây.")
+        else:
+            try:
+                img = qr_render(data, opts["ecc"], opts["box"], 4, opts["fg"], opts["fg2"], opts["bg"],
+                                opts["transparent"], opts["shape"], opts["logo"], opts["caption"])
+                cl, cr = st.columns([1, 1])
+                with cl:
+                    st.image(img, caption=f"Kích thước: {img.width}×{img.height}px", use_container_width=True)
+                with cr:
+                    st.success("✅ Đã tạo mã QR. Nên dùng điện thoại quét thử trước khi gửi.")
+                    if len(data) > 1200:
+                        st.warning("Nội dung khá dài nên mã QR sẽ rất dày, khó quét. Hãy rút gọn nội dung hoặc dùng link ngắn.")
+                    fname = "QR_" + _dt.now().strftime("%Y%m%d_%H%M%S")
+                    st.download_button("📥 Tải PNG", qr_to_png_bytes(img), f"{fname}.png", "image/png", type="primary", use_container_width=True)
+                    st.download_button("📥 Tải SVG (in ấn, phóng to không vỡ)",
+                                       qr_svg(data, opts["ecc"], 4, opts["fg"], opts["bg"], opts["transparent"], opts["shape"]),
+                                       f"{fname}.svg", "image/svg+xml", use_container_width=True)
+                    st.caption("SVG chỉ giữ 1 màu, không kèm logo và chữ.")
+            except Exception as e:
+                st.error(f"Không tạo được mã QR: {e}")
+
+    # ---------------- TAB 2 ----------------
+    with tab_batch:
+        st.markdown("Tải file **Excel/CSV**, chọn cột chứa nội dung (link, mã sản phẩm, số tài sản...). Mỗi dòng sẽ ra **1 mã QR**, đóng gói thành file ZIP.")
+        up = st.file_uploader("Tải lên file Excel (.xlsx) hoặc CSV:", type=["xlsx", "csv"], key=f"app11_{st.session_state.uploader_key}")
+        if up:
+            try:
+                df = pd.read_csv(up, dtype=str) if up.name.lower().endswith(".csv") else pd.read_excel(up, dtype=str)
+                df = df.fillna("")
+                st.dataframe(df.head(8), use_container_width=True)
+                st.caption(f"Tổng cộng {len(df)} dòng.")
+                cols = list(df.columns)
+                c1, c2 = st.columns(2)
+                col_data = c1.selectbox("Cột chứa NỘI DUNG mã QR:", cols)
+                col_name = c2.selectbox("Cột dùng đặt TÊN file (và chữ dưới mã):", ["(Số thứ tự)"] + cols)
+                with_cap = st.checkbox("In chữ ở cột tên dưới mỗi mã QR", value=True)
+                opts_b = style_panel("bat")
+                if len(df) > 500:
+                    st.warning("Trên 500 dòng sẽ xử lý khá lâu, nên chia nhỏ file.")
+                if st.button("🚀 Tạo hàng loạt", type="primary"):
+                    bar = st.progress(0.0)
+                    zbuf, used, fails = BytesIO(), set(), []
+                    with zipfile.ZipFile(zbuf, "w", zipfile.ZIP_DEFLATED) as zf:
+                        for i, row in df.reset_index(drop=True).iterrows():
+                            val = str(row[col_data]).strip()
+                            if not val:
+                                fails.append(f"Dòng {i + 2}: nội dung trống")
+                                continue
+                            label = str(row[col_name]).strip() if col_name != "(Số thứ tự)" else f"{i + 1:03d}"
+                            safe = re.sub(r'[\\/:*?"<>|\n\r]+', "_", label)[:60] or f"{i + 1:03d}"
+                            base, k = safe, 1
+                            while safe in used:
+                                k += 1
+                                safe = f"{base}_{k}"
+                            used.add(safe)
+                            try:
+                                im = qr_render(val, opts_b["ecc"], opts_b["box"], 4, opts_b["fg"], opts_b["fg2"], opts_b["bg"],
+                                               opts_b["transparent"], opts_b["shape"], opts_b["logo"],
+                                               label if (with_cap and col_name != "(Số thứ tự)") else "")
+                                zf.writestr(f"{safe}.png", qr_to_png_bytes(im))
+                            except Exception as e:
+                                fails.append(f"Dòng {i + 2}: {str(e)[:60]}")
+                            bar.progress((i + 1) / len(df))
+                    bar.empty()
+                    st.success(f"🎉 Đã tạo {len(used) - 0} mã QR.")
+                    for f_ in fails[:20]:
+                        st.warning(f_)
+                    st.download_button("📥 Tải ZIP các mã QR", zbuf.getvalue(), "QR_HangLoat.zip", "application/zip", type="primary")
+            except Exception as e:
+                st.error(f"Lỗi đọc file: {e}")
+
 # ==========================================                        
 # 5. KÍCH HOẠT ỨNG DỤNG THEO LỰA CHỌN MENU
 # ==========================================
@@ -2209,5 +2645,7 @@ elif "8. Xoay Trang PDF" in app_mode:
     app_rotate_pdf()
 elif "9. Xóa Siêu Dữ Liệu" in app_mode:
     app_metadata_cleaner()
-elif "10. Tách Nền Chữ Ký" in app_mode:       # DÒNG THÊM MỚI
-    app_signature_extractor()                  # DÒNG THÊM MỚI
+elif "10. Tách Nền Chữ Ký" in app_mode:
+    app_signature_extractor()
+elif "11. Tạo Mã QR" in app_mode:
+    app_qr_generator()
