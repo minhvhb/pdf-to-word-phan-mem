@@ -1155,7 +1155,10 @@ def _p2w_mark_size(p, half_points):
     if rPr is None:
         rPr = OxmlElement("w:rPr")
         sect = pPr.find(qn("w:sectPr"))
-        (sect.addprevious(rPr) if sect is not None else pPr.append(rPr))
+        if sect is not None:
+            sect.addprevious(rPr)
+        else:
+            pPr.append(rPr)
     for tag in ("w:sz", "w:szCs"):
         el = rPr.find(qn(tag))
         if el is None:
@@ -1268,7 +1271,10 @@ def _p2w_tbl_props(tbl, ind_pt, width_pt, borders, mar_lr, mar_tb):
         mar.append(e)
     look = tblPr.find(qn("w:tblLook"))
     for el in (tblW, ind, lay, mar):
-        (look.addprevious(el) if look is not None else tblPr.append(el))
+        if look is not None:
+            look.addprevious(el)
+        else:
+            tblPr.append(el)
     if borders:
         tbl.style = "Table Grid"
 
@@ -1645,22 +1651,48 @@ def _p2w_words(text):
     return _re.findall(r"\w+", _ud.normalize("NFC", text).lower())
 
 
-def p2w_text_coverage(pdf_bytes, docx_bytes):
-    """So khớp từng từ giữa chữ trong PDF và chữ trong file Word -> (tỉ lệ phủ, số từ PDF, số từ thiếu, số từ thừa)."""
+def _p2w_tokens(text):
+    text = _re.sub(r"\(cid:\d+\)", " ", text)
+    text = "".join(ch for ch in text if not (0xE000 <= ord(ch) <= 0xF8FF))
+    return [(_ud.normalize("NFC", w).lower(), w) for w in _re.findall(r"\w+", text)]
+
+
+def p2w_text_diff(pdf_bytes, docx_bytes):
+    """So khớp từng từ PDF <-> Word. Trả về dict: cov, n, miss, extra, missing[{word,page,ctx}], extra[{word,ctx}]."""
     import pdfplumber
     from docx import Document
     OxmlElement, _, qn, _ = _p2w_xml()
+    pt = []                                            # (norm, orig, page)
     with pdfplumber.open(_io.BytesIO(pdf_bytes)) as pdf:
-        pw = []
-        for p in pdf.pages:
-            pw += _p2w_words(" ".join(c["text"] if not c["text"].isspace() else " " for c in p.chars)) if False else \
-                _p2w_words(p.extract_text() or "")
+        for pi, p in enumerate(pdf.pages):
+            pt += [(n, o, pi + 1) for n, o in _p2w_tokens(p.extract_text() or "")]
     d = Document(_io.BytesIO(docx_bytes))
-    dw = _p2w_words(" ".join((t.text or "") for t in d.element.body.iter(qn("w:t"))))
-    a, b = _Counter(pw), _Counter(dw)
-    hit = sum((a & b).values())
-    total = max(sum(a.values()), 1)
-    return hit / total, sum(a.values()), sum((a - b).values()), sum((b - a).values())
+    parts = []
+    for el in d.element.body.iter():
+        if el.tag == qn("w:t"):
+            parts.append(el.text or "")
+        elif el.tag in (qn("w:br"), qn("w:tab"), qn("w:p"), qn("w:tc")):
+            parts.append(" ")
+    dt = _p2w_tokens("".join(parts))
+    a, b = _Counter(n for n, _, _ in pt), _Counter(n for n, _ in dt)
+    miss_c, extra_c = a - b, b - a
+    missing, extra = [], []
+    for k, (n, o, pg) in enumerate(pt):
+        if miss_c.get(n, 0) > 0:
+            miss_c[n] -= 1
+            missing.append({"word": o, "page": pg, "ctx": " ".join(x[1] for x in pt[max(0, k - 4):k + 5])})
+    for k, (n, o) in enumerate(dt):
+        if extra_c.get(n, 0) > 0:
+            extra_c[n] -= 1
+            extra.append({"word": o, "ctx": " ".join(x[1] for x in dt[max(0, k - 4):k + 5])})
+    total = max(len(pt), 1)
+    return {"cov": (len(pt) - len(missing)) / total, "n": len(pt), "miss": len(missing), "extra": len(extra),
+            "missing": missing, "extra_list": extra}
+
+
+def p2w_text_coverage(pdf_bytes, docx_bytes):
+    r = p2w_text_diff(pdf_bytes, docx_bytes)
+    return r["cov"], r["n"], r["miss"], r["extra"]
 
 
 
@@ -1675,9 +1707,14 @@ def app_pdf_to_word_offline():
     with c1:
         engine = st.radio("Bộ máy chuyển đổi:", ["🅱️ Giữ đúng vị trí (khuyên dùng)", "🅰️ pdf2docx (dễ chỉnh sửa)", "⚖️ Cả hai (tải ZIP để so sánh)"], key="p2w_engine")
     with c2:
-        reflow = st.checkbox("Cho phép chữ tự xuống dòng (dễ sửa hơn, có thể lệch ngắt dòng)", value=False, key="p2w_reflow")
-        prefer_text = st.checkbox("PDF scan có lớp chữ (searchable): ưu tiên chữ gõ được", value=False, key="p2w_pt")
-        dpi = st.select_slider("Độ nét hình ảnh (DPI):", options=[150, 200, 300], value=200, key="p2w_dpi")
+        reflow = st.checkbox("Chữ tự xuống dòng (dễ sửa)", value=False, key="p2w_reflow",
+                             help="TẮT (khuyên dùng): mỗi dòng PDF = 1 dòng Word, giống PDF nhất nhưng khi sửa chữ có thể phải xuống dòng thủ công. "
+                                  "BẬT: Word tự dồn chữ, sửa thoải mái hơn nhưng điểm ngắt dòng có thể lệch so với PDF.")
+        prefer_text = st.checkbox("PDF scan có lớp chữ: lấy chữ gõ được", value=False, key="p2w_pt",
+                                  help="Chỉ bật khi PDF là bản scan nhưng đã được OCR (bôi đen chọn được chữ) và bạn muốn sửa chữ. "
+                                       "TẮT: trang scan giữ nguyên là ảnh nên giống bản gốc 100% nhưng không sửa được chữ.")
+        dpi = st.select_slider("Độ nét hình ảnh (DPI):", options=[150, 200, 300], value=200, key="p2w_dpi",
+                               help="150: file nhẹ. 200 (khuyên dùng): cân bằng. 300: hình/con dấu nét hơn để in, file nặng và chạy chậm hơn.")
     if not up:
         st.info("💡 PDF tạo từ Word/Excel cho kết quả ~100%. PDF scan (ảnh) sẽ được giữ nguyên dạng ảnh; muốn chữ sửa được hãy dùng App 1 (AI online).")
         return
@@ -1713,8 +1750,17 @@ def app_pdf_to_word_offline():
     for k, (d, rpt) in outs.items():
         name = "Giữ đúng vị trí" if k == "B" else "pdf2docx"
         try:
-            cov, n_pdf, miss, extra = p2w_text_coverage(res["pdf"], d)
-            st.success(f"✅ {name}: khớp {cov*100:.1f}% chữ ({n_pdf - miss}/{n_pdf} từ), thiếu {miss}, thừa {extra}.")
+            df = p2w_text_diff(res["pdf"], d)
+            if df["miss"] == 0 and df["extra"] == 0:
+                st.success(f"✅ {name}: khớp 100% chữ ({df['n']} từ).")
+            else:
+                st.warning(f"⚠️ {name}: khớp {df['cov']*100:.2f}% chữ ({df['n'] - df['miss']}/{df['n']} từ). "
+                           f"Thiếu {df['miss']} từ (có trong PDF nhưng không thấy trong Word), thừa {df['extra']} từ (có trong Word nhưng không có trong PDF).")
+                with st.expander("🔎 Xem các từ cần kiểm tra trong file Word (Ctrl+F để tìm)", expanded=True):
+                    for m_ in df["missing"][:30]:
+                        st.markdown(f"- **Thiếu** `{m_['word']}` — PDF trang {m_['page']}: …{m_['ctx']}…")
+                    for e_ in df["extra_list"][:30]:
+                        st.markdown(f"- **Thừa** `{e_['word']}` — trong Word: …{e_['ctx']}…")
         except Exception:
             st.success(f"✅ {name}: đã chuyển xong.")
         for w in rpt[:10]:
