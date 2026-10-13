@@ -12,3 +12,4 @@ PyYAML
 PyMuPDF
 pdf2docx
 opencv-python-headless
+qrcode
