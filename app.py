@@ -536,6 +536,38 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
+# --- Giao diện chữ lớn, dễ đọc cho toàn bộ ứng dụng (người dùng lớn tuổi) ---
+st.markdown("""
+    <style>
+        [data-testid="stMainBlockContainer"], .block-container { max-width: 1050px !important; }
+        [data-testid="stMain"] p, [data-testid="stMain"] li, .main p, .main li { font-size: 1.12rem; line-height: 1.6; }
+        [data-testid="stMain"] h1, .main h1 { font-size: 2.1rem !important; line-height: 1.25; }
+        [data-testid="stMain"] h2, .main h2 { font-size: 1.7rem !important; }
+        [data-testid="stMain"] h3, .main h3 { font-size: 1.4rem !important; margin-top: .8rem; }
+        [data-testid="stMain"] h4, .main h4 { font-size: 1.2rem !important; }
+        [data-testid="stWidgetLabel"] p, [data-testid="stWidgetLabel"] label { font-size: 1.12rem !important; font-weight: 600 !important; }
+        [data-testid="stRadio"] label p, [data-testid="stCheckbox"] label p, [data-testid="stToggle"] label p { font-size: 1.1rem !important; font-weight: 500 !important; }
+        [data-testid="stRadio"] label, [data-testid="stCheckbox"] label { padding-top: .2rem; padding-bottom: .2rem; }
+        input, textarea, [data-baseweb="select"] div { font-size: 1.1rem !important; }
+        input, [data-baseweb="select"] > div { min-height: 2.9rem; }
+        .stButton button, .stDownloadButton button { min-height: 3rem; font-size: 1.1rem !important; font-weight: 600; border-radius: 10px; }
+        .stButton button p, .stDownloadButton button p { font-size: 1.1rem !important; font-weight: 600; }
+        [data-testid="stCaptionContainer"] p, small, .stCaption { font-size: 1rem !important; }
+        button[data-baseweb="tab"] p { font-size: 1.15rem !important; font-weight: 600; }
+        button[data-baseweb="tab"] { padding: .7rem 1.1rem; }
+        [data-testid="stFileUploaderDropzone"] { padding: 1.1rem; border-width: 2px; }
+        [data-testid="stFileUploaderDropzone"] small, [data-testid="stFileUploaderDropzone"] span { font-size: 1rem !important; }
+        [data-testid="stFileUploaderDropzone"] button { min-height: 2.8rem; font-size: 1.05rem !important; }
+        [data-testid="stFileUploaderFile"] * { font-size: 1.02rem !important; }
+        [data-testid="stAlert"] p { font-size: 1.08rem !important; }
+        [data-testid="stExpander"] summary p { font-size: 1.12rem !important; font-weight: 600; }
+        [data-testid="stSliderThumbValue"], [data-testid="stSliderTickBarMin"], [data-testid="stSliderTickBarMax"] { font-size: 1.05rem !important; }
+        [data-testid="stSidebar"] [data-testid="stRadio"] label p { font-size: 1.05rem !important; }
+        [data-testid="stSidebar"] h3 { font-size: 1.25rem !important; }
+        [data-testid="stDataFrame"], [data-testid="stTable"] { font-size: 1rem; }
+    </style>
+""", unsafe_allow_html=True)
+
 col1, col2, col3 = st.sidebar.columns([1, 2, 1])
 with col2:
     authenticator.logout('Đăng xuất', 'main')
@@ -2412,7 +2444,10 @@ def app_pdf_image_tools():
                                         help="Ảnh chụp điện thoại thường rất nặng (3–6 MB/ảnh). 'Cân bằng' giảm mạnh dung lượng mà chữ vẫn rõ.")
                 with c2:
                     clar = st.checkbox("Làm rõ ảnh chụp giấy tờ (đen trắng, nền giấy trắng hơn)", value=False, key="pi_clar")
-                pdf_name = st.text_input("Tên file PDF xuất ra:", value="Tai_lieu.pdf", key="pi_name")
+                st.markdown("#### ✏️ Đặt tên cho file PDF")
+                st.caption("Bạn có thể xóa tên mẫu và gõ tên mình muốn, ví dụ: **Ho_so_Nguyen_Van_A** (không cần gõ đuôi .pdf, app tự thêm).")
+                pdf_name = st.text_input("Tên file PDF (có thể sửa):", value="Tai_lieu", key="pi_name")
+                pdf_name = (pdf_name.strip() or "Tai_lieu")
                 if not pdf_name.lower().endswith(".pdf"):
                     pdf_name += ".pdf"
                 if st.button(f"🚀 Tạo PDF ({len(seq)} trang)", type="primary", key="pi_go2"):
@@ -3384,7 +3419,8 @@ def app_pdf_split_merge():
                         st.rerun()
 
             st.markdown("---")
-            merge_name = st.text_input("Tên file PDF sau khi ghép nối:", value="Tai_Lieu_Ghep_Tong_Hop.pdf")
+            st.caption("✏️ Bạn có thể sửa tên file bên dưới theo ý mình, ví dụ: Hop_dong_thang_10.pdf")
+            merge_name = st.text_input("Tên file PDF sau khi ghép nối (có thể sửa):", value="Tai_Lieu_Ghep_Tong_Hop.pdf")
             if not merge_name.lower().endswith(".pdf"):
                 merge_name += ".pdf"
 
@@ -3792,7 +3828,8 @@ def app_compress_and_zip():
                          help="Chỉ áp dụng cho ảnh trong file; chữ và bảng không bị ảnh hưởng.")
         split = st.checkbox("Tự chia thành nhiều file ZIP nếu vượt ngưỡng", value=True, key="zp_split")
 
-    zip_name = st.text_input("Tên file ZIP xuất ra:", value="Tai_Lieu_Gui_Mail.zip")
+    st.caption("✏️ Bạn có thể sửa tên file ZIP bên dưới theo ý mình, ví dụ: Bao_cao_thang_10.zip")
+    zip_name = st.text_input("Tên file ZIP (có thể sửa):", value="Tai_Lieu_Gui_Mail.zip")
     if not zip_name.lower().endswith(".zip"):
         zip_name += ".zip"
 
@@ -4678,40 +4715,3 @@ def app_qr_generator():
                     with zipfile.ZipFile(zbuf, "w", zipfile.ZIP_DEFLATED) as zf:
                         for i, row in df.reset_index(drop=True).iterrows():
                             val = str(row[col_data]).strip()
-                            if not val:
-                                fails.append(f"Dòng {i + 2}: nội dung trống")
-                                continue
-                            label = str(row[col_name]).strip() if col_name != "(Số thứ tự)" else f"{i + 1:03d}"
-                            safe = re.sub(r'[\\/:*?"<>|\n\r]+', "_", label)[:60] or f"{i + 1:03d}"
-                            base, k = safe, 1
-                            while safe in used:
-                                k += 1
-                                safe = f"{base}_{k}"
-                            used.add(safe)
-                            try:
-                                im = qr_render(val, opts_b["ecc"], opts_b["box"], 4, opts_b["fg"], opts_b["fg2"], opts_b["bg"],
-                                               opts_b["transparent"], opts_b["shape"], opts_b["logo"],
-                                               label if (with_cap and col_name != "(Số thứ tự)") else "")
-                                zf.writestr(f"{safe}.png", qr_to_png_bytes(im))
-                            except Exception as e:
-                                fails.append(f"Dòng {i + 2}: {str(e)[:60]}")
-                            bar.progress((i + 1) / len(df))
-                    bar.empty()
-                    st.success(f"🎉 Đã tạo {len(used) - 0} mã QR.")
-                    for f_ in fails[:20]:
-                        st.warning(f_)
-                    st.download_button("📥 Tải ZIP các mã QR", zbuf.getvalue(), "QR_HangLoat.zip", "application/zip", type="primary")
-            except Exception as e:
-                st.error(f"Lỗi đọc file: {e}")
-
-# ==========================================                        
-# 5. KÍCH HOẠT ỨNG DỤNG THEO LỰA CHỌN MENU
-# ==========================================
-if menu_group.startswith("🌐"):
-    _routes = [app_pdf_to_word, app_number_3, app_document_compare, app_excel_expert]
-    _routes[ZP_MENU_ONLINE.index(app_mode)]()
-else:
-    _routes = [app_number_2, app_pdf_split_merge, app_compress_and_zip, app_rotate_pdf,
-               app_metadata_cleaner, app_signature_extractor, app_qr_generator, app_pdf_to_word_offline,
-               app_pdf_image_tools]
-    _routes[ZP_MENU_OFFLINE.index(app_mode)]()
