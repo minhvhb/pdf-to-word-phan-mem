@@ -1963,6 +1963,7 @@ ZP_MENU_OFFLINE = [
     "🔳 7. Tạo Mã QR",
     "📝 8. PDF sang Word (giữ bố cục)",
     "🖼️ 9. PDF ↔ Ảnh",
+    "📨 10. Trộn thư (Mail Merge)",
 ]
 menu_group = st.sidebar.radio(
     "Nhóm công cụ:",
@@ -2470,6 +2471,461 @@ def app_pdf_image_tools():
                 st.warning("File PDF trên 18 MB, có thể không gửi được qua email công ty. Chọn 'Nhẹ – để gửi email' hoặc nén thêm bằng công cụ Nén & Đóng Gói ZIP.")
             st.download_button(f"📥 Tải {nm}", b, file_name=nm, mime="application/pdf", key="pi_dl2")
     st.button("🗑️ Xóa & làm mới", on_click=clear_file, key="pi_clear")
+
+
+# ==========================================
+# CÔNG CỤ: TRỘN THƯ (MAIL MERGE) - OFFLINE
+#  Mẫu Word có {{Tên cột}} + bảng Excel/CSV  ->  mỗi dòng 1 văn bản (ZIP) hoặc gộp 1 file
+# ==========================================
+MM_PH = re.compile(r"\{\{\s*(.+?)\s*\}\}")
+MM_BUILTIN = {"stt": "Số thứ tự dòng (tự động)", "ngày hôm nay": "Ngày hôm nay (tự động)"}
+
+
+def mm_norm(s):
+    return re.sub(r"\s+", " ", str(s)).strip().casefold()
+
+
+def _mm_paragraph_runs(p):
+    """Các run chứa chữ của 1 đoạn (kể cả trong hyperlink), không lấn sang đoạn lồng bên trong."""
+    from docx.oxml.ns import qn
+    runs = []
+    for ch in p:
+        if ch.tag == qn("w:r"):
+            runs.append(ch)
+        elif ch.tag in (qn("w:hyperlink"), qn("w:ins"), qn("w:smartTag"), qn("w:sdt")):
+            runs += [r for r in ch.iter(qn("w:r"))]
+    return runs
+
+
+def _mm_segments(p):
+    """Danh sách các thẻ w:t (từng mẩu chữ) của đoạn, theo đúng thứ tự hiển thị."""
+    from docx.oxml.ns import qn
+    segs = []
+    for r in _mm_paragraph_runs(p):
+        segs += r.findall(qn("w:t"))
+    return segs
+
+
+def _mm_set_t_text(t, text):
+    """Ghi chữ mới vào 1 thẻ w:t; nếu có xuống dòng thì chèn w:br ngay sau, giữ nguyên thẻ tab/br khác."""
+    from docx.oxml import OxmlElement
+    XML = "{http://www.w3.org/XML/1998/namespace}space"
+    parts = text.split("\n")
+    t.text = parts[0]
+    t.set(XML, "preserve")
+    last = t
+    for part in parts[1:]:
+        br = OxmlElement("w:br")
+        nt = OxmlElement("w:t")
+        nt.text = part
+        nt.set(XML, "preserve")
+        last.addnext(br)
+        br.addnext(nt)
+        last = nt
+
+
+def mm_iter_paragraphs(root):
+    from docx.oxml.ns import qn
+    return list(root.iter(qn("w:p")))
+
+
+def mm_paragraph_text(p):
+    return "".join((t.text or "") for t in _mm_segments(p))
+
+
+def mm_find_placeholders(roots):
+    found = OrderedDict()
+    for root in roots:
+        for p in mm_iter_paragraphs(root):
+            for m in MM_PH.finditer(mm_paragraph_text(p)):
+                found.setdefault(mm_norm(m.group(1)), m.group(1).strip())
+    return found      # {khóa chuẩn hóa: tên hiển thị}
+
+
+def mm_replace_in_paragraph(p, getter):
+    """Thay các {{...}} trong 1 đoạn, kể cả khi Word cắt nhỏ chữ thành nhiều run; giữ định dạng của run đầu tiên."""
+    runs = _mm_segments(p)
+    if not runs:
+        return 0
+    texts = [(t.text or "") for t in runs]
+    full = "".join(texts)
+    if "{{" not in full:
+        return 0
+    starts, pos = [], 0
+    for t in texts:
+        starts.append(pos)
+        pos += len(t)
+
+    def owner(i):
+        k = 0
+        for j, s in enumerate(starts):
+            if s <= i:
+                k = j
+        return k
+
+    n = 0
+    new = list(texts)
+    for m in reversed(list(MM_PH.finditer(full))):
+        rep = getter(m.group(1))
+        if rep is None:
+            continue
+        a, b = m.start(), m.end()
+        ra, rb = owner(a), owner(b - 1)
+        ao, bo = a - starts[ra], b - starts[rb]
+        if ra == rb:
+            new[ra] = new[ra][:ao] + rep + new[ra][bo:]
+        else:
+            new[ra] = new[ra][:ao] + rep
+            new[rb] = new[rb][bo:]
+            for k in range(ra + 1, rb):
+                new[k] = ""
+        n += 1
+    for r, old, nw in zip(runs, texts, new):
+        if old != nw:
+            _mm_set_t_text(r, nw)
+    return n
+
+
+def mm_replace_in_root(root, getter):
+    return sum(mm_replace_in_paragraph(p, getter) for p in mm_iter_paragraphs(root))
+
+
+def mm_template_roots(doc):
+    roots = [doc.element.body]
+    seen = set()
+    for sec in doc.sections:
+        for part in (sec.header, sec.footer, sec.first_page_header, sec.first_page_footer,
+                     sec.even_page_header, sec.even_page_footer):
+            try:
+                el = part._element
+            except Exception:
+                continue
+            if id(el) not in seen:
+                seen.add(id(el))
+                roots.append(el)
+    return roots
+
+
+def mm_clean_value(v):
+    """Giá trị ô Excel -> chữ hiển thị (ngày dd/mm/yyyy, bỏ .0 của số nguyên)."""
+    if v is None:
+        return ""
+    s = str(v).strip()
+    if s.lower() in ("nan", "nat", "none"):
+        return ""
+    m = re.fullmatch(r"(\d{4})-(\d{2})-(\d{2})(?:[ T]00:00:00(?:\.0+)?)?", s)
+    if m:
+        return f"{m.group(3)}/{m.group(2)}/{m.group(1)}"
+    if re.fullmatch(r"-?\d+\.0+", s):
+        s = s.split(".")[0]
+    return s
+
+
+def mm_money(s):
+    """'1234567' -> '1.234.567' ; '1234.5' -> '1.234,5'. Không phải số thì giữ nguyên."""
+    t = str(s).replace(" ", "")
+    if re.fullmatch(r"-?\d+", t):
+        return f"{int(t):,}".replace(",", ".")
+    if re.fullmatch(r"-?\d+\.\d+", t):
+        ip, fp = t.split(".")
+        return f"{int(ip):,}".replace(",", ".") + "," + fp.rstrip("0") if fp.rstrip("0") else f"{int(ip):,}".replace(",", ".")
+    return s
+
+
+def mm_read_table(data, name, sheet=None):
+    bio = BytesIO(data)
+    if name.lower().endswith((".xlsx", ".xlsm", ".xls")):
+        df = pd.read_excel(bio, sheet_name=sheet or 0, dtype=str)
+    else:
+        for enc in ("utf-8-sig", "utf-8", "cp1258", "latin-1"):
+            try:
+                bio.seek(0)
+                df = pd.read_csv(bio, dtype=str, encoding=enc, sep=None, engine="python")
+                break
+            except Exception:
+                continue
+        else:
+            raise ValueError("Không đọc được file CSV")
+    df = df.dropna(how="all")
+    df.columns = [str(c).strip() for c in df.columns]
+    df = df.loc[:, [c for c in df.columns if not c.lower().startswith("unnamed")]]
+    return df.reset_index(drop=True)
+
+
+def mm_make_getter(row, stt, mapping, money_cols):
+    """mapping: {khóa chuẩn hóa của placeholder: tên cột}. Trả về hàm cho giá trị thay thế (None = giữ nguyên)."""
+    today = datetime.now().strftime("%d/%m/%Y")
+
+    def getter(name):
+        k = mm_norm(name)
+        if k == "stt" and not mapping.get(k):
+            return str(stt)
+        if k == "ngày hôm nay" and not mapping.get(k):
+            return today
+        col = mapping.get(k)
+        if not col:
+            return None
+        v = mm_clean_value(row.get(col, ""))
+        if col in money_cols:
+            v = mm_money(v)
+        return v
+    return getter
+
+
+def mm_build_single(template_bytes, getter):
+    doc = Document(BytesIO(template_bytes))
+    for root in mm_template_roots(doc):
+        mm_replace_in_root(root, getter)
+    buf = BytesIO()
+    doc.save(buf)
+    return buf.getvalue()
+
+
+def mm_build_combined(template_bytes, getters):
+    """Lặp thân mẫu cho từng dòng trong CÙNG 1 file (mỗi dòng 1 trang mới). Đầu/chân trang dùng dòng đầu tiên."""
+    import copy
+    from docx.oxml.ns import qn
+    from docx.oxml import OxmlElement
+    doc = Document(BytesIO(template_bytes))
+    body = doc.element.body
+    sect = body.find(qn("w:sectPr"))
+    orig = [c for c in body if c.tag != qn("w:sectPr")]
+    for c in orig:
+        body.remove(c)
+    for i, g in enumerate(getters):
+        if i:
+            p = OxmlElement("w:p")
+            r = OxmlElement("w:r")
+            br = OxmlElement("w:br")
+            br.set(qn("w:type"), "page")
+            r.append(br)
+            p.append(r)
+            if sect is not None:
+                sect.addprevious(p)
+            else:
+                body.append(p)
+        for c in orig:
+            cp = copy.deepcopy(c)
+            if sect is not None:
+                sect.addprevious(cp)
+            else:
+                body.append(cp)
+            for p in ([cp] if cp.tag == qn("w:p") else []) + list(cp.iter(qn("w:p"))):
+                mm_replace_in_paragraph(p, g)
+    for root in mm_template_roots(doc)[1:]:
+        mm_replace_in_root(root, getters[0])
+    buf = BytesIO()
+    doc.save(buf)
+    return buf.getvalue()
+
+
+def mm_safe_name(s, maxlen=80):
+    s = re.sub(r'[\\/:*?"<>|\r\n\t]+', "_", str(s)).strip(" ._")
+    return (s or "van_ban")[:maxlen]
+
+
+def mm_sample_files():
+    d = Document()
+    d.add_paragraph("CÔNG TY / ĐƠN VỊ: ……………………").runs[0].bold = True
+    p = d.add_paragraph("GIẤY MỜI")
+    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    p.runs[0].bold = True
+    p.runs[0].font.size = Pt(16)
+    d.add_paragraph("Kính gửi: {{Họ tên}} – {{Chức vụ}} – {{Phòng ban}}")
+    d.add_paragraph("Đơn vị trân trọng kính mời Ông/Bà tham dự cuộc họp vào ngày {{Ngày họp}}, tại {{Địa điểm}}.")
+    d.add_paragraph("Số thứ tự: {{STT}}. Ngày lập: {{Ngày hôm nay}}.")
+    bd = BytesIO()
+    d.save(bd)
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "DanhSach"
+    ws.append(["Họ tên", "Chức vụ", "Phòng ban", "Ngày họp", "Địa điểm"])
+    ws.append(["Nguyễn Văn An", "Trưởng phòng", "Phòng Nghiệp vụ", "20/10/2026", "Phòng họp tầng 2"])
+    ws.append(["Trần Thị Bình", "Nhân viên", "Phòng KCS", "20/10/2026", "Phòng họp tầng 2"])
+    ws.append(["Lê Văn Cường", "Quản đốc", "Phân xưởng", "20/10/2026", "Phòng họp tầng 2"])
+    bx = BytesIO()
+    wb.save(bx)
+    return bd.getvalue(), bx.getvalue()
+
+
+def app_mail_merge():
+    st.title("📨 Trộn thư (Mail Merge)")
+    st.markdown("Soạn **1 mẫu Word**, có chỗ trống dạng `{{Họ tên}}`, rồi nối với **bảng Excel** – app tự tạo ra "
+                "**mỗi người một văn bản** (giấy mời, thông báo, quyết định, phiếu, thư cảm ơn…). Chạy trên máy chủ nội bộ, không dùng AI.")
+
+    st.markdown("### Bước 1: Chọn file Word mẫu")
+    st.caption("Trong file Word, chỗ nào cần thay tên/số liệu thì gõ **{{tên cột trong Excel}}**, ví dụ: Kính gửi: {{Họ tên}} – {{Chức vụ}}. "
+               "Gõ đúng 2 dấu ngoặc nhọn mỗi bên. Dùng được cả trong bảng, đầu trang, chân trang.")
+    with st.expander("📎 Chưa có file mẫu? Tải bộ file mẫu để xem thử", expanded=False):
+        sd, sx = mm_sample_files()
+        e1, e2 = st.columns(2)
+        e1.download_button("📥 Tải Word mẫu (Giấy mời)", sd, file_name="Mau_Giay_moi.docx",
+                           mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document", key="mm_s1", use_container_width=True)
+        e2.download_button("📥 Tải Excel mẫu (Danh sách)", sx, file_name="Mau_Danh_sach.xlsx",
+                           mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", key="mm_s2", use_container_width=True)
+        st.caption("Ngoài các cột trong Excel, còn có 2 chỗ trống tự động: **{{STT}}** (số thứ tự) và **{{Ngày hôm nay}}**.")
+    tfile = st.file_uploader("Tải lên file Word mẫu (.docx):", type=["docx"], key=f"mm_tpl_{st.session_state.uploader_key}")
+
+    st.markdown("### Bước 2: Chọn file danh sách (Excel hoặc CSV)")
+    st.caption("Dòng đầu tiên là **tên cột**. Mỗi dòng bên dưới là 1 người/1 văn bản.")
+    dfile = st.file_uploader("Tải lên file danh sách (.xlsx, .csv):", type=["xlsx", "xlsm", "xls", "csv"], key=f"mm_dat_{st.session_state.uploader_key}")
+
+    if not (tfile and dfile):
+        st.session_state.pop("mm_res", None)
+        st.info("👆 Hãy chọn đủ **file Word mẫu** và **file danh sách** để tiếp tục.")
+        st.button("🗑️ Xóa & làm mới", on_click=clear_file, key="mm_clear0")
+        return
+
+    tpl = tfile.getvalue()
+    try:
+        tdoc = Document(BytesIO(tpl))
+    except Exception as e:
+        st.error(f"Không mở được file Word mẫu (file hỏng hoặc không phải .docx): {e}")
+        return
+    ph = mm_find_placeholders(mm_template_roots(tdoc))
+    if not ph:
+        st.warning("⚠️ Không thấy chỗ trống nào dạng **{{Tên cột}}** trong file Word mẫu. "
+                   "Hãy mở file Word, gõ ví dụ {{Họ tên}} vào chỗ cần thay, lưu lại rồi tải lên lại.")
+        return
+
+    sheet = None
+    if dfile.name.lower().endswith((".xlsx", ".xlsm", ".xls")):
+        try:
+            names = pd.ExcelFile(BytesIO(dfile.getvalue())).sheet_names
+        except Exception as e:
+            st.error(f"Không mở được file Excel: {e}")
+            return
+        if len(names) > 1:
+            sheet = st.selectbox("Chọn trang tính (sheet) chứa danh sách:", names, key="mm_sheet")
+    try:
+        df = mm_read_table(dfile.getvalue(), dfile.name, sheet)
+    except Exception as e:
+        st.error(f"Không đọc được danh sách: {e}")
+        return
+    if df.empty or not len(df.columns):
+        st.warning("File danh sách đang trống.")
+        return
+    st.success(f"✅ Đọc được **{len(df)} dòng**, **{len(df.columns)} cột**.")
+    with st.expander("👁️ Xem trước danh sách", expanded=False):
+        st.dataframe(df.head(50), use_container_width=True)
+
+    st.markdown("### Bước 3: Kiểm tra việc ghép chỗ trống với cột dữ liệu")
+    cols = list(df.columns)
+    auto = {k: next((c for c in cols if mm_norm(c) == k), None) for k in ph}
+    missing = [ph[k] for k, v in auto.items() if v is None and k not in MM_BUILTIN]
+    if missing:
+        st.warning("Có chỗ trống chưa tìm thấy cột trùng tên: **" + ", ".join(missing) +
+                   "**. Hãy chọn cột tương ứng ở bảng dưới (hoặc sửa lại tên trong Word/Excel cho giống nhau).")
+    mapping = {}
+    with st.expander("🔗 Bảng ghép chỗ trống ↔ cột dữ liệu", expanded=bool(missing)):
+        NONE = "(Giữ nguyên, không thay)"
+        for k, nm in ph.items():
+            if k in MM_BUILTIN and auto[k] is None:
+                st.markdown(f"**{{{{{nm}}}}}** → _{MM_BUILTIN[k]}_")
+                continue
+            opts = [NONE] + cols
+            idx = opts.index(auto[k]) if auto[k] in opts else 0
+            ch = st.selectbox(f"{{{{{nm}}}}} lấy từ cột:", opts, index=idx, key=f"mm_map_{k}")
+            mapping[k] = None if ch == NONE else ch
+    for k in ph:
+        if k in MM_BUILTIN and auto[k] is None:
+            mapping[k] = None
+
+    st.markdown("### Bước 4: Chọn dòng, kiểu xuất và tạo văn bản")
+    c1, c2 = st.columns(2)
+    with c1:
+        pick = st.radio("Tạo văn bản cho:", ["Tất cả các dòng", "Chỉ một số dòng"], key="mm_pick")
+        spec = ""
+        if pick == "Chỉ một số dòng":
+            spec = st.text_input("Nhập số dòng (dòng 1 là người đầu tiên):", placeholder="Ví dụ: 1-10,15", key="mm_spec")
+    with c2:
+        mode = st.radio("Kiểu xuất file:", ["Mỗi dòng 1 file Word riêng (tải về dạng ZIP)",
+                                            "Gộp tất cả vào 1 file Word (mỗi người 1 trang, tiện in một lượt)"], key="mm_mode")
+    money_cols = st.multiselect("Cột là số tiền – tự thêm dấu chấm hàng nghìn (1.234.567):", cols, key="mm_money",
+                                help="Chỉ chọn những cột là số tiền/số lượng. Không chọn cột số điện thoại, mã số.")
+    name_opts = ["(Chỉ đánh số thứ tự)"] + cols
+    name_col = st.selectbox("Đặt tên từng file theo cột:", name_opts, index=1 if len(name_opts) > 1 else 0, key="mm_namecol",
+                            help="Ví dụ chọn 'Họ tên' thì file sẽ là 001_Nguyen Van An.docx",
+                            disabled=mode.startswith("Gộp"))
+    try:
+        idxs = pi_parse_pages(spec, len(df)) if pick == "Chỉ một số dòng" else list(range(len(df)))
+    except ValueError as e:
+        st.error(str(e).replace("trang", "dòng"))
+        idxs = []
+    rows_all = df.to_dict("records")
+
+    if idxs:
+        pv = st.number_input(f"Xem thử văn bản của dòng số (1–{len(df)}):", 1, len(df), idxs[0] + 1, key="mm_pv")
+        try:
+            g = mm_make_getter(rows_all[pv - 1], pv, mapping, set(money_cols))
+            pdoc = Document(BytesIO(mm_build_single(tpl, g)))
+            txt = "\n".join(p.text for p in pdoc.paragraphs if p.text.strip())
+            for tb in pdoc.tables:
+                for row in tb.rows:
+                    txt += "\n" + " | ".join(dict.fromkeys(c.text.strip() for c in row.cells))
+            with st.container(border=True):
+                st.markdown("**Nội dung văn bản sau khi trộn (xem thử, chữ thuần – định dạng đẹp xem trong file Word):**")
+                st.text(txt[:3000])
+        except Exception as e:
+            st.error(f"Lỗi xem thử: {e}")
+
+    if st.button(f"🚀 Tạo {len(idxs)} văn bản", type="primary", key="mm_go", disabled=not idxs):
+        try:
+            prog = st.progress(0.0, "Đang tạo văn bản...")
+            ms = set(money_cols)
+            if mode.startswith("Gộp"):
+                gs = [mm_make_getter(rows_all[i], i + 1, mapping, ms) for i in idxs]
+                data = mm_build_combined(tpl, gs)
+                st.session_state["mm_res"] = ("one", data, len(idxs))
+            else:
+                files, used = [], set()
+                for k, i in enumerate(idxs):
+                    g = mm_make_getter(rows_all[i], i + 1, mapping, ms)
+                    data = mm_build_single(tpl, g)
+                    label = ""
+                    if name_col != name_opts[0]:
+                        label = mm_clean_value(rows_all[i].get(name_col, ""))
+                    base = f"{i + 1:03d}" + (f"_{mm_safe_name(label)}" if label else "")
+                    nm, n = base, 2
+                    while nm.lower() in used:
+                        nm, n = f"{base}_{n}", n + 1
+                    used.add(nm.lower())
+                    files.append((nm + ".docx", data))
+                    prog.progress((k + 1) / len(idxs), f"Đang tạo {k + 1}/{len(idxs)}...")
+                st.session_state["mm_res"] = ("zip", files, len(idxs))
+            prog.progress(1.0, "Hoàn tất!")
+        except Exception as e:
+            st.error(f"Lỗi khi tạo văn bản: {e}")
+
+    res = st.session_state.get("mm_res")
+    if res:
+        kind, payload, n = res
+        base = tfile.name.rsplit(".", 1)[0]
+        docx_mime = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        left = [h for k, h in ph.items() if not mapping.get(k) and k not in MM_BUILTIN]
+        if kind == "one":
+            st.success(f"✅ Đã gộp {n} văn bản vào 1 file Word ({len(payload) / 1048576:.2f} MB).")
+            st.download_button("📥 Tải file Word đã gộp", payload, file_name=f"{base}_tron_thu.docx", mime=docx_mime, key="mm_dl1")
+            st.caption("Lưu ý: đầu trang/chân trang (nếu có chỗ trống) lấy theo người đầu tiên.")
+        else:
+            tot = sum(len(d) for _, d in payload)
+            st.success(f"✅ Đã tạo {n} file Word ({tot / 1048576:.2f} MB).")
+            if n == 1:
+                nm, d = payload[0]
+                st.download_button(f"📥 Tải {nm}", d, file_name=nm, mime=docx_mime, key="mm_dl2")
+            else:
+                zb = BytesIO()
+                with zipfile.ZipFile(zb, "w", zipfile.ZIP_DEFLATED) as zf:
+                    for nm, d in payload:
+                        zf.writestr(nm, d)
+                zsz = len(zb.getvalue())
+                st.download_button(f"📥 Tải tất cả {n} file (.zip)", zb.getvalue(), file_name=f"{base}_tron_thu.zip",
+                                   mime="application/zip", key="mm_dl3")
+                if zsz > 18 * 1048576:
+                    st.warning("File ZIP trên 18 MB, có thể không gửi được qua email công ty. Hãy tạo theo từng nhóm dòng (chọn 'Chỉ một số dòng').")
+        if left:
+            st.warning("Các chỗ trống sau chưa được thay vì chưa chọn cột: " + ", ".join("{{" + h + "}}" for h in left))
+    st.button("🗑️ Xóa & làm mới", on_click=clear_file, key="mm_clear")
 
 
 if menu_group.startswith("🌐"):
@@ -4750,5 +5206,5 @@ if menu_group.startswith("🌐"):
 else:
     _routes = [app_number_2, app_pdf_split_merge, app_compress_and_zip, app_rotate_pdf,
                app_metadata_cleaner, app_signature_extractor, app_qr_generator, app_pdf_to_word_offline,
-               app_pdf_image_tools]
+               app_pdf_image_tools, app_mail_merge]
     _routes[ZP_MENU_OFFLINE.index(app_mode)]()
