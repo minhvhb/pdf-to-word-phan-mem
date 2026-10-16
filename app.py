@@ -2060,6 +2060,15 @@ div[class*="st-key-pm_"] button p { font-size: 1.05rem !important; font-weight: 
 </style>"""
 
 
+def _pi_fit_box(img, w=320, h=380):
+    """Đặt ảnh vào khung cố định (nền xám nhạt, căn giữa) để mọi trang cao bằng nhau -> các nút luôn thẳng hàng."""
+    im = img.copy()
+    im.thumbnail((w - 12, h - 12))
+    box = Image.new("RGB", (w, h), (243, 244, 246))
+    box.paste(im, ((w - im.width) // 2, (h - im.height) // 2))
+    return box
+
+
 def _pi_items(prefix):
     return st.session_state.get(prefix + "_items", [])
 
@@ -2160,7 +2169,7 @@ def pi_page_manager(prefix, thumbs, sig, order=None, ncols=3, noun="trang"):
                     th = thumbs[d["src"]]
                     if d["rot"]:
                         th = th.rotate(-d["rot"], expand=True)
-                    st.image(th, use_container_width=True)
+                    st.image(_pi_fit_box(th), use_container_width=True)
                     tag = f" &nbsp;·&nbsp; đã xoay {d['rot']}°" if d["rot"] else ""
                     st.markdown(f"<div class='pi-cap'>{noun.capitalize()} {pos + 1}<span>{tag}</span></div>", unsafe_allow_html=True)
                     r1 = st.columns(2)
