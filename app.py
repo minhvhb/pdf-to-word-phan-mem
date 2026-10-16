@@ -4715,3 +4715,40 @@ def app_qr_generator():
                     with zipfile.ZipFile(zbuf, "w", zipfile.ZIP_DEFLATED) as zf:
                         for i, row in df.reset_index(drop=True).iterrows():
                             val = str(row[col_data]).strip()
+                            if not val:
+                                fails.append(f"Dòng {i + 2}: nội dung trống")
+                                continue
+                            label = str(row[col_name]).strip() if col_name != "(Số thứ tự)" else f"{i + 1:03d}"
+                            safe = re.sub(r'[\\/:*?"<>|\n\r]+', "_", label)[:60] or f"{i + 1:03d}"
+                            base, k = safe, 1
+                            while safe in used:
+                                k += 1
+                                safe = f"{base}_{k}"
+                            used.add(safe)
+                            try:
+                                im = qr_render(val, opts_b["ecc"], opts_b["box"], 4, opts_b["fg"], opts_b["fg2"], opts_b["bg"],
+                                               opts_b["transparent"], opts_b["shape"], opts_b["logo"],
+                                               label if (with_cap and col_name != "(Số thứ tự)") else "")
+                                zf.writestr(f"{safe}.png", qr_to_png_bytes(im))
+                            except Exception as e:
+                                fails.append(f"Dòng {i + 2}: {str(e)[:60]}")
+                            bar.progress((i + 1) / len(df))
+                    bar.empty()
+                    st.success(f"🎉 Đã tạo {len(used) - 0} mã QR.")
+                    for f_ in fails[:20]:
+                        st.warning(f_)
+                    st.download_button("📥 Tải ZIP các mã QR", zbuf.getvalue(), "QR_HangLoat.zip", "application/zip", type="primary")
+            except Exception as e:
+                st.error(f"Lỗi đọc file: {e}")
+
+# ==========================================                        
+# 5. KÍCH HOẠT ỨNG DỤNG THEO LỰA CHỌN MENU
+# ==========================================
+if menu_group.startswith("🌐"):
+    _routes = [app_pdf_to_word, app_number_3, app_document_compare, app_excel_expert]
+    _routes[ZP_MENU_ONLINE.index(app_mode)]()
+else:
+    _routes = [app_number_2, app_pdf_split_merge, app_compress_and_zip, app_rotate_pdf,
+               app_metadata_cleaner, app_signature_extractor, app_qr_generator, app_pdf_to_word_offline,
+               app_pdf_image_tools]
+    _routes[ZP_MENU_OFFLINE.index(app_mode)]()
