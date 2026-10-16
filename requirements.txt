@@ -14,3 +14,4 @@ pdf2docx
 opencv-python-headless
 qrcode
 pdfplumber
+img2pdf
