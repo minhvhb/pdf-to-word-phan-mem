@@ -1949,7 +1949,7 @@ PI_PAGE_SIZES = {  # (rộng, cao) tính bằng pt (1 pt = 1/72 inch); None = đ
     "A5 dọc": ("A5", False),
     "Đúng kích thước ảnh (không viền trắng)": (None, False),
 }
-PI_DEFAULT_PAGE = "A4 – tự xoay dọc/ngang theo từng ảnh (khuyên dùng)"
+PI_DEFAULT_PAGE = "Đúng kích thước ảnh (không viền trắng)"
 PI_PT = {"A4": (595.28, 841.89), "A4L": (841.89, 595.28), "A5": (419.53, 595.28)}
 PI_QUALITY = {
     "Cân bằng (khuyên dùng)": (2339, 88),
@@ -2053,7 +2053,8 @@ def pi_pdf_rearrange(pdf_bytes, seq):
 # ---- Bộ quản lý trang dạng lưới ảnh (xoay / đổi chỗ / xóa) dùng chung cho cả 2 tab ----
 PI_CSS = """<style>
 div[class*="st-key-pm_"] button { min-height: 3rem; }
-div[class*="st-key-pm_"] button p { font-size: 1.05rem !important; font-weight: 600; white-space: nowrap; }
+div[class*="st-key-pm_"] button { padding-left:.25rem; padding-right:.25rem; }
+div[class*="st-key-pm_"] button p { font-size: 1.05rem !important; font-weight: 600; white-space: nowrap; overflow: visible !important; text-overflow: clip !important; }
 .pi-cap { text-align:center; font-size:1.35rem; font-weight:700; margin:.35rem 0 .5rem 0; }
 .pi-cap span { font-size:.95rem; font-weight:500; color:#c0392b; }
 </style>"""
@@ -2163,9 +2164,9 @@ def pi_page_manager(prefix, thumbs, sig, order=None, ncols=3, noun="trang"):
                     tag = f" &nbsp;·&nbsp; đã xoay {d['rot']}°" if d["rot"] else ""
                     st.markdown(f"<div class='pi-cap'>{noun.capitalize()} {pos + 1}<span>{tag}</span></div>", unsafe_allow_html=True)
                     r1 = st.columns(2)
-                    r1[0].button("⬅ Lên trước", key=f"{prefix}_l{d['id']}", on_click=_pi_cb_move, args=(prefix, pos, -1),
+                    r1[0].button("⬅ Trước", key=f"{prefix}_l{d['id']}", on_click=_pi_cb_move, args=(prefix, pos, -1),
                                  disabled=pos == 0, use_container_width=True)
-                    r1[1].button("Ra sau ➡", key=f"{prefix}_n{d['id']}", on_click=_pi_cb_move, args=(prefix, pos, 1),
+                    r1[1].button("Sau ➡", key=f"{prefix}_n{d['id']}", on_click=_pi_cb_move, args=(prefix, pos, 1),
                                  disabled=pos == len(items) - 1, use_container_width=True)
                     r2 = st.columns(2)
                     r2[0].button("🔄 Xoay", key=f"{prefix}_r{d['id']}", on_click=_pi_cb_rot, args=(prefix, pos, 90),
@@ -2182,6 +2183,12 @@ def pi_prepare_image(raw, rotate=0, quality_key="Cân bằng (khuyên dùng)", c
     side, q = PI_QUALITY[quality_key]
     img = Image.open(BytesIO(raw))
     fmt = (img.format or "").upper()
+    try:
+        dpi = tuple(float(x) for x in img.info.get("dpi", ())[:2]) or None
+        if dpi and (dpi[0] < 30 or dpi[1] < 30):
+            dpi = None
+    except Exception:
+        dpi = None
     img = ImageOps.exif_transpose(img)
     changed = False
     if rotate:
@@ -2198,7 +2205,11 @@ def pi_prepare_image(raw, rotate=0, quality_key="Cân bằng (khuyên dùng)", c
     if side and max(img.size) > side:
         r = side / float(max(img.size))
         img = img.resize((max(1, int(img.width * r)), max(1, int(img.height * r))), _zp_pil_resample())
+        if dpi:
+            dpi = (dpi[0] * r, dpi[1] * r)
         changed = True
+    if rotate in (90, 270) and dpi:
+        dpi = (dpi[1], dpi[0])
     if not changed and fmt in ("JPEG", "PNG") and img.mode in ("RGB", "L", "P", "1") and q is None:
         return raw, ("jpg" if fmt == "JPEG" else "png")          # giữ nguyên, không nén lại
     if not changed and fmt == "JPEG" and q is not None and len(raw) < 600000:
@@ -2206,11 +2217,11 @@ def pi_prepare_image(raw, rotate=0, quality_key="Cân bằng (khuyên dùng)", c
     buf = BytesIO()
     if img.mode not in ("RGB", "L"):
         img = img.convert("RGB")
-    img.save(buf, format="JPEG", quality=(q or 95), optimize=True)
+    img.save(buf, format="JPEG", quality=(q or 95), optimize=True, **({"dpi": dpi} if dpi else {}))
     return buf.getvalue(), "jpg"
 
 
-def pi_images_to_pdf(items, page_key="A4 – tự xoay dọc/ngang theo từng ảnh (khuyên dùng)", margin_mm=0.0):
+def pi_images_to_pdf(items, page_key="Đúng kích thước ảnh (không viền trắng)", margin_mm=0.0):
     """items: [(bytes, ext)] theo đúng thứ tự trang -> bytes PDF."""
     size_name, auto = PI_PAGE_SIZES[page_key]
     try:
@@ -2219,7 +2230,16 @@ def pi_images_to_pdf(items, page_key="A4 – tự xoay dọc/ngang theo từng �
         img2pdf = None
     if img2pdf is not None:
         if size_name is None:
-            layout = img2pdf.get_layout_fun(None)
+            def layout(w, h, ndpi):
+                # Có DPI thật (máy scan, ảnh CCCD, file A5...): giữ đúng kích thước vật lý.
+                # Ảnh điện thoại (DPI 72/96 mặc định, không phản ánh kích thước thật): đưa về cỡ ~A4 nhưng giữ đúng tỉ lệ.
+                dx, dy = ndpi
+                if min(dx, dy) <= 100:
+                    k = 841.89 / max(w, h)
+                    pw, ph = w * k, h * k
+                else:
+                    pw, ph = w * 72.0 / dx, h * 72.0 / dy
+                return pw, ph, pw, ph
         else:
             border = margin_mm / 25.4 * 72.0
             layout = img2pdf.get_layout_fun(PI_PT[size_name], border=(border, border), fit=img2pdf.FitMode.into,
