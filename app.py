@@ -1949,6 +1949,7 @@ PI_PAGE_SIZES = {  # (rộng, cao) tính bằng pt (1 pt = 1/72 inch); None = đ
     "A5 dọc": ("A5", False),
     "Đúng kích thước ảnh (không viền trắng)": (None, False),
 }
+PI_DEFAULT_PAGE = "A4 – tự xoay dọc/ngang theo từng ảnh (khuyên dùng)"
 PI_PT = {"A4": (595.28, 841.89), "A4L": (841.89, 595.28), "A5": (419.53, 595.28)}
 PI_QUALITY = {
     "Cân bằng (khuyên dùng)": (2339, 88),
@@ -2050,6 +2051,14 @@ def pi_pdf_rearrange(pdf_bytes, seq):
 
 
 # ---- Bộ quản lý trang dạng lưới ảnh (xoay / đổi chỗ / xóa) dùng chung cho cả 2 tab ----
+PI_CSS = """<style>
+div[class*="st-key-pm_"] button { min-height: 3rem; }
+div[class*="st-key-pm_"] button p { font-size: 1.05rem !important; font-weight: 600; white-space: nowrap; }
+.pi-cap { text-align:center; font-size:1.35rem; font-weight:700; margin:.35rem 0 .5rem 0; }
+.pi-cap span { font-size:.95rem; font-weight:500; color:#c0392b; }
+</style>"""
+
+
 def _pi_items(prefix):
     return st.session_state.get(prefix + "_items", [])
 
@@ -2105,7 +2114,7 @@ def _pi_cb_delspec(prefix):
     st.session_state[prefix + "_items"] = [d for k, d in enumerate(it) if k not in pos]
 
 
-def pi_page_manager(prefix, thumbs, sig, order=None, ncols=4, noun="trang"):
+def pi_page_manager(prefix, thumbs, sig, order=None, ncols=3, noun="trang"):
     """Hiển thị TOÀN BỘ trang dạng lưới; mỗi trang có nút ◀ ▶ (đổi chỗ), ↻ (xoay), 🗑 (xóa).
     thumbs: list PIL theo chỉ số nguồn. Trả về [(chỉ_số_nguồn, góc_xoay)] theo thứ tự hiện tại."""
     if st.session_state.get(prefix + "_sig") != sig:
@@ -2114,7 +2123,8 @@ def pi_page_manager(prefix, thumbs, sig, order=None, ncols=4, noun="trang"):
                                                enumerate(order if order is not None else range(len(thumbs)))]
     items = _pi_items(prefix)
     total = len(thumbs)
-    st.markdown(f"**Còn {len(items)}/{total} {noun}** – dùng nút dưới mỗi {noun} để đổi chỗ, xoay hoặc xóa.")
+    st.markdown(f"#### Còn {len(items)}/{total} {noun}")
+    st.caption(f"Bấm nút dưới mỗi {noun}: ⬅ ➡ đổi chỗ · 🔄 xoay cho thẳng · ❌ bỏ {noun} không cần.")
     with st.expander("⚡ Công cụ nhanh (xoay tất cả, đảo ngược, chuyển, xóa nhiều)", expanded=False):
         q1, q2, q3, q4 = st.columns(4)
         q1.button("↻ Xoay phải tất cả", on_click=_pi_cb_rot_all, args=(prefix, 90), key=prefix + "_ra", use_container_width=True)
@@ -2136,6 +2146,7 @@ def pi_page_manager(prefix, thumbs, sig, order=None, ncols=4, noun="trang"):
     if not items:
         st.warning(f"Đã xóa hết {noun}. Bấm 'Khôi phục ban đầu' để lấy lại.")
         return []
+    st.markdown(PI_CSS, unsafe_allow_html=True)
     for r0 in range(0, len(items), ncols):
         cols = st.columns(ncols)
         for c in range(ncols):
@@ -2144,20 +2155,23 @@ def pi_page_manager(prefix, thumbs, sig, order=None, ncols=4, noun="trang"):
                 break
             d = items[pos]
             with cols[c]:
-                th = thumbs[d["src"]]
-                if d["rot"]:
-                    th = th.rotate(-d["rot"], expand=True)
-                tag = f" · xoay {d['rot']}°" if d["rot"] else ""
-                st.image(th, caption=f"{noun.capitalize()} {pos + 1}{tag}", use_container_width=True)
-                b = st.columns(4)
-                b[0].button("◀", key=f"{prefix}_l{d['id']}", on_click=_pi_cb_move, args=(prefix, pos, -1),
-                            disabled=pos == 0, help="Đưa lên trước", use_container_width=True)
-                b[1].button("↻", key=f"{prefix}_r{d['id']}", on_click=_pi_cb_rot, args=(prefix, pos, 90),
-                            help="Xoay phải 90°", use_container_width=True)
-                b[2].button("🗑", key=f"{prefix}_x{d['id']}", on_click=_pi_cb_del, args=(prefix, pos),
-                            help="Xóa", use_container_width=True)
-                b[3].button("▶", key=f"{prefix}_n{d['id']}", on_click=_pi_cb_move, args=(prefix, pos, 1),
-                            disabled=pos == len(items) - 1, help="Đưa ra sau", use_container_width=True)
+                with st.container(border=True):
+                    th = thumbs[d["src"]]
+                    if d["rot"]:
+                        th = th.rotate(-d["rot"], expand=True)
+                    st.image(th, use_container_width=True)
+                    tag = f" &nbsp;·&nbsp; đã xoay {d['rot']}°" if d["rot"] else ""
+                    st.markdown(f"<div class='pi-cap'>{noun.capitalize()} {pos + 1}<span>{tag}</span></div>", unsafe_allow_html=True)
+                    r1 = st.columns(2)
+                    r1[0].button("⬅ Lên trước", key=f"{prefix}_l{d['id']}", on_click=_pi_cb_move, args=(prefix, pos, -1),
+                                 disabled=pos == 0, use_container_width=True)
+                    r1[1].button("Ra sau ➡", key=f"{prefix}_n{d['id']}", on_click=_pi_cb_move, args=(prefix, pos, 1),
+                                 disabled=pos == len(items) - 1, use_container_width=True)
+                    r2 = st.columns(2)
+                    r2[0].button("🔄 Xoay", key=f"{prefix}_r{d['id']}", on_click=_pi_cb_rot, args=(prefix, pos, 90),
+                                 use_container_width=True)
+                    r2[1].button("❌ Xóa", key=f"{prefix}_x{d['id']}", on_click=_pi_cb_del, args=(prefix, pos),
+                                 use_container_width=True)
     return [(d["src"], d["rot"]) for d in items]
 
 
@@ -2250,6 +2264,7 @@ def app_pdf_image_tools():
 
     # ---------------- PDF -> ảnh ----------------
     with tab1:
+        st.markdown("### Bước 1: Chọn file PDF")
         up = st.file_uploader("Tải lên file PDF:", type=["pdf"], key=f"pi_pdf_{st.session_state.uploader_key}")
         if up:
             data = up.getvalue()
@@ -2266,9 +2281,11 @@ def app_pdf_image_tools():
                 thumbs = []
             if thumbs:
                 st.info(f"📄 **{up.name}** — {len(thumbs)} trang")
+                st.markdown("### Bước 2: Kiểm tra – xoay, đổi chỗ, xóa trang")
                 seq = pi_page_manager("pm_pdf", thumbs, h)
                 if seq:
                     st.divider()
+                    st.markdown("### Bước 3: Chọn kiểu ảnh và chuyển đổi")
                     c1, c2 = st.columns(2)
                     with c1:
                         fmt = st.radio("Định dạng ảnh:", ["JPG (nhẹ, dùng cho ảnh/trang có màu)", "PNG (nét, dùng cho chữ/bản vẽ)"], key="pi_fmt")
@@ -2326,6 +2343,7 @@ def app_pdf_image_tools():
 
     # ---------------- ảnh -> PDF ----------------
     with tab2:
+        st.markdown("### Bước 1: Chọn các ảnh cần gộp")
         imgs = st.file_uploader("Tải lên các ảnh (JPG, PNG, WEBP, BMP, TIF):", type=PI_IMG_TYPES, accept_multiple_files=True,
                                 key=f"pi_img_{st.session_state.uploader_key}")
         if not imgs:
@@ -2334,6 +2352,7 @@ def app_pdf_image_tools():
             st.info("💡 Chụp giấy tờ bằng điện thoại, tải lên rồi gộp thành 1 file PDF. Xem đủ các trang, xoay/đổi chỗ/xóa ngay bên dưới.")
         else:
             names = [f.name for f in imgs]
+            st.markdown("### Bước 2: Kiểm tra – sắp xếp các trang")
             sort = st.radio("Sắp xếp sẵn:", ["Theo thứ tự tải lên", "Theo tên A → Z", "Theo tên Z → A"], horizontal=True, key="pi_sort")
             order = list(range(len(imgs)))
             if sort == "Theo tên A → Z":
@@ -2356,14 +2375,13 @@ def app_pdf_image_tools():
             seq = pi_page_manager("pm_img", thumbs, sig, order=order, noun="trang")
             if seq:
                 st.divider()
+                st.markdown("### Bước 3: Chọn chất lượng và tạo PDF")
+                page_key, margin = PI_DEFAULT_PAGE, 0
                 c1, c2 = st.columns(2)
                 with c1:
-                    page_key = st.selectbox("Khổ giấy:", list(PI_PAGE_SIZES.keys()), key="pi_page")
-                    margin = st.select_slider("Lề (mm):", options=[0, 5, 10, 15, 20], value=0, key="pi_margin",
-                                              disabled=PI_PAGE_SIZES[page_key][0] is None)
-                with c2:
                     qual = st.selectbox("Chất lượng / dung lượng:", list(PI_QUALITY.keys()), key="pi_q",
                                         help="Ảnh chụp điện thoại thường rất nặng (3–6 MB/ảnh). 'Cân bằng' giảm mạnh dung lượng mà chữ vẫn rõ.")
+                with c2:
                     clar = st.checkbox("Làm rõ ảnh chụp giấy tờ (đen trắng, nền giấy trắng hơn)", value=False, key="pi_clar")
                 pdf_name = st.text_input("Tên file PDF xuất ra:", value="Tai_lieu.pdf", key="pi_name")
                 if not pdf_name.lower().endswith(".pdf"):
