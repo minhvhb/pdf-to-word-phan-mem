@@ -401,103 +401,117 @@ authenticator = stauth.Authenticate(
 if st.session_state.get("authentication_status") != True:
     st.markdown("""
         <style>
+            @import url('https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;600;700;800&display=swap');
+            html, body, .stApp, .stApp * { font-family: 'Be Vietnam Pro', 'Segoe UI', Roboto, sans-serif; }
             .stApp {
-                background-image: url("https://images.unsplash.com/photo-1477414348463-c0eb7f1359b6?q=80&w=2070&auto=format&fit=crop");
-                background-size: cover;
-                background-position: center;
-                background-attachment: fixed;
+                background:
+                    radial-gradient(circle at 12% 18%, rgba(56,189,248,0.30) 0%, transparent 38%),
+                    radial-gradient(circle at 88% 82%, rgba(250,204,21,0.20) 0%, transparent 42%),
+                    radial-gradient(circle at 80% 10%, rgba(45,212,191,0.22) 0%, transparent 35%),
+                    linear-gradient(135deg, #07142e 0%, #0b2d63 48%, #0a6b7c 100%) !important;
+                background-attachment: fixed !important;
             }
+            header[data-testid="stHeader"] { background: transparent !important; }
+            [data-testid="stSidebar"], [data-testid="stSidebarCollapsedControl"], #MainMenu, footer, [data-testid="stToolbar"] { display: none !important; }
+            [data-testid="stMainBlockContainer"], .block-container { max-width: 520px !important; padding-top: 3.2rem !important; padding-bottom: 2rem !important; }
+
+            .lg-brand { text-align: center; margin-bottom: 22px; animation: lgFade .7s ease both; }
+            .lg-emblem {
+                width: 92px; height: 92px; margin: 0 auto 16px auto; border-radius: 50%;
+                display: flex; align-items: center; justify-content: center; font-size: 46px;
+                background: linear-gradient(145deg, rgba(255,255,255,0.28), rgba(255,255,255,0.06));
+                border: 2px solid rgba(255,255,255,0.55);
+                box-shadow: 0 0 0 8px rgba(255,255,255,0.08), 0 14px 34px rgba(0,0,0,0.35);
+                animation: lgPulse 3.2s ease-in-out infinite;
+            }
+            .lg-unit { color: #fde68a; font-size: 13px; font-weight: 700; letter-spacing: 2.2px; text-transform: uppercase; margin-bottom: 6px; }
+            .lg-title { color: #ffffff; font-size: 34px; font-weight: 800; line-height: 1.2; letter-spacing: .3px; text-shadow: 0 3px 14px rgba(0,0,0,0.4); }
+            .lg-sub { color: rgba(255,255,255,0.82); font-size: 16px; margin-top: 8px; }
+
             [data-testid="stForm"] {
-                background-color: rgba(255, 255, 255, 0.95) !important;
-                padding: 40px !important;
-                border-radius: 15px !important;
-                box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3) !important;
-                width: 700px !important; 
-                max-width: 95vw !important;
-                margin: 10vh auto 0 auto !important;
-                border: 1px solid rgba(255, 255, 255, 0.5) !important;
-            }
-            [data-testid="stForm"] h2 {
-                text-align: center !important;
-                color: #003366 !important;
-                font-weight: 900 !important;
-                font-size: 24px !important; 
-                white-space: nowrap !important;
-                margin-bottom: 25px !important;
-                padding-bottom: 0px !important;
-                width: 100% !important;
-            }
-            [data-testid="stForm"] [data-testid="stVerticalBlock"] > div {
-                width: 100% !important;
-                max-width: 100% !important;
-            }
-            [data-testid="stForm"] .stTextInput {
-                width: 100% !important;
-                min-width: 100% !important;
-            }
-            [data-testid="stForm"] div[data-baseweb="input"] {
-                background-color: #ffffff !important;
-                border: 2px solid #000000 !important;
-                border-radius: 6px !important;
-                width: 100% !important;
-            }
-            [data-testid="stForm"] div[data-baseweb="input"]:focus-within {
-                border-color: #003366 !important; 
-            }
-            [data-testid="stForm"] input {
-                background-color: transparent !important;
-                color: #000 !important;
-                font-size: 15px !important;
-            }
-            [data-testid="stForm"] .stTextInput label p {
-                font-size: 14px !important;
-                font-weight: bold !important;
-                color: #333 !important;
-            }
-            [data-testid="stForm"] div[data-testid="stFormSubmitButton"] {
-                width: 100% !important;
-                max-width: 100% !important;
-                display: block !important;
-            }
-            [data-testid="stForm"] div[data-testid="stFormSubmitButton"] button {
-                width: 100% !important;
-                min-width: 100% !important;
-                background-color: #003366 !important;
-                color: white !important;
-                font-size: 16px !important;
-                letter-spacing: 1px !important;
-                border-radius: 8px !important;
-                padding: 12px 0 !important;
+                position: relative; overflow: hidden;
+                background: rgba(255,255,255,0.97) !important;
+                padding: 34px 34px 30px 34px !important;
+                border-radius: 22px !important;
                 border: none !important;
-                margin-top: 15px !important;
-                display: block !important;
-                transition: all 0.3s ease-in-out !important;
+                box-shadow: 0 24px 60px rgba(0,0,0,0.45), 0 0 0 1px rgba(255,255,255,0.4) !important;
+                animation: lgUp .7s ease both;
             }
-            [data-testid="stForm"] div[data-testid="stFormSubmitButton"] button p {
-                font-weight: 900 !important;
-                margin: 0 !important;
+            [data-testid="stForm"]::before {
+                content: ""; position: absolute; left: 0; right: 0; top: 0; height: 7px;
+                background: linear-gradient(90deg, #f59e0b, #ef4444, #3b82f6, #14b8a6);
             }
-            [data-testid="stForm"] div[data-testid="stFormSubmitButton"] button:hover {
-                background-color: #001f3f !important;
-                box-shadow: 0px 4px 15px rgba(0,0,0,0.4) !important;
+            [data-testid="stForm"] h1, [data-testid="stForm"] h2, [data-testid="stForm"] h3 {
+                text-align: center !important; color: #0b2d63 !important; font-weight: 800 !important;
+                font-size: 24px !important; letter-spacing: .5px; margin: 6px 0 14px 0 !important; padding: 0 !important;
             }
-            div[data-testid="stVerticalBlock"] > div:has(div[data-testid="stMarkdownContainer"]) {
-                display: flex;
-                justify-content: center;
-                margin-top: 15px;
+            [data-testid="stForm"] [data-testid="stWidgetLabel"] p, [data-testid="stForm"] label p {
+                font-size: 16px !important; font-weight: 700 !important; color: #1e293b !important;
             }
+            [data-testid="stForm"] [data-baseweb="input"], [data-testid="stForm"] [data-baseweb="base-input"] {
+                background: #f1f5f9 !important; border-radius: 12px !important;
+            }
+            [data-testid="stForm"] [data-baseweb="input"] {
+                border: 2px solid #cbd5e1 !important; min-height: 54px; transition: all .2s ease;
+            }
+            [data-testid="stForm"] [data-baseweb="input"]:focus-within {
+                border-color: #2563eb !important; background: #ffffff !important; box-shadow: 0 0 0 4px rgba(37,99,235,0.18) !important;
+            }
+            [data-testid="stForm"] input { font-size: 18px !important; color: #0f172a !important; padding: 12px 14px !important; }
+            [data-testid="stForm"] button[kind="secondaryFormSubmit"], [data-testid="stForm"] button[kind="primaryFormSubmit"],
+            [data-testid="stForm"] [data-testid="stFormSubmitButton"] button {
+                width: 100% !important; min-width: 100% !important; min-height: 58px !important;
+                background: linear-gradient(135deg, #1d4ed8 0%, #0ea5e9 100%) !important;
+                color: #ffffff !important; border: none !important; border-radius: 14px !important;
+                margin-top: 14px !important; box-shadow: 0 10px 24px rgba(29,78,216,0.40) !important;
+                transition: transform .15s ease, box-shadow .15s ease, filter .15s ease !important;
+            }
+            [data-testid="stForm"] [data-testid="stFormSubmitButton"], [data-testid="stForm"] .stFormSubmitButton { width: 100% !important; }
+            [data-testid="stForm"] [data-testid="stFormSubmitButton"] button p {
+                color: #ffffff !important; font-size: 19px !important; font-weight: 800 !important; letter-spacing: 1.5px !important; margin: 0 !important;
+            }
+            [data-testid="stForm"] [data-testid="stFormSubmitButton"] button:hover {
+                transform: translateY(-2px); filter: brightness(1.08); box-shadow: 0 14px 30px rgba(29,78,216,0.55) !important;
+            }
+            [data-testid="stForm"] [data-testid="stFormSubmitButton"] button:active { transform: translateY(0); }
+
+            [data-testid="stAlert"] { background: rgba(255,255,255,0.14) !important; border: 1px solid rgba(255,255,255,0.35) !important; border-radius: 14px !important; backdrop-filter: blur(6px); }
+            [data-testid="stAlert"] p { color: #ffffff !important; font-size: 16px !important; text-align: center; }
+            [data-testid="stAlert"] svg { display: none; }
+
+            .lg-chips { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; margin-top: 20px; }
+            .lg-chips span { background: rgba(255,255,255,0.14); border: 1px solid rgba(255,255,255,0.28); color: #fff; padding: 7px 14px; border-radius: 999px; font-size: 14px; font-weight: 600; backdrop-filter: blur(6px); }
+            .lg-foot { text-align: center; color: rgba(255,255,255,0.65); font-size: 13px; margin-top: 18px; }
+
+            @keyframes lgFade { from { opacity: 0; transform: translateY(-12px); } to { opacity: 1; transform: none; } }
+            @keyframes lgUp { from { opacity: 0; transform: translateY(24px); } to { opacity: 1; transform: none; } }
+            @keyframes lgPulse { 0%,100% { box-shadow: 0 0 0 8px rgba(255,255,255,0.08), 0 14px 34px rgba(0,0,0,0.35); } 50% { box-shadow: 0 0 0 16px rgba(255,255,255,0.04), 0 14px 34px rgba(0,0,0,0.35); } }
+            @media (prefers-reduced-motion: reduce) { .lg-brand, [data-testid="stForm"], .lg-emblem { animation: none !important; } }
+            @media (max-width: 560px) { .lg-title { font-size: 27px; } [data-testid="stForm"] { padding: 26px 20px 24px 20px !important; } }
         </style>
+        <div class="lg-brand">
+            <div class="lg-emblem">⚙️</div>
+            <div class="lg-unit">Phòng Nghiệp vụ</div>
+            <div class="lg-title">CÔNG CỤ VĂN PHÒNG</div>
+            <div class="lg-sub">Nhà máy Thuốc lá Bến Thành Craven A</div>
+        </div>
     """, unsafe_allow_html=True)
 
 authenticator.login(
     location='main',
     fields={
-        'Form name': 'CÔNG CỤ VĂN PHÒNG NMTLBT CRAVEN A',
+        'Form name': 'ĐĂNG NHẬP HỆ THỐNG',
         'Username': 'Tên đăng nhập',
         'Password': 'Mật khẩu',
         'Login': 'ĐĂNG NHẬP'
     }
 )
+
+if st.session_state.get("authentication_status") != True:
+    st.markdown("""
+        <div class="lg-chips"><span>📄 PDF</span><span>📊 Excel</span><span>🖼️ Ảnh</span><span>🧮 Tính toán</span><span>🔒 Bảo mật</span></div>
+        <div class="lg-foot">Dùng nội bộ · Đăng nhập bằng tài khoản được cấp</div>
+    """, unsafe_allow_html=True)
 
 if st.session_state["authentication_status"] == False:
     st.error('Tên đăng nhập hoặc mật khẩu không đúng!')
