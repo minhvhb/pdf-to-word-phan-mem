@@ -501,12 +501,18 @@ if st.session_state.get("authentication_status") != True:
             [data-testid="stForm"] [data-testid="stFormSubmitButton"] button:active { transform: translateY(0); }
 
             /* ---- Thông báo ---- */
-            [data-testid="stAlert"] { background: rgba(255,255,255,0.14) !important; border: 1px solid rgba(255,255,255,0.35) !important; border-radius: 14px !important; backdrop-filter: blur(6px); padding: 4px 8px !important; }
+            [data-testid="stAlert"] { background: rgba(255,255,255,0.14) !important; border: 1px solid rgba(255,255,255,0.35) !important; border-radius: 14px !important; backdrop-filter: blur(6px); padding: 0 !important; display: flex !important; align-items: center !important; justify-content: center !important; min-height: 54px; }
             [data-testid="stAlert"] p { color: #ffffff !important; font-size: 16px !important; text-align: center; margin: 0 !important; }
             [data-testid="stAlert"] [data-testid="stAlertContentWarning"], [data-testid="stAlert"] [data-testid="stAlertContentError"] { justify-content: center; }
             [data-testid="stAlert"] > div, [data-testid="stAlert"] [data-baseweb="notification"], [data-testid="stAlertContainer"] {
                 background: transparent !important; border: none !important; box-shadow: none !important; border-radius: 12px !important; }
             [data-testid="stAlert"] svg { display: none; }
+            [data-testid="stAlert"] > div, [data-testid="stAlertContainer"], [data-testid="stAlert"] [data-testid="stAlertContentWarning"],
+            [data-testid="stAlert"] [data-testid="stAlertContentError"] {
+                display: flex !important; align-items: center !important; justify-content: center !important;
+                width: 100% !important; min-height: 54px; padding: 0 !important; margin: 0 !important; }
+            [data-testid="stAlert"] [data-testid="stMarkdownContainer"] { margin: 0 !important; padding: 0 !important; width: 100%; }
+            [data-testid="stAlert"] p { line-height: 1.2 !important; text-align: center !important; }
 
             /* ---- Nhãn tính năng: 1 hàng ---- */
             .lg-chips { display: flex; flex-wrap: nowrap; justify-content: center; gap: 8px; margin: 6px 0 2px 0; }
