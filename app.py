@@ -402,7 +402,13 @@ if st.session_state.get("authentication_status") != True:
     st.markdown("""
         <style>
             @import url('https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;600;700;800&display=swap');
-            html, body, .stApp, .stApp * { font-family: 'Be Vietnam Pro', 'Segoe UI', Roboto, sans-serif; }
+            /* Chỉ áp phông cho chữ; KHÔNG áp cho biểu tượng (mắt xem mật khẩu dùng phông biểu tượng riêng) */
+            .stApp, .stApp p, .stApp label, .stApp input, .stApp button, .stApp h1, .stApp h2, .stApp h3,
+            .lg-brand div, .lg-chips span { font-family: 'Be Vietnam Pro', 'Segoe UI', Roboto, sans-serif; }
+            [data-testid="stIconMaterial"], .material-symbols-rounded, [class*="material-symbols"] {
+                font-family: "Material Symbols Rounded", "Material Symbols Outlined" !important;
+            }
+            html, body, .stApp, [data-testid="stAppViewContainer"], [data-testid="stMain"], section.main { overflow: hidden !important; }
             .stApp {
                 background:
                     radial-gradient(circle at 12% 18%, rgba(56,189,248,0.30) 0%, transparent 38%),
@@ -411,29 +417,35 @@ if st.session_state.get("authentication_status") != True:
                     linear-gradient(135deg, #07142e 0%, #0b2d63 48%, #0a6b7c 100%) !important;
                 background-attachment: fixed !important;
             }
-            header[data-testid="stHeader"] { background: transparent !important; }
-            [data-testid="stSidebar"], [data-testid="stSidebarCollapsedControl"], #MainMenu, footer, [data-testid="stToolbar"] { display: none !important; }
-            [data-testid="stMainBlockContainer"], .block-container { max-width: 520px !important; padding-top: 3.2rem !important; padding-bottom: 2rem !important; }
+            header[data-testid="stHeader"], [data-testid="stSidebar"], [data-testid="stSidebarCollapsedControl"],
+            #MainMenu, footer, [data-testid="stToolbar"] { display: none !important; }
+            [data-testid="stMainBlockContainer"], .block-container {
+                max-width: 760px !important; padding: 1rem 1rem 1rem 1rem !important;
+            }
+            [data-testid="stMainBlockContainer"] > [data-testid="stVerticalBlock"] {
+                min-height: calc(100vh - 2rem); justify-content: center; gap: 0.6rem;
+            }
 
-            .lg-brand { text-align: center; margin-bottom: 22px; animation: lgFade .7s ease both; }
+            /* ---- Đầu trang ---- */
+            .lg-brand { text-align: center; margin-bottom: 4px; animation: lgFade .7s ease both; }
             .lg-emblem {
-                width: 92px; height: 92px; margin: 0 auto 16px auto; border-radius: 50%;
-                display: flex; align-items: center; justify-content: center; font-size: 46px;
+                width: 76px; height: 76px; margin: 0 auto 10px auto; border-radius: 50%;
+                display: flex; align-items: center; justify-content: center; font-size: 38px;
                 background: linear-gradient(145deg, rgba(255,255,255,0.28), rgba(255,255,255,0.06));
                 border: 2px solid rgba(255,255,255,0.55);
-                box-shadow: 0 0 0 8px rgba(255,255,255,0.08), 0 14px 34px rgba(0,0,0,0.35);
+                box-shadow: 0 0 0 7px rgba(255,255,255,0.08), 0 12px 28px rgba(0,0,0,0.35);
                 animation: lgPulse 3.2s ease-in-out infinite;
             }
-            .lg-unit { color: #fde68a; font-size: 13px; font-weight: 700; letter-spacing: 2.2px; text-transform: uppercase; margin-bottom: 6px; }
-            .lg-title { color: #ffffff; font-size: 34px; font-weight: 800; line-height: 1.2; letter-spacing: .3px; text-shadow: 0 3px 14px rgba(0,0,0,0.4); }
-            .lg-sub { color: rgba(255,255,255,0.82); font-size: 16px; margin-top: 8px; }
+            .lg-unit { color: #fde68a; font-size: 13px; font-weight: 700; letter-spacing: 2.2px; text-transform: uppercase; margin-bottom: 4px; }
+            .lg-title { color: #ffffff; font-size: 34px; font-weight: 800; line-height: 1.15; letter-spacing: .3px; text-shadow: 0 3px 14px rgba(0,0,0,0.4); }
+            .lg-sub { color: rgba(255,255,255,0.85); font-size: 16px; margin-top: 6px; }
 
+            /* ---- Thẻ đăng nhập ---- */
             [data-testid="stForm"] {
                 position: relative; overflow: hidden;
-                background: rgba(255,255,255,0.97) !important;
-                padding: 34px 34px 30px 34px !important;
-                border-radius: 22px !important;
-                border: none !important;
+                background: #ffffff !important;
+                padding: 26px 40px 28px 40px !important;
+                border-radius: 22px !important; border: none !important;
                 box-shadow: 0 24px 60px rgba(0,0,0,0.45), 0 0 0 1px rgba(255,255,255,0.4) !important;
                 animation: lgUp .7s ease both;
             }
@@ -441,53 +453,69 @@ if st.session_state.get("authentication_status") != True:
                 content: ""; position: absolute; left: 0; right: 0; top: 0; height: 7px;
                 background: linear-gradient(90deg, #f59e0b, #ef4444, #3b82f6, #14b8a6);
             }
+            [data-testid="stForm"] [data-testid="stVerticalBlock"] { gap: 0.55rem; }
+            [data-testid="stForm"] [data-testid="stElementContainer"] { width: 100% !important; }
+            [data-testid="stForm"] [data-testid="stHeadingWithActionElements"] { justify-content: center !important; width: 100% !important; }
+            [data-testid="stForm"] [data-testid="stHeaderActionElements"] { display: none !important; }
             [data-testid="stForm"] h1, [data-testid="stForm"] h2, [data-testid="stForm"] h3 {
-                text-align: center !important; color: #0b2d63 !important; font-weight: 800 !important;
-                font-size: 24px !important; letter-spacing: .5px; margin: 6px 0 14px 0 !important; padding: 0 !important;
+                text-align: center !important; width: 100% !important; color: #0b2d63 !important; font-weight: 800 !important;
+                font-size: 24px !important; letter-spacing: .5px; margin: 6px 0 4px 0 !important; padding: 0 !important;
             }
             [data-testid="stForm"] [data-testid="stWidgetLabel"] p, [data-testid="stForm"] label p {
                 font-size: 16px !important; font-weight: 700 !important; color: #1e293b !important;
             }
+
+            /* ---- Ô nhập: viền rõ ràng ---- */
+            [data-testid="stForm"] [data-testid="stTextInputRootElement"] {
+                border: 2px solid #475569 !important; border-radius: 12px !important; background: #ffffff !important;
+                min-height: 54px; transition: all .2s ease; box-shadow: 0 2px 6px rgba(15,23,42,0.08);
+            }
+            [data-testid="stForm"] [data-testid="stTextInputRootElement"]:focus-within {
+                border-color: #1d4ed8 !important; box-shadow: 0 0 0 4px rgba(37,99,235,0.22) !important;
+            }
             [data-testid="stForm"] [data-baseweb="input"], [data-testid="stForm"] [data-baseweb="base-input"] {
-                background: #f1f5f9 !important; border-radius: 12px !important;
+                background: transparent !important; border: none !important; box-shadow: none !important;
             }
-            [data-testid="stForm"] [data-baseweb="input"] {
-                border: 2px solid #cbd5e1 !important; min-height: 54px; transition: all .2s ease;
-            }
-            [data-testid="stForm"] [data-baseweb="input"]:focus-within {
-                border-color: #2563eb !important; background: #ffffff !important; box-shadow: 0 0 0 4px rgba(37,99,235,0.18) !important;
-            }
-            [data-testid="stForm"] input { font-size: 18px !important; color: #0f172a !important; padding: 12px 14px !important; }
+            [data-testid="stForm"] input { font-size: 18px !important; color: #0f172a !important; padding: 12px 14px !important; background: transparent !important; }
+            [data-testid="stForm"] [data-testid="InputInstructions"] { display: none !important; }
+
+            /* ---- Nút đăng nhập: giữa thẻ, rộng hết hàng ---- */
+            [data-testid="stForm"] [data-testid="stElementContainer"]:has(button) { width: 100% !important; display: block !important; }
+            [data-testid="stForm"] [data-testid="stFormSubmitButton"], [data-testid="stForm"] .stFormSubmitButton { width: 100% !important; display: block !important; }
+            [data-testid="stForm"] [data-testid="stFormSubmitButton"] > div { width: 100% !important; }
             [data-testid="stForm"] button[kind="secondaryFormSubmit"], [data-testid="stForm"] button[kind="primaryFormSubmit"],
             [data-testid="stForm"] [data-testid="stFormSubmitButton"] button {
                 width: 100% !important; min-width: 100% !important; min-height: 58px !important;
+                display: flex !important; align-items: center; justify-content: center; margin: 8px auto 0 auto !important;
                 background: linear-gradient(135deg, #1d4ed8 0%, #0ea5e9 100%) !important;
                 color: #ffffff !important; border: none !important; border-radius: 14px !important;
-                margin-top: 14px !important; box-shadow: 0 10px 24px rgba(29,78,216,0.40) !important;
+                box-shadow: 0 10px 24px rgba(29,78,216,0.40) !important;
                 transition: transform .15s ease, box-shadow .15s ease, filter .15s ease !important;
             }
-            [data-testid="stForm"] [data-testid="stFormSubmitButton"], [data-testid="stForm"] .stFormSubmitButton { width: 100% !important; }
             [data-testid="stForm"] [data-testid="stFormSubmitButton"] button p {
-                color: #ffffff !important; font-size: 19px !important; font-weight: 800 !important; letter-spacing: 1.5px !important; margin: 0 !important;
+                color: #ffffff !important; font-size: 19px !important; font-weight: 800 !important; letter-spacing: 1.5px !important; margin: 0 !important; text-align: center;
             }
             [data-testid="stForm"] [data-testid="stFormSubmitButton"] button:hover {
                 transform: translateY(-2px); filter: brightness(1.08); box-shadow: 0 14px 30px rgba(29,78,216,0.55) !important;
             }
             [data-testid="stForm"] [data-testid="stFormSubmitButton"] button:active { transform: translateY(0); }
 
-            [data-testid="stAlert"] { background: rgba(255,255,255,0.14) !important; border: 1px solid rgba(255,255,255,0.35) !important; border-radius: 14px !important; backdrop-filter: blur(6px); }
-            [data-testid="stAlert"] p { color: #ffffff !important; font-size: 16px !important; text-align: center; }
+            /* ---- Thông báo ---- */
+            [data-testid="stAlert"] { background: rgba(255,255,255,0.14) !important; border: 1px solid rgba(255,255,255,0.35) !important; border-radius: 14px !important; backdrop-filter: blur(6px); padding: 4px 8px !important; }
+            [data-testid="stAlert"] p { color: #ffffff !important; font-size: 16px !important; text-align: center; margin: 0 !important; }
+            [data-testid="stAlert"] [data-testid="stAlertContentWarning"], [data-testid="stAlert"] [data-testid="stAlertContentError"] { justify-content: center; }
             [data-testid="stAlert"] svg { display: none; }
 
-            .lg-chips { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; margin-top: 20px; }
-            .lg-chips span { background: rgba(255,255,255,0.14); border: 1px solid rgba(255,255,255,0.28); color: #fff; padding: 7px 14px; border-radius: 999px; font-size: 14px; font-weight: 600; backdrop-filter: blur(6px); }
-            .lg-foot { text-align: center; color: rgba(255,255,255,0.65); font-size: 13px; margin-top: 18px; }
+            /* ---- Nhãn tính năng: 1 hàng ---- */
+            .lg-chips { display: flex; flex-wrap: nowrap; justify-content: center; gap: 8px; margin-top: 2px; }
+            .lg-chips span { white-space: nowrap; background: rgba(255,255,255,0.14); border: 1px solid rgba(255,255,255,0.28); color: #fff; padding: 6px 13px; border-radius: 999px; font-size: 14px; font-weight: 600; backdrop-filter: blur(6px); }
 
             @keyframes lgFade { from { opacity: 0; transform: translateY(-12px); } to { opacity: 1; transform: none; } }
             @keyframes lgUp { from { opacity: 0; transform: translateY(24px); } to { opacity: 1; transform: none; } }
-            @keyframes lgPulse { 0%,100% { box-shadow: 0 0 0 8px rgba(255,255,255,0.08), 0 14px 34px rgba(0,0,0,0.35); } 50% { box-shadow: 0 0 0 16px rgba(255,255,255,0.04), 0 14px 34px rgba(0,0,0,0.35); } }
+            @keyframes lgPulse { 0%,100% { box-shadow: 0 0 0 7px rgba(255,255,255,0.08), 0 12px 28px rgba(0,0,0,0.35); } 50% { box-shadow: 0 0 0 14px rgba(255,255,255,0.04), 0 12px 28px rgba(0,0,0,0.35); } }
             @media (prefers-reduced-motion: reduce) { .lg-brand, [data-testid="stForm"], .lg-emblem { animation: none !important; } }
-            @media (max-width: 560px) { .lg-title { font-size: 27px; } [data-testid="stForm"] { padding: 26px 20px 24px 20px !important; } }
+            @media (max-height: 760px) { .lg-emblem { width: 56px; height: 56px; font-size: 28px; margin-bottom: 6px; } .lg-title { font-size: 28px; } .lg-unit { display: none; } [data-testid="stForm"] { padding: 18px 32px 20px 32px !important; } }
+            @media (max-width: 700px) { .lg-title { font-size: 26px; } [data-testid="stForm"] { padding: 20px 18px 22px 18px !important; } .lg-chips { flex-wrap: wrap; } }
         </style>
         <div class="lg-brand">
             <div class="lg-emblem">⚙️</div>
@@ -510,7 +538,6 @@ authenticator.login(
 if st.session_state.get("authentication_status") != True:
     st.markdown("""
         <div class="lg-chips"><span>📄 PDF</span><span>📊 Excel</span><span>🖼️ Ảnh</span><span>🧮 Tính toán</span><span>🔒 Bảo mật</span></div>
-        <div class="lg-foot">Dùng nội bộ · Đăng nhập bằng tài khoản được cấp</div>
     """, unsafe_allow_html=True)
 
 if st.session_state["authentication_status"] == False:
