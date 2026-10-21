@@ -1964,6 +1964,7 @@ ZP_MENU_OFFLINE = [
     "📝 8. PDF sang Word (giữ bố cục)",
     "🖼️ 9. PDF ↔ Ảnh",
     "🧮 10. Tính toán văn phòng",
+    "🏷️ 11. Đặt tên file chuẩn",
 ]
 menu_group = st.sidebar.radio(
     "Nhóm công cụ:",
@@ -2817,6 +2818,825 @@ def app_office_calc():
         except ValueError as e:
             st.warning(f"⚠️ {e}. Hãy nhập lại số.")
     st.button("🗑️ Xóa & làm mới", on_click=clear_file, key="tc_clear")
+
+
+# ==========================================
+# CÔNG CỤ: ĐẶT TÊN FILE CHUẨN (OFFLINE) - giao diện HTML chạy ngay trên trình duyệt, gõ tới đâu ra kết quả tới đó
+# ==========================================
+FN_HTML = r"""<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Chuyển Đổi Tên File Chuẩn</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        }
+
+        html, body {
+            width: 100%;
+            background-color: transparent;
+            color: #1e293b;
+            padding: 6px;
+        }
+
+        .card {
+            background: #ffffff;
+            width: 100%;
+            max-width: 960px;
+            margin: 0 auto;
+            border-radius: 18px;
+            padding: 24px clamp(16px, 2.8vw, 32px);
+            box-shadow: 0 12px 32px -4px rgba(15, 23, 42, 0.06), 0 4px 12px -2px rgba(15, 23, 42, 0.03);
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+        }
+
+        /* Tiêu đề & Thông tin đơn vị */
+        .header {
+            text-align: center;
+            margin-bottom: clamp(8px, 1.4vh, 14px);
+            position: relative;
+        }
+
+        .unit-badge {
+            display: inline-block;
+            font-size: 11px;
+            font-weight: 700;
+            letter-spacing: 0.8px;
+            text-transform: uppercase;
+            color: #b91c1c;
+            background: #fef2f2;
+            border: 1px solid #fecaca;
+            padding: 2px 10px;
+            border-radius: 20px;
+            margin-bottom: 5px;
+        }
+
+        .header h1 {
+            font-size: 26px;
+            font-weight: 700;
+            color: #0f172a;
+            margin-bottom: 3px;
+            letter-spacing: -0.3px;
+        }
+
+        .header p {
+            font-size: 14.5px;
+            color: #64748b;
+        }
+
+        .code-badge {
+            background-color: #f1f5f9;
+            color: #4f46e5;
+            padding: 1px 6px;
+            border-radius: 5px;
+            font-weight: 600;
+            font-family: monospace;
+            font-size: 12.5px;
+        }
+
+        /* Nút xem hướng dẫn */
+        .btn-help {
+            position: absolute;
+            top: 0;
+            right: 0;
+            background: #f1f5f9;
+            border: 1px solid #cbd5e1;
+            color: #475569;
+            font-size: 13.5px;
+            font-weight: 600;
+            padding: 6px 11px;
+            border-radius: 6px;
+            cursor: pointer;
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            transition: all 0.2s;
+        }
+
+        .btn-help:hover {
+            background: #e2e8f0;
+            color: #0f172a;
+        }
+
+        .label-title {
+            display: block;
+            font-size: 15px;
+            font-weight: 600;
+            color: #334155;
+            margin-bottom: 5px;
+        }
+
+        .input-area {
+            width: 100%;
+            height: 90px;
+            padding: 9px 12px;
+            border: 1.5px solid #cbd5e1;
+            border-radius: 10px;
+            font-size: 16px;
+            color: #1e293b;
+            line-height: 1.45;
+            resize: none;
+            overflow-y: auto;
+            outline: none;
+            transition: all 0.2s ease;
+        }
+
+        .input-area::placeholder {
+            color: #94a3b8;
+        }
+
+        .input-area:focus {
+            border-color: #4f46e5;
+            box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.15);
+        }
+
+        .controls-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin: clamp(6px, 1vh, 10px) 0;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+
+        .checkbox-group-inline {
+            display: flex;
+            align-items: center;
+            gap: 14px;
+            flex-wrap: wrap;
+        }
+
+        .checkbox-wrapper {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            cursor: pointer;
+            font-size: 14px;
+            color: #475569;
+            user-select: none;
+        }
+
+        .checkbox-wrapper input[type="checkbox"] {
+            width: 15px;
+            height: 15px;
+            accent-color: #2563eb;
+            cursor: pointer;
+        }
+
+        .btn-clear {
+            background: none;
+            border: none;
+            color: #64748b;
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: color 0.15s;
+        }
+
+        .btn-clear:hover {
+            color: #ef4444;
+        }
+
+        /* 4 cột tùy chọn trên 1 dòng */
+        .advanced-box {
+            background-color: #f8fafc;
+            border: 1px solid #e2e8f0;
+            border-radius: 10px;
+            padding: 9px 12px;
+            margin-bottom: clamp(8px, 1.4vh, 14px);
+        }
+
+        .advanced-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 9px;
+        }
+
+        @media (max-width: 640px) {
+            .advanced-grid {
+                grid-template-columns: repeat(2, 1fr);
+                gap: 8px;
+            }
+        }
+
+        .adv-item label {
+            display: block;
+            font-size: 13px;
+            font-weight: 600;
+            color: #475569;
+            margin-bottom: 4px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .adv-item select,
+        .adv-item input {
+            width: 100%;
+            height: 36px;
+            padding: 4px 8px;
+            border: 1px solid #cbd5e1;
+            border-radius: 7px;
+            font-size: 14px;
+            color: #1e293b;
+            background: #ffffff;
+            outline: none;
+            transition: border-color 0.2s;
+        }
+
+        .adv-item select:focus,
+        .adv-item input:focus {
+            border-color: #4f46e5;
+        }
+
+        .custom-date-wrapper {
+            display: none;
+            position: relative;
+            width: 100%;
+        }
+
+        .custom-date-wrapper.active {
+            display: flex;
+            align-items: center;
+        }
+
+        .custom-date-wrapper input {
+            padding-right: 22px;
+        }
+
+        .btn-back-select {
+            position: absolute;
+            right: 4px;
+            background: #f1f5f9;
+            border: none;
+            color: #64748b;
+            width: 17px;
+            height: 17px;
+            border-radius: 4px;
+            font-size: 10px;
+            line-height: 1;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .btn-back-select:hover {
+            background: #e2e8f0;
+            color: #ef4444;
+        }
+
+        .btn-convert {
+            width: 100%;
+            background-color: #4f46e5;
+            color: #ffffff;
+            border: none;
+            border-radius: 10px;
+            padding: 13px 16px;
+            font-size: 16.5px;
+            font-weight: 600;
+            cursor: pointer;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: 7px;
+            box-shadow: 0 4px 12px rgba(79, 70, 229, 0.22);
+            transition: all 0.2s ease;
+        }
+
+        .btn-convert:hover {
+            background-color: #4338ca;
+        }
+
+        .divider {
+            height: 1px;
+            background-color: #f1f5f9;
+            margin: clamp(10px, 1.6vh, 16px) 0 clamp(8px, 1.3vh, 13px) 0;
+        }
+
+        .result-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 6px;
+        }
+
+        .btn-copy {
+            background-color: #ecfdf5;
+            color: #059669;
+            border: 1px solid #a7f3d0;
+            padding: 5px 11px;
+            border-radius: 7px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            transition: all 0.2s ease;
+        }
+
+        .btn-copy:hover {
+            background-color: #d1fae5;
+        }
+
+        .btn-copy.copied {
+            background-color: #059669;
+            color: #ffffff;
+            border-color: #059669;
+        }
+
+        .result-box {
+            background-color: #f8fafc;
+            border: 1.5px solid #e2e8f0;
+            border-radius: 10px;
+            padding: 10px 12px;
+            min-height: 56px;
+            max-height: 110px;
+            overflow-y: auto;
+            display: flex;
+            align-items: center;
+            word-break: break-all;
+            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+            font-size: 16px;
+            color: #0f172a;
+            font-weight: 500;
+        }
+
+        .result-box.empty {
+            font-family: 'Inter', sans-serif;
+            color: #94a3b8;
+            font-style: italic;
+            font-weight: 400;
+        }
+
+        .toast {
+            position: fixed;
+            bottom: 18px;
+            right: 18px;
+            background: #0f172a;
+            color: #ffffff;
+            padding: 9px 15px;
+            border-radius: 8px;
+            font-size: 12.5px;
+            font-weight: 500;
+            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.15);
+            opacity: 0;
+            transform: translateY(15px);
+            pointer-events: none;
+            transition: all 0.25s ease;
+            z-index: 9999;
+        }
+
+        .toast.show {
+            opacity: 1;
+            transform: translateY(0);
+        }
+
+        /* Cửa sổ Modal Hướng dẫn sử dụng */
+        .modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(15, 23, 42, 0.55);
+            backdrop-filter: blur(3px);
+            display: none;
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+            padding: 16px;
+        }
+
+        .modal-overlay.active {
+            display: flex;
+        }
+
+        .modal-content {
+            background: #ffffff;
+            width: 100%;
+            max-width: 560px;
+            max-height: 520px;
+            overflow-y: auto;
+            border-radius: 16px;
+            padding: 24px;
+            box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.2);
+        }
+
+        .modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid #e2e8f0;
+            padding-bottom: 12px;
+            margin-bottom: 16px;
+        }
+
+        .modal-header h2 {
+            font-size: 17px;
+            color: #0f172a;
+        }
+
+        .btn-close-modal {
+            background: none;
+            border: none;
+            font-size: 20px;
+            color: #94a3b8;
+            cursor: pointer;
+            line-height: 1;
+        }
+
+        .btn-close-modal:hover {
+            color: #0f172a;
+        }
+
+        .guide-step {
+            margin-bottom: 14px;
+            font-size: 13.5px;
+            line-height: 1.55;
+            color: #334155;
+        }
+
+        .guide-step strong {
+            color: #0f172a;
+        }
+
+        .guide-step code {
+            background: #f1f5f9;
+            color: #b91c1c;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-size: 12.5px;
+            font-family: monospace;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="card">
+        <div class="header">
+            <button type="button" class="btn-help" onclick="toggleModal(true)">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="12" cy="12" r="10"></circle>
+                    <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"></path>
+                    <line x1="12" y1="17" x2="12.01" y2="17"></line>
+                </svg>
+                Hướng dẫn
+            </button>
+            <h1>Chuyển Đổi Tên File Chuẩn</h1>
+            <p>Khử dấu tiếng Việt, loại bỏ ký tự đặc biệt và ngăn cách bằng (<span class="code-badge" id="sepBadge">_</span>).</p>
+        </div>
+
+        <div>
+            <label class="label-title" for="inputText">Nhập văn bản cần xử lý:</label>
+            <textarea id="inputText" class="input-area" placeholder="Ví dụ: File Có tên, hoặc: Trang bị túi sơ cấp cứu tại nơi làm việc (túi A)..."></textarea>
+
+            <div class="controls-row">
+                <div class="checkbox-group-inline">
+                    <label class="checkbox-wrapper" title="Nếu không chọn, chữ nào viết HOA trong bản gốc sẽ được giữ nguyên">
+                        <input type="checkbox" id="lowercaseCheck" onchange="convertText()">
+                        <span>Ép thành chữ thường toàn bộ</span>
+                    </label>
+                    <label class="checkbox-wrapper">
+                        <input type="checkbox" id="removeStopwords" onchange="convertText()">
+                        <span>Rút gọn từ nối (<i>và, của, cho, tại...</i>)</span>
+                    </label>
+                </div>
+                <button class="btn-clear" onclick="clearAll()">Xóa tất cả</button>
+            </div>
+        </div>
+
+        <!-- Khung 4 cột nằm gọn trên 1 dòng -->
+        <div class="advanced-box">
+            <div class="advanced-grid">
+                <div class="adv-item">
+                    <label for="formatStyle">Kiểu định dạng:</label>
+                    <select id="formatStyle" onchange="onFormatChange()">
+                        <option value="snake" selected>Dấu gạch dưới (_)</option>
+                        <option value="space">Khoảng trắng (Co ten)</option>
+                        <option value="kebab">Dấu gạch ngang (-)</option>
+                        <option value="pascal">PascalCase (CoTen)</option>
+                    </select>
+                </div>
+
+                <div class="adv-item">
+                    <label for="datePrefix">Tiền tố ngày:</label>
+                    <select id="datePrefix" onchange="onDateOptionChange()">
+                        <option value="none">Không thêm</option>
+                        <option value="compact">Hôm nay (YYYYMMDD)</option>
+                        <option value="dashed">Hôm nay (YYYY-MM-DD)</option>
+                        <option value="custom">✎ Tự nhập ngày...</option>
+                    </select>
+                    <div id="customDateWrap" class="custom-date-wrapper">
+                        <input type="text" id="customDateInput" placeholder="VD: 20261021..." oninput="convertText()">
+                        <button type="button" class="btn-back-select" title="Chọn lại mẫu ngày" onclick="resetDateSelect()">✕</button>
+                    </div>
+                </div>
+
+                <div class="adv-item">
+                    <label for="indexPrefix">Số thứ tự đầu:</label>
+                    <input type="text" id="indexPrefix" placeholder="VD: 01, 02..." oninput="convertText()">
+                </div>
+
+                <div class="adv-item">
+                    <label for="versionSuffix">Phiên bản / Đuôi:</label>
+                    <input type="text" id="versionSuffix" placeholder="VD: v1.0, .pdf..." oninput="convertText()">
+                </div>
+            </div>
+        </div>
+
+        <button class="btn-convert" onclick="convertText()">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/>
+                <path d="M3 3v5h5"/>
+                <path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/>
+                <path d="M16 16h5v5"/>
+            </svg>
+            Chuyển đổi
+        </button>
+
+        <div class="divider"></div>
+
+        <div>
+            <div class="result-header">
+                <span class="label-title" style="margin-bottom: 0;">Kết quả tên file:</span>
+                <button class="btn-copy" id="copyBtn" onclick="copyResult()">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                        <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                        <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                    </svg>
+                    <span id="copyBtnText">Sao chép</span>
+                </button>
+            </div>
+
+            <div id="outputBox" class="result-box empty">Chưa có nội dung kết quả...</div>
+        </div>
+    </div>
+
+    <!-- Popup Hướng dẫn sử dụng -->
+    <div id="helpModal" class="modal-overlay" onclick="toggleModal(false)">
+        <div class="modal-content" onclick="event.stopPropagation()">
+            <div class="modal-header">
+                <h2>📖 Hướng dẫn sử dụng công cụ</h2>
+                <button class="btn-close-modal" onclick="toggleModal(false)">&times;</button>
+            </div>
+
+            <div class="guide-step">
+                <strong>1. Nhập văn bản nguồn:</strong> Dán hoặc gõ bất kỳ đoạn tiêu đề, tên tài liệu có dấu tiếng Việt, chứa dấu ngoặc <code>()</code>, ngoặc kép <code>""</code>, dấu gạch ngang... Kết quả sẽ tự động được làm sạch và chuyển đổi ngay tức thì.
+            </div>
+
+            <div class="guide-step">
+                <strong>2. Giữ nguyên chữ HOA:</strong> Mặc định công cụ giữ nguyên các chữ viết HOA trong văn bản (Ví dụ: <code>File Có tên</code> ➔ <code>File_Co_ten</code>). Nếu muốn tất cả thành chữ thường, hãy tích chọn <i>"Ép thành chữ thường toàn bộ"</i>.
+            </div>
+
+            <div class="guide-step">
+                <strong>3. Lựa chọn kiểu phân cách:</strong>
+                <ul style="margin-left: 20px; margin-top: 5px;">
+                    <li><code>snake_case (_)</code>: Chuẩn lưu trữ server, phần mềm quản lý nội bộ.</li>
+                    <li><code>Khoảng trắng</code>: Không dấu nhưng giữ dấu cách (dành cho người thích đọc trực quan).</li>
+                    <li><code>kebab-case (-)</code>: Chuẩn web, đường link tải tài liệu.</li>
+                    <li><code>PascalCase</code>: Viết liền nhau hoa chữ đầu (gọn gàng).</li>
+                </ul>
+            </div>
+
+            <div class="guide-step">
+                <strong>4. Thêm Tiền tố & Phiên bản:</strong>
+                <ul style="margin-left: 20px; margin-top: 5px;">
+                    <li><strong>Tiền tố ngày:</strong> Tự động lấy ngày hôm nay theo chuẩn <code>YYYYMMDD</code> để thư mục tự sắp xếp theo thời gian, hoặc chọn <i>"Tự nhập ngày..."</i> để gõ ngày tùy ý.</li>
+                    <li><strong>Số thứ tự:</strong> Điền <code>01</code>, <code>02</code>... cho các tài liệu đào tạo, quy trình.</li>
+                    <li><strong>Đuôi / Version:</strong> Điền <code>v1.0</code> hoặc đuôi mở rộng <code>.pdf</code>, <code>.docx</code>.</li>
+                </ul>
+            </div>
+
+            <div class="guide-step" style="margin-bottom: 0;">
+                <strong>5. Sao chép kết quả:</strong> Nhấp vào nút <strong>"Sao chép"</strong> màu xanh ngọc ở góc phải để copy nhanh tên file vào bộ nhớ và dán trực tiếp khi đổi tên tệp (Rename).
+            </div>
+        </div>
+    </div>
+
+    <div id="toast" class="toast">✓ Đã sao chép tên file vào bộ nhớ tạm!</div>
+
+    <script>
+        const stopWords = new Set(["va", "cua", "cac", "nhung", "cho", "tai", "la", "ve", "de", "do", "khi", "trong", "voi", "noi"]);
+
+        function removeVietnameseTones(str) {
+            str = str.replace(/à|á|ạ|ả|ã|â|ầ|ấ|ậ|ẩ|ẫ|ă|ằ|ắ|ặ|ẳ|ẵ/g, "a");
+            str = str.replace(/è|é|ẹ|ẻ|ẽ|ê|ề|ế|ệ|ể|ễ/g, "e");
+            str = str.replace(/ì|í|ị|ỉ|ĩ/g, "i");
+            str = str.replace(/ò|ó|ọ|ỏ|õ|ô|ồ|ố|ộ|ổ|ỗ|ơ|ờ|ớ|ợ|ở|ỡ/g, "o");
+            str = str.replace(/ù|ú|ụ|ủ|ũ|ư|ừ|ứ|ự|ử|ữ/g, "u");
+            str = str.replace(/ỳ|ý|ỵ|ỷ|ỹ/g, "y");
+            str = str.replace(/đ/g, "d");
+            str = str.replace(/À|Á|Ạ|Ả|Ã|Â|Ầ|Ấ|Ậ|Ẩ|Ẫ|Ă|Ằ|Ắ|Ặ|Ẳ|Ẵ/g, "A");
+            str = str.replace(/È|É|Ẹ|Ẻ|Ẽ|Ê|Ề|Ế|Ệ|Ể|Ễ/g, "E");
+            str = str.replace(/Ì|Í|Ị|Ỉ|Ĩ/g, "I");
+            str = str.replace(/Ò|Ó|Ọ|Ỏ|Õ|Ô|Ồ|Ố|Ộ|Ổ|Ỗ|Ơ|Ờ|Ớ|Ợ|Ở|Ỡ/g, "O");
+            str = str.replace(/Ù|Ú|Ụ|Ủ|Ũ|Ư|Ừ|Ứ|Ự|Ử|Ữ/g, "U");
+            str = str.replace(/Ỳ|Ý|Ỵ|Ỷ|Ỹ/g, "Y");
+            str = str.replace(/Đ/g, "D");
+            return str.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+        }
+
+        function toggleModal(show) {
+            const modal = document.getElementById("helpModal");
+            if (show) modal.classList.add("active");
+            else modal.classList.remove("active");
+        }
+
+        function onFormatChange() {
+            const format = document.getElementById("formatStyle").value;
+            const badge = document.getElementById("sepBadge");
+            const lowerCheck = document.getElementById("lowercaseCheck");
+
+            if (format === "snake") {
+                badge.innerText = "_";
+                lowerCheck.disabled = false;
+            } else if (format === "space") {
+                badge.innerText = "dấu cách";
+                lowerCheck.disabled = false;
+            } else if (format === "kebab") {
+                badge.innerText = "-";
+                lowerCheck.disabled = false;
+            } else {
+                badge.innerText = "Abc";
+                lowerCheck.checked = false;
+                lowerCheck.disabled = true;
+            }
+            convertText();
+        }
+
+        function onDateOptionChange() {
+            const selectEl = document.getElementById("datePrefix");
+            const customWrap = document.getElementById("customDateWrap");
+            const customInput = document.getElementById("customDateInput");
+
+            if (selectEl.value === "custom") {
+                selectEl.style.display = "none";
+                customWrap.classList.add("active");
+                customInput.focus();
+            }
+            convertText();
+        }
+
+        function resetDateSelect() {
+            const selectEl = document.getElementById("datePrefix");
+            const customWrap = document.getElementById("customDateWrap");
+            const customInput = document.getElementById("customDateInput");
+
+            customInput.value = "";
+            customWrap.classList.remove("active");
+            selectEl.style.display = "block";
+            selectEl.value = "none";
+            convertText();
+        }
+
+        function convertText() {
+            const rawText = document.getElementById("inputText").value.trim();
+            const outputBox = document.getElementById("outputBox");
+
+            if (!rawText) {
+                outputBox.innerText = "Chưa có nội dung kết quả...";
+                outputBox.classList.add("empty");
+                return;
+            }
+
+            const isLower = document.getElementById("lowercaseCheck").checked;
+            const format = document.getElementById("formatStyle").value;
+            const dateOpt = document.getElementById("datePrefix").value;
+            const customDateVal = document.getElementById("customDateInput").value.trim();
+            const indexStr = document.getElementById("indexPrefix").value.trim().replace(/[^a-zA-Z0-9]/g, '');
+            const suffixRaw = document.getElementById("versionSuffix").value.trim();
+            const filterStopwords = document.getElementById("removeStopwords").checked;
+
+            let cleanStr = removeVietnameseTones(rawText);
+            let words = cleanStr.match(/[a-zA-Z0-9]+/g) || [];
+
+            if (filterStopwords) {
+                words = words.filter(w => !stopWords.has(w.toLowerCase()));
+            }
+
+            let sep = "_";
+            if (format === "kebab") sep = "-";
+            else if (format === "space") sep = " ";
+
+            let mainBody = "";
+
+            if (format === "pascal") {
+                mainBody = words.map(w => w.charAt(0).toUpperCase() + w.slice(1)).join("");
+            } else {
+                if (isLower) {
+                    words = words.map(w => w.toLowerCase());
+                }
+                mainBody = words.join(sep);
+            }
+
+            let prefixes = [];
+            if (indexStr) {
+                prefixes.push(isLower && format !== "pascal" ? indexStr.toLowerCase() : indexStr);
+            }
+
+            if (dateOpt === "compact" || dateOpt === "dashed") {
+                const now = new Date();
+                const yyyy = now.getFullYear();
+                const mm = String(now.getMonth() + 1).padStart(2, '0');
+                const dd = String(now.getDate()).padStart(2, '0');
+                prefixes.push(dateOpt === "compact" ? `${yyyy}${mm}${dd}` : `${yyyy}-${mm}-${dd}`);
+            } else if (dateOpt === "custom" && customDateVal) {
+                let cleanCustomDate = removeVietnameseTones(customDateVal).replace(/[^a-zA-Z0-9_-]/g, '');
+                if (cleanCustomDate) {
+                    prefixes.push(isLower && format !== "pascal" ? cleanCustomDate.toLowerCase() : cleanCustomDate);
+                }
+            }
+
+            let finalParts = [];
+            if (prefixes.length > 0) finalParts.push(prefixes.join(sep));
+            if (mainBody) finalParts.push(mainBody);
+
+            let result = finalParts.join(sep);
+
+            if (suffixRaw) {
+                let cleanSuffix = removeVietnameseTones(suffixRaw).replace(/[^a-zA-Z0-9._-]/g, '');
+                if (cleanSuffix.startsWith('.')) {
+                    result += cleanSuffix;
+                } else {
+                    result += (result ? sep : '') + cleanSuffix;
+                }
+            }
+
+            outputBox.innerText = result || "Chưa có nội dung kết quả...";
+            if (result) {
+                outputBox.classList.remove("empty");
+            } else {
+                outputBox.classList.add("empty");
+            }
+        }
+
+        function clearAll() {
+            document.getElementById("inputText").value = "";
+            document.getElementById("indexPrefix").value = "";
+            document.getElementById("versionSuffix").value = "";
+            resetDateSelect();
+            convertText();
+            document.getElementById("inputText").focus();
+        }
+
+        function legacyCopy(text) {
+            const ta = document.createElement("textarea");
+            ta.value = text;
+            ta.style.position = "fixed";
+            ta.style.opacity = "0";
+            document.body.appendChild(ta);
+            ta.select();
+            let ok = false;
+            try { ok = document.execCommand("copy"); } catch (e) { ok = false; }
+            document.body.removeChild(ta);
+            return ok ? Promise.resolve() : Promise.reject();
+        }
+
+        function copyResult() {
+            const outputBox = document.getElementById("outputBox");
+            if (outputBox.classList.contains("empty")) return;
+            const text = outputBox.innerText;
+            const p = (navigator.clipboard && window.isSecureContext)
+                ? navigator.clipboard.writeText(text).catch(() => legacyCopy(text))
+                : legacyCopy(text);
+            p.then(() => {
+                const copyBtn = document.getElementById("copyBtn");
+                const copyBtnText = document.getElementById("copyBtnText");
+                const toast = document.getElementById("toast");
+                copyBtn.classList.add("copied");
+                copyBtnText.innerText = "Đã chép!";
+                toast.classList.add("show");
+                setTimeout(() => {
+                    copyBtn.classList.remove("copied");
+                    copyBtnText.innerText = "Sao chép";
+                    toast.classList.remove("show");
+                }, 1800);
+            }).catch(() => {
+                const cb = document.getElementById("copyBtnText");
+                cb.innerText = "Hãy bôi đen và Ctrl+C";
+                setTimeout(() => { cb.innerText = "Sao chép"; }, 2500);
+            });
+        }
+
+        document.getElementById("inputText").addEventListener("input", convertText);
+    </script>
+</body>
+</html>"""
+
+
+def app_file_rename():
+    import streamlit.components.v1 as _stc
+    _stc.html(FN_HTML, height=700, scrolling=True)
 
 
 if menu_group.startswith("🌐"):
@@ -5097,5 +5917,5 @@ if menu_group.startswith("🌐"):
 else:
     _routes = [app_number_2, app_pdf_split_merge, app_compress_and_zip, app_rotate_pdf,
                app_metadata_cleaner, app_signature_extractor, app_qr_generator, app_pdf_to_word_offline,
-               app_pdf_image_tools, app_office_calc]
+               app_pdf_image_tools, app_office_calc, app_file_rename]
     _routes[ZP_MENU_OFFLINE.index(app_mode)]()
